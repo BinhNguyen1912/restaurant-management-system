@@ -1,0 +1,55 @@
+import { Body, Controller, Post, Res, HttpStatus, Query, Get, Param, Put } from '@nestjs/common'
+import { OrdersService } from './orders.service'
+import { ActiveUser } from '@/shared/decorators/active-user.decorator'
+import {
+  GuestIdParamDTO,
+  ListOrdersDTO,
+  OrderDetailResDTO,
+  OrderIdParamDTO,
+  UpdateOrderDTO,
+  UpdateOrderResDTO,
+} from '@/routes/orders/orders.dtos'
+import { ZodSerializerDto } from 'nestjs-zod'
+import { OrderIdParamSchema } from '@/routes/orders/orders.model'
+import { GuestCreateNewOrderDTO } from '@/routes/guest/guest.dtos'
+
+@Controller('orders')
+export class OrdersController {
+  constructor(private readonly ordersService: OrdersService) {}
+
+  @Post('lists')
+  async list(@Body() query: ListOrdersDTO) {
+    console.log('query', query)
+    return await this.ordersService.list(query)
+  }
+
+  @Get(':id')
+  @ZodSerializerDto(OrderDetailResDTO)
+  async getById(@Param('id') id: string) {
+    const orderId = Number(id)
+    return await this.ordersService.getById(orderId)
+  }
+
+  @Put(':id')
+  @ZodSerializerDto(UpdateOrderResDTO)
+  async update(@Param() param: OrderIdParamDTO, @Body() body: UpdateOrderDTO, @ActiveUser('userId') userId: number) {
+    return await this.ordersService.update({ orderId: param.id, body, updatedById: userId })
+  }
+
+  @Post('create-order-for-guest/:guestId')
+  async createOrderForGuest(
+    @Body() body: GuestCreateNewOrderDTO,
+    @Param('guestId') guestId: string,
+    @ActiveUser('userId') userId: number,
+  ) {
+    return await this.ordersService.createOrderForGuest({ guestId: +guestId, orderItems: body, createdById: userId })
+  }
+
+  @Get('pay-orders-by-guest/:guestId')
+  async getOrderByTable(@Param() params: GuestIdParamDTO, @ActiveUser('userId') userId: number) {
+    return await this.ordersService.payOrdersByGuest({
+      guestId: +params.guestId,
+      updatedById: userId,
+    })
+  }
+}
