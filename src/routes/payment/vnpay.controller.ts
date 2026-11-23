@@ -1,6 +1,7 @@
-import { Controller, Post, Get, Body, Req, Res, Param, Query } from '@nestjs/common'
+import { Controller, Post, Get, Body, Req, Res, Param, Query, ForbiddenException } from '@nestjs/common'
 import { Response, Request } from 'express'
 import { IsPublic } from '@/shared/decorators/auth.decorator'
+import { ActiveUser } from '@/shared/decorators/active-user.decorator'
 import { CreatePaymentUrlDTO } from '@/routes/payment/payment.dto'
 import { VnPayService } from '@/shared/service/vnpay.service'
 
@@ -9,9 +10,18 @@ export class VnPayController {
   constructor(private readonly vnPayService: VnPayService) {}
 
   @Post('create-url')
-  async createPaymentUrl(@Body() body: CreatePaymentUrlDTO, @Req() req: Request) {
+  async createPaymentUrl(
+    @Body() body: CreatePaymentUrlDTO,
+    @Req() req: Request,
+    // Khong dung body.guestId mot cach mu quang: token phai la cua chinh guest do,
+    // neu khong bat ky ai dang nhap cung tao duoc URL thanh toan cho don nguoi khac.
+    @ActiveUser('userId') userId: number,
+  ) {
+    if (Number(body.guestId) !== Number(userId)) {
+      throw new ForbiddenException('Error.PaymentNotOwned')
+    }
     const paymentUrl = await this.vnPayService.createPaymentUrlForGuest({
-      guestId: body.guestId,
+      guestId: userId,
       req,
     })
     return { paymentUrl }

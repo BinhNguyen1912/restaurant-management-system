@@ -1,3 +1,4 @@
+import { LedgerAccountModule } from '@/routes/ledger-account/ledger-account.module'
 import { Module, OnModuleInit } from '@nestjs/common'
 import { AppController } from './app.controller'
 import { AppService } from './app.service'
@@ -47,6 +48,7 @@ import { ReminderCronService } from '@/job/reminder-cron.service'
 import { ReservationModule } from './routes/reservation/reservation.module';
 @Module({
   imports: [
+    LedgerAccountModule,
     SharedModule,
     LanguageModule,
     AuthModule,

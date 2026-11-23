@@ -1,3 +1,6 @@
+import { Prisma } from '@prisma/client'
+import { addRevenueByDate, orderRevenue, revenueByDateToNumbers } from '@/routes/dashboard/dashboard-money'
+import { resolveBranchId } from '@/shared/service/branch.resolver'
 import { Injectable } from '@nestjs/common'
 import { PrismaService } from '@/shared/service/prisma.service'
 import { OrderStatus } from '@/shared/constants/order.constant'
@@ -9,7 +12,11 @@ import { DashboardIndicatorQueryType, DashboardIndicatorType } from '@/routes/da
 export class DashboardIndicatorService {
   constructor(private readonly prismaService: PrismaService) {}
 
-  async getDashboardIndicator({ fromDate, toDate }: DashboardIndicatorQueryType): Promise<DashboardIndicatorType> {
+  async getDashboardIndicator(
+    { fromDate, toDate }: DashboardIndicatorQueryType,
+    userId?: number,
+  ): Promise<DashboardIndicatorType> {
+    const branchId = await resolveBranchId(this.prismaService, { userId })
     const fromDateObj = fromDate ? new Date(fromDate) : new Date()
     const toDateObj = toDate ? new Date(toDate) : new Date()
     const [orders, guests, products] = await Promise.all([
@@ -33,6 +40,7 @@ export class DashboardIndicatorService {
             lte: toDateObj,
           },
           deletedAt: null,
+          branchId,
         },
       }) as any,
       this.prismaService.guest.findMany({
@@ -46,6 +54,7 @@ export class DashboardIndicatorService {
             some: {
               status: OrderStatus.PAID,
               deletedAt: null,
+              branchId,
             },
           },
         },
@@ -76,14 +85,14 @@ export class DashboardIndicatorService {
       {} as Record<number, ProductIndicatorType>,
     )
 
-    // Doanh thu theo ngày
-    const revenueByDateObj: { [key: string]: number } = {}
+    // Doanh thu theo ngày — giữ Decimal khi cộng, chỉ đổi sang number khi trả ra
+    const revenueByDateObj: { [key: string]: Prisma.Decimal } = {}
 
     // Lặp từ fromDate -> toDate để tạo object với key là ngày
     const currentDate = new Date(fromDateObj)
     while (currentDate <= toDateObj) {
       const dateKey = formatInTimeZone(currentDate, 'Asia/Ho_Chi_Minh', 'dd/MM/yyyy')
-      revenueByDateObj[dateKey] = 0
+      revenueByDateObj[dateKey] = new Prisma.Decimal(0)
       currentDate.setDate(currentDate.getDate() + 1)
     }
 
@@ -92,12 +101,10 @@ export class DashboardIndicatorService {
 
     orders.forEach((order) => {
       if (order.status === OrderStatus.PAID) {
-        // Tính doanh thu từ các items trong order
-        const orderRevenue = order.items.reduce((total, item) => {
-          return total + item.skuPrice * item.quantity
-        }, 0)
+        // Doanh thu = grandTotal đã bóc tách của đơn (ADR 0001 D6), không cộng lại từ item
+        const revenueOfOrder = orderRevenue(order)
 
-        revenue += orderRevenue
+        revenue = new Prisma.Decimal(revenue).add(revenueOfOrder).toDecimalPlaces(2).toNumber()
 
         // Cập nhật số lượng đặt thành công cho từng sản phẩm
         order.items.forEach((item) => {
@@ -108,7 +115,7 @@ export class DashboardIndicatorService {
 
         // Doanh thu theo ngày
         const date = formatInTimeZone(order.createdAt, 'Asia/Ho_Chi_Minh', 'dd/MM/yyyy')
-        revenueByDateObj[date] = (revenueByDateObj[date] ?? 0) + orderRevenue
+        addRevenueByDate(revenueByDateObj, date, revenueOfOrder)
       }
 
       // Kiểm tra bàn đang sử dụng
@@ -132,9 +139,10 @@ export class DashboardIndicatorService {
     const servingTableCount = Object.keys(tableNumberObj).length
 
     // Doanh thu theo ngày
-    const revenueByDate = Object.keys(revenueByDateObj).map((date) => ({
+    const revenueByDateNumbers = revenueByDateToNumbers(revenueByDateObj)
+    const revenueByDate = Object.keys(revenueByDateNumbers).map((date) => ({
       date,
-      revenue: revenueByDateObj[date],
+      revenue: revenueByDateNumbers[date],
     }))
 
     const productIndicator = Object.values(productIndicatorObj)

@@ -1,3 +1,4 @@
+import { toMoneyNumbers } from '@/shared/service/money-serializer'
 import { Injectable } from '@nestjs/common'
 import {
   CreateProductBodyType,
@@ -142,7 +143,7 @@ export class ProductRepository {
     isPublic?: boolean
     languageId: string
   }): Promise<GetProductDetailType | null> {
-    return this.prismaService.product.findUnique({
+    return toMoneyNumbers(this.prismaService.product.findUnique({
       where: {
         id: productId,
         deletedAt: null,
@@ -169,7 +170,7 @@ export class ProductRepository {
           },
         },
       },
-    })
+    }))
   }
 
   findById(productId: number): Promise<ProductType | null> {
@@ -200,7 +201,7 @@ export class ProductRepository {
 
         Khi user thêm vào giỏ hoặc order, hệ thống kiểm tra lại real-time để tránh sai lệch.
          */
-    return this.prismaService.product.create({
+    return toMoneyNumbers(this.prismaService.product.create({
       data: {
         ...productData,
         createdById,
@@ -239,7 +240,7 @@ export class ProductRepository {
           },
         },
       },
-    })
+    }))
   }
 
   async update({

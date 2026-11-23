@@ -1,3 +1,4 @@
+import { moneyOutputSchema } from '@/shared/models/shared-money.model'
 import { OrderStatus, TypeToOrderStatus } from '@/shared/constants/order.constant'
 import { guestSchema } from '@/shared/models/shared-guest.model'
 import { ProductSchema, ProductSKUSnapshotSchema } from '@/shared/models/shared-product.model'
@@ -48,7 +49,7 @@ export const OrderResSchema = OrderSchema.extend({
       image: z.string(),
       productName: z.string(),
       quantity: z.number(),
-      skuPrice: z.number(),
+      skuPrice: moneyOutputSchema,
       productTranslations: z.any().optional(),
       product: ProductSchema.extend({
         productSKUSnapshots: z.array(ProductSKUSnapshotSchema),

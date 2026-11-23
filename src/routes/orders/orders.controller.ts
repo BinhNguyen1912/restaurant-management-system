@@ -18,9 +18,8 @@ export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
 
   @Post('lists')
-  async list(@Body() query: ListOrdersDTO) {
-    console.log('query', query)
-    return await this.ordersService.list(query)
+  async list(@Body() query: ListOrdersDTO, @ActiveUser('userId') userId: number) {
+    return await this.ordersService.list(query, userId)
   }
 
   @Get(':id')

@@ -1,3 +1,4 @@
+import { moneyOutputSchema } from '@/shared/models/shared-money.model'
 import { ProductStatus } from '@/shared/constants/product.constant'
 import { z } from 'zod'
 
@@ -6,7 +7,7 @@ export const VariantSchema = z.object({
   valueOption: z.array(
     z.object({
       value: z.string(),
-      price: z.number(),
+      price: moneyOutputSchema,
       image: z.string(),
     }),
   ),
@@ -83,7 +84,7 @@ export const ProductSKUSnapshotSchema = z.object({
   image: z.string(),
   productId: z.number().nullable(),
   quantity: z.number(),
-  skuPrice: z.number(),
+  skuPrice: moneyOutputSchema,
 })
 
 export type VariantType = z.infer<typeof VariantSchema>

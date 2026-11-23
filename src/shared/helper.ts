@@ -33,15 +33,24 @@ export const generateFileName = (fileName: string): string => {
 export const generrateCancelPaymentJobName = (paymentId: number): string => {
   return `cancel-paymentId-${paymentId}`
 }
+/**
+ * Ma giao dich gui sang VNPay.
+ *
+ * Dang `PREFIX_<userId>_<timestamp><random>`: webhook van tach duoc userId o vi tri [1],
+ * nhung moi lan tao URL la 1 ma khac nhau — neu khong, lan thu 2 se trung ma (VNPay tu choi
+ * va bang PaymentIntent/WebhookEvent cung bi trung khoa).
+ */
 export const generateForVnp_TxnRef = ({ type, userId }: { type: TypeToOrderStatusType; userId: number }) => {
-  switch (type) {
-    case TypeToOrderStatus.AT_TABLE:
-      return `${prefixToOrderStatus.AT_TABLE}_${userId}`
-    case TypeToOrderStatus.RESERVATION:
-      return `${prefixToOrderStatus.RESERVATION}_${userId}`
-    default:
-      return `${prefixToOrderStatus.ONLINE}_${userId}`
-  }
+  const prefix =
+    type === TypeToOrderStatus.RESERVATION
+      ? prefixToOrderStatus.RESERVATION
+      : type === TypeToOrderStatus.AT_TABLE
+        ? prefixToOrderStatus.AT_TABLE
+        : prefixToOrderStatus.ONLINE
+  const suffix = `${Date.now()}${Math.floor(Math.random() * 1000)
+    .toString()
+    .padStart(3, '0')}`
+  return `${prefix}_${userId}_${suffix}`
 }
 export const getDaysOfWeekFromNumbers = (days: number[]): string[] => {
   return days.map((day) => dayNames[day])

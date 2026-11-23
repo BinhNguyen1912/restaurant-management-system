@@ -1,3 +1,5 @@
+import { toMoneyNumbers } from '@/shared/service/money-serializer'
+import { resolveBranchIdByTableNode } from '@/shared/service/branch.resolver'
 import { PrismaService } from '@/shared/service/prisma.service'
 import { BadRequestException, Injectable } from '@nestjs/common'
 import {
@@ -59,21 +61,25 @@ export class ReservationRepo {
         },
       })
 
-      const skusPriceMap = new Map<number, number>(skus.map((item) => [item.id, item.price]))
+      // Gia SKU la Decimal: giu Decimal khi tinh tien coc de khong sai so lam tron
+      const skusPriceMap = new Map<number, Prisma.Decimal>(skus.map((item) => [item.id, new Prisma.Decimal(item.price)]))
 
       const missingSkus = preOrderItems.filter((item) => !skusPriceMap.has(item.skuId))
       if (missingSkus.length > 0) {
         throw new Error(`SKU not found: ${missingSkus.map((item) => item.skuId).join(', ')}`)
       }
 
-      const totalSku = preOrderItems.reduce((sum, item) => {
-        const price = skusPriceMap.get(item.skuId) || 0
-        return sum + price * item.quantity
-      }, 0)
+      const totalSku = preOrderItems
+        .reduce(
+          (sum, item) => sum.add((skusPriceMap.get(item.skuId) ?? new Prisma.Decimal(0)).mul(item.quantity)),
+          new Prisma.Decimal(0),
+        )
+        .toDecimalPlaces(2)
+        .toNumber()
 
       return {
         totalSku,
-        skus,
+        skus: toMoneyNumbers(skus),
       }
     } catch (error) {
       console.error('Error in calculatePreOrderTotal:', error)
@@ -85,8 +91,12 @@ export class ReservationRepo {
       throw new Error('Deposit percent must be 30, 50, 70, or 100')
     }
 
-    const depositAmount = Math.round((preOrderTotal * depositPercent) / 100)
-    return depositAmount
+    // Tien coc: Decimal -> lam tron ve dong (VND khong co phan le)
+    const depositAmount = new Prisma.Decimal(preOrderTotal)
+      .mul(depositPercent)
+      .div(100)
+      .toDecimalPlaces(0, Prisma.Decimal.ROUND_HALF_UP)
+    return depositAmount.toNumber()
   }
 
   async ValidateTable(tableNodeId: number) {
@@ -150,8 +160,11 @@ export class ReservationRepo {
         }
         preOrderTotal = calculation.totalSku
         const result = await this.prismaService.$transaction(async (tx) => {
+          // Reservation gan voi 1 ban cu the -> chi nhanh lay tu ban (ADR 0001 D4)
+          const branchId = await resolveBranchIdByTableNode(tx as any, tableNodeId)
           const newReservation = await tx.reservation.create({
             data: {
+              branchId,
               customerPhone,
               customerName,
               guestCount,
@@ -181,6 +194,24 @@ export class ReservationRepo {
             type: TypeToOrderStatus.RESERVATION,
             userId,
           })
+          // Vo hieu hoa intent cu con treo cua chinh don nay, roi chot so tien coc phai thu
+          await tx.paymentIntent.updateMany({
+            where: {
+              provider: 'vnpay',
+              status: 'PENDING',
+              orderIds: { hasSome: order?.id ? [order.id] : [] },
+            },
+            data: { status: 'VOID', consumedAt: new Date() },
+          })
+          await tx.paymentIntent.create({
+            data: {
+              provider: 'vnpay',
+              reference: processedOrderId,
+              amount: new Prisma.Decimal(expectedDeposit),
+              orderIds: order?.id ? [order.id] : [],
+              payload: { type: TypeToOrderStatus.RESERVATION, userId, reservationId: newReservation.id },
+            },
+          })
           const urlVnPay = await this.vnpayService.createUrlVnpay({
             amount: expectedDeposit,
             req,
@@ -197,6 +228,7 @@ export class ReservationRepo {
       const [newReservation] = await Promise.all([
         this.prismaService.reservation.create({
           data: {
+            branchId: await resolveBranchIdByTableNode(this.prismaService, tableNodeId),
             customerPhone,
             customerName,
             guestCount,
@@ -274,7 +306,7 @@ export class ReservationRepo {
       }),
     ])
     return {
-      data,
+      data: toMoneyNumbers(data),
       total,
       page,
       limit,

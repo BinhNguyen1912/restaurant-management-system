@@ -1,3 +1,4 @@
+import { toMoneyNumbers } from '@/shared/service/money-serializer'
 import { Injectable } from '@nestjs/common'
 import { PrismaService } from '@/shared/service/prisma.service'
 
@@ -174,7 +175,7 @@ export class RecipeRepo {
       }),
     ])
     return {
-      data,
+      data: toMoneyNumbers(data),
       limit,
       page,
       totalPages: Math.ceil(totalItems / limit),

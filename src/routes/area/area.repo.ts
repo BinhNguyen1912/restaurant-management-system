@@ -1,3 +1,4 @@
+import { resolveBranchId } from '@/shared/service/branch.resolver'
 import {
   AreaBodyType,
   AreaQueryType,
@@ -12,8 +13,9 @@ import { Injectable } from '@nestjs/common'
 export class AreaRepo {
   constructor(private readonly prismaService: PrismaService) {}
 
-  create(data: AreaBodyType & { createdById: number }): Promise<AreaResType> {
-    return this.prismaService.area.create({ data })
+  async create(data: AreaBodyType & { createdById: number }): Promise<AreaResType> {
+    const branchId = await resolveBranchId(this.prismaService, { userId: data.createdById })
+    return this.prismaService.area.create({ data: { ...data, branchId } })
   }
 
   update(areaId: number, data: UpdateAreaBodyType & { updatedById: number }): Promise<AreaResType> {

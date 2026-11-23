@@ -24,8 +24,8 @@ export class TableController {
 
   @Get()
   @ZodSerializerDto(TableListResDTO)
-  async getListTable(@Body() body: EmptyBodyDTO) {
-    return await this.tableService.getListTable()
+  async getListTable(@ActiveUser('userId') userId: number) {
+    return await this.tableService.getListTable(userId)
   }
 
   @Get('/getTableDetail/:number')
