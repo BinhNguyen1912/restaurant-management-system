@@ -182,8 +182,8 @@ export class ProductRepository {
     })
   }
 
-  createdById(data: CreateProductBodyType, createdById: number, languageId: string): Promise<GetProductDetailType> {
-    const { skus, categories, ...productData } = data
+  async createdById(data: CreateProductBodyType, createdById: number, languageId: string): Promise<GetProductDetailType> {
+    const { skus, categories, description = '', ...productData } = data
 
     //Khi 2 bảng liên kết với nhau với mối quan hệ nhiều nhiều
     //chúng ta không cần dùng cú pháp , chúng ta vẫn có thể connect tới categories thông qua product.create
@@ -201,10 +201,12 @@ export class ProductRepository {
 
         Khi user thêm vào giỏ hoặc order, hệ thống kiểm tra lại real-time để tránh sai lệch.
          */
-    return toMoneyNumbers(this.prismaService.product.create({
+    const translation = await this.productLanguageSupport(productData.name, description, languageId, createdById)
+    const product = await this.prismaService.product.create({
       data: {
         ...productData,
         createdById,
+        ...(translation ? { productTranslations: { create: translation } } : {}),
         categories: {
           connect: categories.map((category) => ({ id: category })),
         },
@@ -240,7 +242,61 @@ export class ProductRepository {
           },
         },
       },
-    }))
+    })
+    return toMoneyNumbers(product)
+  }
+
+  /**
+   * Bảng Language có thể rỗng (seed chưa chạy) -> chỉ tạo translation khi ngôn ngữ tồn tại,
+   * tránh lỗi FK khiến việc tạo sản phẩm thất bại.
+   */
+  private async productLanguageSupport(name: string, description: string, languageId: string, createdById: number) {
+    const language = await this.prismaService.language.findFirst({ where: { id: languageId }, select: { id: true } })
+    if (!language) return null
+    return { name, description, languageId: language.id, createdById }
+  }
+
+  /**
+   * Cập nhật translation cho sản phẩm (tạo mới nếu chưa có).
+   * Trước đây tên/mô tả i18n không bao giờ được ghi -> mọi sản phẩm có productTranslations rỗng.
+   */
+  private async upsertProductTranslation({
+    productId,
+    name,
+    description,
+    languageId,
+    updatedById,
+  }: {
+    productId: number
+    name: string
+    description?: string
+    languageId: string
+    updatedById: number
+  }) {
+    const language = await this.prismaService.language.findFirst({ where: { id: languageId }, select: { id: true } })
+    if (!language) return
+
+    const existing = await this.prismaService.productTranslation.findFirst({
+      where: { productId, languageId: language.id },
+      select: { id: true, description: true },
+    })
+    if (existing) {
+      await this.prismaService.productTranslation.update({
+        where: { id: existing.id },
+        data: {
+          name,
+          // Không gửi mô tả => giữ nguyên mô tả cũ
+          description: description ?? existing.description,
+          updatedById,
+          deletedAt: null,
+          deletedById: null,
+        },
+      })
+      return
+    }
+    await this.prismaService.productTranslation.create({
+      data: { productId, name, description: description ?? '', languageId: language.id, createdById: updatedById },
+    })
   }
 
   async update({
@@ -259,7 +315,7 @@ export class ProductRepository {
      * SKU có trong DB và nó có luôn trong data của người dùng gửi lên thì tụi nó sẽ được cập nhật
      * SKU mà không tồn tại trong DB nhưng có trong data payload thì chúng sẽ được thêm mới
      */
-    const { skus: dataSkus, categories, ...productDataToUpdate } = data
+    const { skus: dataSkus, categories, description, ...productDataToUpdate } = data
 
     //1. Lấy ra danh sách SKU hiện tại trong DB
     const existingSkus = await this.prismaService.sKU.findMany({
@@ -356,6 +412,14 @@ export class ProductRepository {
         },
       }),
     ])
+    // Đồng bộ translation (tên + mô tả) theo ngôn ngữ của request; không chặn việc cập nhật SKU nếu lỗi
+    await this.upsertProductTranslation({
+      productId: id,
+      name: productDataToUpdate.name,
+      description,
+      languageId,
+      updatedById,
+    })
     const product = await this.getDetail({
       productId: id,
       isPublic: false,
