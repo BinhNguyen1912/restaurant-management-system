@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client'
-import { addRevenueByDate, orderRevenue, revenueByDateToNumbers } from '@/routes/dashboard/dashboard-money'
+import { addRevenueByDate, revenueByDateToNumbers } from '@/routes/dashboard/dashboard-money'
 import { resolveBranchId } from '@/shared/service/branch.resolver'
 import { Injectable } from '@nestjs/common'
 import { PrismaService } from '@/shared/service/prisma.service'
@@ -7,10 +7,14 @@ import { OrderStatus } from '@/shared/constants/order.constant'
 import { formatInTimeZone } from 'date-fns-tz'
 import { ProductIndicatorType } from '@/routes/dashboard/dashboard-indicator.dto'
 import { DashboardIndicatorQueryType, DashboardIndicatorType } from '@/routes/dashboard/dashboard.model'
+import { ReportsService } from '@/routes/reports/reports.service'
 
 @Injectable()
 export class DashboardIndicatorService {
-  constructor(private readonly prismaService: PrismaService) {}
+  constructor(
+    private readonly prismaService: PrismaService,
+    private readonly reportsService: ReportsService,
+  ) {}
 
   async getDashboardIndicator(
     { fromDate, toDate }: DashboardIndicatorQueryType,
@@ -69,8 +73,10 @@ export class DashboardIndicatorService {
       }) as any,
     ])
 
-    // Doanh thu
-    let revenue = 0
+    // Doanh thu: đọc từ projection `DailyBranchSummary` (nguồn: sổ cái), KHÔNG cộng Order nữa.
+    // Contract endpoint giữ nguyên để FE không vỡ.
+    const report = await this.reportsService.revenue({ fromDate, toDate, branchId }, actor)
+    const revenue = report.totals.grandTotal
     // Số lượng khách gọi món thành công
     const guestCount = guests.length
     // Số lượng đơn
@@ -88,10 +94,10 @@ export class DashboardIndicatorService {
       {} as Record<number, ProductIndicatorType>,
     )
 
-    // Doanh thu theo ngày — giữ Decimal khi cộng, chỉ đổi sang number khi trả ra
+    // Doanh thu theo ngày lấy từ cùng bảng projection (khớp đúng số của báo cáo)
     const revenueByDateObj: { [key: string]: Prisma.Decimal } = {}
 
-    // Lặp từ fromDate -> toDate để tạo object với key là ngày
+    // Lặp từ fromDate -> toDate để tạo object với key là ngày (ngày không có đơn vẫn hiện 0)
     const currentDate = new Date(fromDateObj)
     while (currentDate <= toDateObj) {
       const dateKey = formatInTimeZone(currentDate, 'Asia/Ho_Chi_Minh', 'dd/MM/yyyy')
@@ -99,16 +105,17 @@ export class DashboardIndicatorService {
       currentDate.setDate(currentDate.getDate() + 1)
     }
 
+    // projection trả ngày dạng yyyy-MM-dd; dashboard dùng dd/MM/yyyy
+    for (const row of report.rows) {
+      const [year, month, day] = row.date.split('-')
+      addRevenueByDate(revenueByDateObj, `${day}/${month}/${year}`, new Prisma.Decimal(row.grandTotal))
+    }
+
     // Số lượng bàn đang được sử dụng
     const tableNumberObj: { [key: number]: boolean } = {}
 
     orders.forEach((order) => {
       if (order.status === OrderStatus.PAID) {
-        // Doanh thu = grandTotal đã bóc tách của đơn (ADR 0001 D6), không cộng lại từ item
-        const revenueOfOrder = orderRevenue(order)
-
-        revenue = new Prisma.Decimal(revenue).add(revenueOfOrder).toDecimalPlaces(2).toNumber()
-
         // Cập nhật số lượng đặt thành công cho từng sản phẩm
         order.items.forEach((item) => {
           if (item.productId && productIndicatorObj[item.productId]) {
@@ -116,9 +123,6 @@ export class DashboardIndicatorService {
           }
         })
 
-        // Doanh thu theo ngày
-        const date = formatInTimeZone(order.createdAt, 'Asia/Ho_Chi_Minh', 'dd/MM/yyyy')
-        addRevenueByDate(revenueByDateObj, date, revenueOfOrder)
       }
 
       // Kiểm tra bàn đang sử dụng

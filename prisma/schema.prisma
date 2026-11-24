@@ -137,6 +137,42 @@ model Branch {
   ledgerEntries LedgerEntry[]
   cashShifts    CashShift[]
   cashMovements CashMovement[]
+  dailySummaries DailyBranchSummary[]
+}
+
+/// Projection doanh thu theo (ngày, chi nhánh, tiền tệ) — đọc từ SỔ CÁI, không cộng Order.status.
+/// Bảng dẫn xuất: sai thì TÍNH LẠI (job recompute), không sửa tay (ADR 0001 D8).
+model DailyBranchSummary {
+  id            Int      @id @default(autoincrement())
+  /// ngày theo timezone của chi nhánh (Asia/Ho_Chi_Minh), 00:00 local
+  date          DateTime @db.Date
+  branchId      Int
+  branch        Branch   @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  currency      String   @default("VND") @db.VarChar(3)
+
+  /// tiền món trước giảm giá (Σ Có REVENUE_FOOD + Σ Nợ DISCOUNT)
+  gross         Decimal  @default(0) @db.Decimal(14, 2)
+  discount      Decimal  @default(0) @db.Decimal(14, 2)
+  serviceCharge Decimal  @default(0) @db.Decimal(14, 2)
+  tip           Decimal  @default(0) @db.Decimal(14, 2)
+  tax           Decimal  @default(0) @db.Decimal(14, 2)
+  /// doanh thu thuần = gross − discount + serviceCharge (không gồm thuế, không gồm tip)
+  net           Decimal  @default(0) @db.Decimal(14, 2)
+  /// tiền khách thực trả = net + tip + tax + chênh lệch làm tròn
+  grandTotal    Decimal  @default(0) @db.Decimal(14, 2)
+
+  cashIn        Decimal  @default(0) @db.Decimal(14, 2)
+  vnpayIn       Decimal  @default(0) @db.Decimal(14, 2)
+  /// tiền đã hoàn cho khách trong ngày (ghi dương, trừ vào doanh thu)
+  refund        Decimal  @default(0) @db.Decimal(14, 2)
+  cogs          Decimal  @default(0) @db.Decimal(14, 2)
+  /// số đơn có bút toán thu tiền trong ngày
+  orderCount    Int      @default(0)
+
+  updatedAt     DateTime @updatedAt
+
+  @@unique([date, branchId, currency])
+  @@index([branchId, date])
 }
 
 model User {

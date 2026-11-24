@@ -41,6 +41,8 @@ const StaffPolicy: RolePolicy = {
   'CASH-SHIFTS': ['GET', 'POST'],
   // Nhật ký sổ cái + đối soát: dữ liệu kế toán, chỉ ADMIN (STAFF xem được ca/két của mình)
   LEDGER: [],
+  // Báo cáo doanh thu (đọc projection từ sổ cái): dữ liệu tài chính, chỉ ADMIN
+  REPORTS: [],
   // Cấu hình thuế/phí của chi nhánh: STAFF chỉ ĐỌC (để FE hiện dòng VAT khi tạo đơn)
   BRANCHES: ['GET'],
   // chi doc: noi dung menu + danh muc role
