@@ -24,6 +24,7 @@
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "seed:ledger-accounts": "npx ts-node -r tsconfig-paths/register src/scripts/ScriptOfSystem/ledger-accounts.seed.ts",
     "seed:catalog": "npx ts-node -r tsconfig-paths/register src/scripts/ScriptOfSystem/catalog.seed.ts",
+    "seed:demo": "npx ts-node -r tsconfig-paths/register src/scripts/ScriptOfSystem/demo-data.seed.ts",
     "db:dump": "npx ts-node -r tsconfig-paths/register src/scripts/ScriptOfSystem/dump-data.ts"
   },
   "dependencies": {
