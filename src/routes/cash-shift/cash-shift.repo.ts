@@ -29,6 +29,7 @@ const movementSelect = {
   type: true,
   reason: true,
   amount: true,
+  evidenceUrls: true,
   createdById: true,
   createdAt: true,
 } as const
@@ -100,6 +101,7 @@ export class CashShiftRepo {
         type: data.type,
         reason: data.reason,
         amount: new Prisma.Decimal(data.amount),
+        evidenceUrls: data.evidenceUrls ?? [],
         createdById: data.createdById ?? null,
       },
       select: movementSelect,

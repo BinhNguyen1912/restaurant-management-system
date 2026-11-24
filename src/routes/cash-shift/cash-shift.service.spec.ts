@@ -38,6 +38,16 @@ function makeService(overrides: Overrides = {}) {
   }
 
   const repo = {
+    addMovement: jest.fn(async (_shiftId: number, _branchId: number, data: any) => ({
+      id: 1,
+      shiftId: 7,
+      type: data.type,
+      reason: data.reason,
+      amount: new Prisma.Decimal(data.amount),
+      evidenceUrls: data.evidenceUrls ?? [],
+      createdById: data.createdById ?? null,
+      createdAt: new Date(),
+    })),
     findById: jest.fn(async () => shift),
     findOpenByBranch: jest.fn(async () => shift),
     findOpenByStaff: jest.fn(async () => null),
@@ -125,5 +135,22 @@ describe('CashShiftService.close', () => {
     await expect(service.close(7, staff, { countedCash: 1_000_000 })).rejects.toBeInstanceOf(BadRequestException)
     expect(repo.findUnpaidCashOrderIds).toHaveBeenCalled()
     expect(ledgerPosting.postEntry).not.toHaveBeenCalled()
+  })
+})
+
+describe('CashShiftService.addMovement — chứng từ', () => {
+  it('lưu ảnh/video chứng từ của khoản chi', async () => {
+    const { service, repo } = makeService()
+    const urls = [
+      'https://res.cloudinary.com/demo/image/upload/hoa-don.jpg',
+      'https://res.cloudinary.com/demo/video/upload/bien-nhan.mp4',
+    ]
+    await service.addMovement(7, staff, {
+      type: 'OUT',
+      reason: 'mua đá',
+      amount: 50_000,
+      evidenceUrls: urls,
+    })
+    expect(repo.addMovement).toHaveBeenCalledWith(7, 1, expect.objectContaining({ evidenceUrls: urls }))
   })
 })

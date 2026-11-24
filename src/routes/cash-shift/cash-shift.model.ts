@@ -14,6 +14,8 @@ export const CashMovementSchema = z.object({
   type: CashMovementTypeEnum,
   reason: z.string(),
   amount: moneyOutputSchema,
+  /** Ảnh/video chứng từ (hoá đơn, biên nhận) */
+  evidenceUrls: z.array(z.string()).default([]),
   createdById: z.number().nullable(),
   createdAt: z.date(),
 })
@@ -75,6 +77,14 @@ export const CloseCashShiftSchema = z.object({
   note: z.string().trim().max(500).optional(),
 })
 
+export const CashEvidenceUrlSchema = z
+  .string()
+  .trim()
+  .url('Chứng từ phải là URL hợp lệ')
+  .max(500)
+  // Chỉ nhận link https (Cloudinary) — tránh dán link nội bộ/lạ vào sổ
+  .refine((url) => url.startsWith('https://'), 'Chứng từ phải là link https')
+
 export const CreateCashMovementSchema = z.object({
   type: CashMovementTypeEnum,
   reason: z.string().trim().min(1, 'Phải ghi lý do thu/chi').max(255),
@@ -83,6 +93,8 @@ export const CreateCashMovementSchema = z.object({
     .positive('Số tiền phải lớn hơn 0')
     .max(10_000_000_000, 'Số tiền quá lớn')
     .transform((value) => Math.round(value)),
+  /** Tối đa 5 ảnh/video chứng từ — upload qua POST /media/upload trước */
+  evidenceUrls: z.array(CashEvidenceUrlSchema).max(5, 'Tối đa 5 chứng từ').optional().default([]),
 })
 
 export const CashShiftParamSchema = z.object({

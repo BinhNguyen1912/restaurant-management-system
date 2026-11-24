@@ -983,6 +983,8 @@ model CashMovement {
   type        CashMovementType
   reason      String           @db.VarChar(255)
   amount      Decimal          @db.Decimal(14, 2)
+  /// Ảnh/video chứng từ (hoá đơn, biên nhận) — Cloudinary URL
+  evidenceUrls String[]        @default([])
   branchId    Int
   createdById Int?
   createdAt   DateTime         @default(now())
