@@ -16,9 +16,16 @@ export const getCategoryParamSchema = z
   .strict()
 export const getCategoryDetailSchema = CategoryIncludeTranslationSchema
 export const CategoryBodySchema = CategorySchema.pick({
-  logo: true,
   name: true,
   parentCategoryId: true,
+}).extend({
+  // Khi TẠO/SỬA danh mục thì ảnh là bắt buộc và phải là URL hợp lệ
+  logo: z
+    .string({ message: 'Error.LogoMustBeString' })
+    .trim()
+    .min(2, { message: 'Error.TooShort' })
+    .max(500, { message: 'Error.TooLong' })
+    .refine((value) => !value || /^(https?:)?\/\//.test(value), { message: 'Error.InvalidUrl' }),
 })
 export const UpdateCategoryBodySchema = CategoryBodySchema.partial()
 export type CategoryBodyType = z.infer<typeof CategoryBodySchema>
