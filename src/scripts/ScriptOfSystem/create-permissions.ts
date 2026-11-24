@@ -101,6 +101,7 @@ const CustomerPathAllowlist: Record<string, string[]> = {
     '/guest/new-order',
     '/guest/orders',
     '/guest/call-staff',
+    '/guest/tax-settings',
   ],
   MESSAGES: ['/messages/guest', '/messages/guest-conversation'],
   RESERVATION: ['/reservation/customer'],

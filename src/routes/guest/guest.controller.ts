@@ -59,6 +59,12 @@ export class GuestController {
     return result
   }
 
+  /** Cấu hình VAT/phí của chi nhánh bàn khách đang ngồi — để FE hiện breakdown trước khi đặt món */
+  @Get('tax-settings')
+  async taxSettings(@ActiveUser('userId') guestId: number) {
+    return await this.guestService.getBranchTaxSettings(guestId)
+  }
+
   @Get('orders')
   @ZodSerializerDto(GuestOrdersListDTO)
   async getOrders(@Query() query: GuestOrdersQueryDTO, @ActiveUser('userId') guestId: number) {
