@@ -555,6 +555,14 @@ export class VnPayService {
         },
         tx,
       )
+
+      // Đơn tất toán của reservation: chuyển cọc sang doanh thu (bút toán RIÊNG, idempotent theo reservation)
+      if (!isDeposit && order.reservationId) {
+        await this.ledgerPosting.settleReservationDeposit(
+          { reservationId: order.reservationId, grandTotal: order.grandTotal, branchId: order.branchId, orderId: order.id },
+          tx,
+        )
+      }
     }
   }
 
