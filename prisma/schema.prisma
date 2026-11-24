@@ -116,6 +116,12 @@ model Branch {
   address   String   @default("")
   timezone  String   @default("Asia/Ho_Chi_Minh") @db.VarChar(64)
   isActive  Boolean  @default(true)
+  /// VAT (%) áp cho hoá đơn của chi nhánh — 0 = không tính thuế
+  taxRate          Decimal @default(0) @db.Decimal(5, 2)
+  /// Phí phục vụ (%) tính trên tiền món sau giảm giá
+  serviceChargeRate Decimal @default(0) @db.Decimal(5, 2)
+  /// Giá trên menu đã bao gồm VAT chưa (VN: thường là ĐÃ gồm) — quyết định VAT cộng thêm hay trích ra
+  pricesIncludeTax Boolean @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -467,6 +473,8 @@ model Order {
   subtotal            Decimal              @default(0) @db.Decimal(14, 2)
   discountTotal       Decimal              @default(0) @db.Decimal(14, 2)
   serviceChargeRate   Decimal              @default(0) @db.Decimal(5, 2)
+  /// VAT (%) áp tại thời điểm tạo đơn — đổi cấu hình chi nhánh không làm sai đơn cũ
+  taxRate             Decimal              @default(0) @db.Decimal(5, 2)
   serviceChargeAmount Decimal              @default(0) @db.Decimal(14, 2)
   tipAmount           Decimal              @default(0) @db.Decimal(14, 2)
   taxTotal            Decimal              @default(0) @db.Decimal(14, 2)

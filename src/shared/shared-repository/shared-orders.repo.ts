@@ -196,11 +196,22 @@ export class SharedOrdersRepo {
   }: {
     tableNodeId: number
     tx: PrismaTransaction
-  }): Promise<TableNodeType & { branchId: number }> {
+  }): Promise<
+    TableNodeType & {
+      branchId: number
+      taxRate: Prisma.Decimal.Value
+      serviceChargeRate: Prisma.Decimal.Value
+      pricesIncludeTax: boolean
+    }
+  > {
     const table = await tx.tableNode.findUniqueOrThrow({
       where: {
         id: tableNodeId,
         deletedAt: null,
+      },
+      include: {
+        // Cấu hình thuế/phí của chi nhánh: đơn mới lấy theo đây rồi snapshot vào đơn
+        branch: { select: { taxRate: true, serviceChargeRate: true, pricesIncludeTax: true } },
       },
     })
 
@@ -214,7 +225,12 @@ export class SharedOrdersRepo {
       throw new BadRequestException(`Bàn ${table.name || table.id} đã được đặt trước. Vui lòng chọn bàn khác!`)
     }
 
-    return table
+    return {
+      ...table,
+      taxRate: table.branch.taxRate,
+      serviceChargeRate: table.branch.serviceChargeRate,
+      pricesIncludeTax: table.branch.pricesIncludeTax,
+    }
   }
 
   private async validateSku({ orderItems, tx }: { orderItems: CreateNewOrderType; tx: PrismaTransaction }) {
@@ -318,6 +334,9 @@ export class SharedOrdersRepo {
         // Tinh tien bang Decimal (ADR 0001 D5/D6); tip khoan lam => 0
         const money = computeOrderMoney({
           lines: validatedSkus.map((item) => ({ price: item.sku.price, quantity: item.quantity })),
+          taxRate: table.taxRate,
+          serviceChargeRate: table.serviceChargeRate,
+          pricesIncludeTax: table.pricesIncludeTax,
         })
 
         const payment = await tx.payment.create({
@@ -340,8 +359,9 @@ export class SharedOrdersRepo {
             discountTotal: money.discountTotal,
             serviceChargeRate: money.serviceChargeRate,
             serviceChargeAmount: money.serviceChargeAmount,
-            tipAmount: money.tipAmount,
+            taxRate: money.taxRate,
             taxTotal: money.taxTotal,
+            tipAmount: money.tipAmount,
             grandTotal: money.grandTotal,
             items: {
               create: validatedSkus.map((item) => ({
@@ -638,6 +658,9 @@ export class SharedOrdersRepo {
 
       const money = computeOrderMoney({
         lines: validatedSkus.map((item) => ({ price: item.sku.price, quantity: item.quantity })),
+        taxRate: table.taxRate,
+        serviceChargeRate: table.serviceChargeRate,
+        pricesIncludeTax: table.pricesIncludeTax,
       })
       // Dat coc: so tien can thu la tien coc, con grandTotal van la gia tri don
       const amountToPay = depositAmount ? depositAmount : money.grandTotal
@@ -661,8 +684,9 @@ export class SharedOrdersRepo {
           discountTotal: money.discountTotal,
           serviceChargeRate: money.serviceChargeRate,
           serviceChargeAmount: money.serviceChargeAmount,
-          tipAmount: money.tipAmount,
+          taxRate: money.taxRate,
           taxTotal: money.taxTotal,
+          tipAmount: money.tipAmount,
           grandTotal: money.grandTotal,
           items: {
             create: validatedSkus.map((item) => ({
