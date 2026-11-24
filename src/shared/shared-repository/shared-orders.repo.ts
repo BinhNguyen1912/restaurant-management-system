@@ -16,6 +16,7 @@ import {
 } from '@/shared/models/shared-order.model'
 import { PrismaService } from '@/shared/service/prisma.service'
 import { RedisService } from '@/shared/service/redis.service'
+import { AuditLogService } from '@/shared/service/audit-log.service'
 import { AppGateway } from '@/webSockets/app.gateway'
 import { InjectQueue } from '@nestjs/bullmq'
 import { BadRequestException } from '@nestjs/common'
@@ -29,6 +30,7 @@ export class SharedOrdersRepo {
     private readonly redisService: RedisService,
     @InjectQueue(Inventory_Queue) private readonly inventoryQueue: Queue,
     private readonly appGateway: AppGateway,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   async validateIngredientByLuaBeforeCreateOrder(orderItems: CreateNewOrderType): Promise<{
@@ -764,13 +766,40 @@ export class SharedOrdersRepo {
   async updateOrder({
     data,
     updatedById,
+    actorRole,
   }: {
     data: UpdateOrderType & { orderId: number }
     updatedById: number
+    actorRole?: string | null
   }): Promise<UpdateOrderResType> {
-    const { orderId, skuId, quantity, status } = data
+    const { orderId, skuId, quantity, status, reason, discountTotal } = data
+    const cancelled = status === OrderStatus.CANCELLED
+    // Huỷ đơn / hoàn tiền mà không có lý do thì không giải trình được gì (ticket #10)
+    if (cancelled && !reason?.trim()) {
+      throw new BadRequestException('Huỷ đơn phải ghi lý do (reason)')
+    }
+
     try {
       const result = await this.prismaService.$transaction(async (tx) => {
+        const current = await tx.order.findUnique({
+          where: { id: orderId },
+          select: {
+            id: true,
+            status: true,
+            branchId: true,
+            paymentId: true,
+            discountTotal: true,
+            subtotal: true,
+            grandTotal: true,
+            taxRate: true,
+            serviceChargeRate: true,
+            items: { select: { skuPrice: true, quantity: true } },
+            payment: { select: { status: true } },
+            branch: { select: { pricesIncludeTax: true } },
+          },
+        })
+        if (!current) throw new BadRequestException(`Không tìm thấy đơn #${orderId}`)
+
         await tx.productSKUSnapshot.updateMany({
           where: {
             orderId: orderId,
@@ -780,6 +809,34 @@ export class SharedOrdersRepo {
             quantity: quantity,
           },
         })
+
+        // ---- giảm giá: tính lại toàn bộ tiền bằng Decimal rồi mới ghi (ADR 0001 D6) ----
+        let moneyUpdate: Record<string, Prisma.Decimal> = {}
+        const newDiscount = discountTotal === undefined ? null : new Prisma.Decimal(discountTotal)
+        if (newDiscount && !newDiscount.equals(current.discountTotal)) {
+          const money = computeOrderMoney({
+            lines: current.items.map((item) => ({ price: item.skuPrice, quantity: item.quantity })),
+            discountTotal: newDiscount,
+            taxRate: current.taxRate,
+            serviceChargeRate: current.serviceChargeRate,
+            pricesIncludeTax: current.branch?.pricesIncludeTax ?? true,
+          })
+          moneyUpdate = {
+            discountTotal: money.discountTotal,
+            subtotal: money.subtotal,
+            serviceChargeAmount: money.serviceChargeAmount,
+            taxTotal: money.taxTotal,
+            grandTotal: money.grandTotal,
+          }
+          // chỉ đổi số tiền phải thu khi khách chưa trả; đã trả rồi thì phải hoàn tiền (luồng riêng)
+          if (current.payment?.status === PaymentStatus.PENDING) {
+            await tx.payment.update({
+              where: { id: current.paymentId },
+              data: { amount: money.grandTotal },
+            })
+          }
+        }
+
         const updatedOrder = await tx.order.update({
           where: {
             id: orderId,
@@ -787,6 +844,7 @@ export class SharedOrdersRepo {
           data: {
             status,
             updatedById,
+            ...moneyUpdate,
           },
           include: {
             items: {
@@ -807,6 +865,47 @@ export class SharedOrdersRepo {
             },
           },
         })
+
+        // ---- audit trong CÙNG transaction: huỷ đơn rollback thì nhật ký cũng rollback ----
+        if (cancelled && current.status !== OrderStatus.CANCELLED) {
+          await this.auditLogService.record(
+            {
+              actorId: updatedById,
+              actorRole: actorRole ?? null,
+              action: 'ORDER_CANCELLED',
+              entityType: 'ORDER',
+              entityId: orderId,
+              before: { status: current.status, grandTotal: current.grandTotal.toString() },
+              after: { status, grandTotal: updatedOrder.grandTotal.toString() },
+              reason: reason?.trim(),
+              branchId: current.branchId,
+            },
+            tx,
+          )
+        }
+
+        if (newDiscount && !newDiscount.equals(current.discountTotal)) {
+          await this.auditLogService.record(
+            {
+              actorId: updatedById,
+              actorRole: actorRole ?? null,
+              action: 'ORDER_DISCOUNT_CHANGED',
+              entityType: 'ORDER',
+              entityId: orderId,
+              before: {
+                discountTotal: current.discountTotal.toString(),
+                grandTotal: current.grandTotal.toString(),
+              },
+              after: {
+                discountTotal: updatedOrder.discountTotal.toString(),
+                grandTotal: updatedOrder.grandTotal.toString(),
+              },
+              reason: reason?.trim() || null,
+              branchId: current.branchId,
+            },
+            tx,
+          )
+        }
 
         return updatedOrder
       })

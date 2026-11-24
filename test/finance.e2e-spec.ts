@@ -24,11 +24,27 @@ describe('Finance (e2e)', () => {
     branchIds: [],
     reportEntryKeys: [] as string[],
     reconciliationRunIds: [] as number[],
+    auditEntityIds: [] as number[],
   }
   let originalBranchSettings: { id: number; taxRate: string; serviceChargeRate: string; pricesIncludeTax: boolean } | null = null
 
   const api = () => request(app.getHttpServer())
   const auth = () => ({ Authorization: `Bearer ${token}` })
+
+  /**
+   * Bàn để test: ưu tiên bàn đang AVAILABLE; hết bàn (test trước để lại OCCUPIED) thì
+   * giải phóng 1 bàn. Test phải chạy được độc lập, không phụ thuộc thứ tự.
+   */
+  const takeTable = async (branchId: number) => {
+    const free = await prisma.tableNode.findFirst({
+      where: { branchId, status: 'AVAILABLE' },
+      orderBy: { id: 'asc' },
+    })
+    if (free) return free
+    const anyTable = await prisma.tableNode.findFirst({ where: { branchId }, orderBy: { id: 'asc' } })
+    if (!anyTable) return null
+    return prisma.tableNode.update({ where: { id: anyTable.id }, data: { status: 'AVAILABLE' } })
+  }
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile()
@@ -87,6 +103,9 @@ describe('Finance (e2e)', () => {
     if (created.paymentIds.length) await attempt('payments', () => prisma.payment.deleteMany({ where: { id: { in: created.paymentIds } } }))
     if (created.guestIds.length) await attempt('guests', () => prisma.guest.deleteMany({ where: { id: { in: created.guestIds } } }))
     if (created.areaIds.length) await attempt('areas', () => prisma.area.deleteMany({ where: { id: { in: created.areaIds } } }))
+    if (created.auditEntityIds.length) {
+      await attempt('audit logs', () => prisma.auditLog.deleteMany({ where: { entityId: { in: created.auditEntityIds } } }))
+    }
     if (created.reconciliationRunIds.length) {
       await attempt('reconciliation items', () => prisma.reconciliationItem.deleteMany({ where: { runId: { in: created.reconciliationRunIds } } }))
       await attempt('reconciliation runs', () => prisma.reconciliationRun.deleteMany({ where: { id: { in: created.reconciliationRunIds } } }))
@@ -165,7 +184,7 @@ describe('Finance (e2e)', () => {
       .send({ taxRate: 8, serviceChargeRate: 5, pricesIncludeTax: true })
       .expect(200)
 
-    const table = await prisma.tableNode.findFirst({ where: { branchId: branch!.id, status: 'AVAILABLE' }, orderBy: { id: 'asc' } })
+    const table = await takeTable(branch!.id)
     expect(table).toBeTruthy()
 
     const guestLogin = await api()
@@ -313,7 +332,8 @@ describe('Finance (e2e)', () => {
     const today = new Date().toISOString().slice(0, 10)
 
     // tạo 1 đơn tiền mặt thật rồi thu tiền (bút toán sinh trong cùng transaction)
-    const table = await prisma.tableNode.findFirst({ where: { branchId: branch!.id, status: 'AVAILABLE' }, orderBy: { id: 'asc' } })
+    const table = await takeTable(branch!.id)
+    expect(table).toBeTruthy()
     const guestLogin = await api()
       .post('/guest/login')
       .send({ name: 'e2e đối soát', tableNodeId: table!.id, token: table!.token })
@@ -353,6 +373,104 @@ describe('Finance (e2e)', () => {
     expect(list.body.data.map((row: any) => row.id)).toContain(run.body.run.id)
     const updated = await api().post(`/reconciliation/items/${item.id}/status`).set(auth()).send({ status: 'RESOLVED' }).expect(201)
     expect(updated.body.item.status).toBe('RESOLVED')
+  })
+
+  it('audit: huỷ đơn thiếu lý do -> 400; có lý do -> ghi nhật ký kèm before/after + reason', async () => {
+    const branch = await prisma.branch.findFirst({ where: { isActive: true }, orderBy: { id: 'asc' } })
+    const table = await takeTable(branch!.id)
+    expect(table).toBeTruthy()
+    const guestLogin = await api()
+      .post('/guest/login')
+      .send({ name: 'e2e audit', tableNodeId: table!.id, token: table!.token })
+      .expect(201)
+    const guestId = guestLogin.body.guest.id as number
+    created.guestIds.push(guestId)
+    const sku = await prisma.sKU.findFirst({ where: { product: { deletedAt: null, status: 'ACTIVE' } }, orderBy: { id: 'asc' } })
+    const order = await api()
+      .post(`/orders/create-order-for-guest/${guestId}`)
+      .set(auth())
+      .send([{ skuId: sku!.id, quantity: 1 }])
+      .expect(201)
+    const orderId = order.body.id as number
+    created.orderIds.push(orderId)
+    created.paymentIds.push(order.body.paymentId)
+    created.auditEntityIds.push(orderId)
+
+    // 1) thiếu lý do -> 400, và KHÔNG được ghi audit rác
+    const rejected = await api()
+      .put(`/orders/${orderId}`)
+      .set(auth())
+      .send({ status: 'CANCELLED', skuId: sku!.id, quantity: 1 })
+    expect([400, 422]).toContain(rejected.status)
+    expect(await prisma.auditLog.count({ where: { entityType: 'ORDER', entityId: orderId } })).toBe(0)
+
+    // 2) có lý do -> huỷ + ghi audit
+    await api()
+      .put(`/orders/${orderId}`)
+      .set(auth())
+      .send({ status: 'CANCELLED', skuId: sku!.id, quantity: 1, reason: 'e2e: khách đổi ý' })
+      .expect(200)
+
+    const audit = await prisma.auditLog.findFirst({ where: { entityType: 'ORDER', entityId: orderId } })
+    expect(audit).toBeTruthy()
+    expect(audit!.action).toBe('ORDER_CANCELLED')
+    expect(audit!.reason).toBe('e2e: khách đổi ý')
+    expect(audit!.actorId).toBeTruthy()
+    expect(audit!.actorRole).toBe('ADMIN')
+    expect((audit!.before as any).status).toBe('PENDING')
+    expect((audit!.after as any).status).toBe('CANCELLED')
+
+    // 3) đọc qua API: thấy bản ghi, và không có endpoint sửa/xoá
+    const list = await api().get(`/audit-logs?entityType=ORDER&entityId=${orderId}`).set(auth()).expect(200)
+    expect(list.body.data.some((row: any) => row.id === audit!.id)).toBe(true)
+    expect((await api().delete(`/audit-logs/${audit!.id}`).set(auth())).status).toBe(404)
+    expect((await api().put(`/audit-logs/${audit!.id}`).set(auth()).send({ reason: 'x' })).status).toBe(404)
+  })
+
+  it('audit: sửa giá sản phẩm -> ghi nhật ký PRODUCT_PRICE_CHANGED với giá cũ/mới', async () => {
+    // chọn sản phẩm KHÔNG có biến thể: 1 SKU, giá = basePrice -> payload hợp lệ, đổi giá là đổi basePrice
+    const candidates = await prisma.product.findMany({
+      where: { deletedAt: null, skus: { some: { deletedAt: null } } },
+      include: { skus: { where: { deletedAt: null } }, categories: true },
+      orderBy: { id: 'asc' },
+      take: 50,
+    })
+    // variants là Json -> lọc ở JS: chỉ lấy sản phẩm 1 SKU, không biến thể (payload update đơn giản, hợp lệ)
+    const product = candidates.find(
+      (row) => Array.isArray(row.variants) && (row.variants as unknown[]).length === 0 && row.skus.length === 1,
+    )
+    expect(product).toBeTruthy()
+    created.auditEntityIds.push(product!.id)
+
+    const sku = product!.skus[0]
+    const payload = (basePrice: number) => ({
+      name: product!.name,
+      basePrice,
+      virtualPrice: Number(product!.virtualPrice ?? basePrice),
+      variants: [],
+      publishedAt: product!.publishedAt,
+      images: product!.images,
+      categories: product!.categories.map((category) => category.id),
+      skus: [{ image: product!.images[0] ?? '', price: basePrice, value: product!.name }],
+    })
+
+    const before = Number(product!.basePrice)
+    const newPrice = before + 1000
+    await api().put(`/manage-product/products/${product!.id}`).set(auth()).send(payload(newPrice)).expect(200)
+
+    const audit = await prisma.auditLog.findFirst({
+      where: { entityType: 'PRODUCT', entityId: product!.id, action: 'PRODUCT_PRICE_CHANGED' },
+      orderBy: { id: 'desc' },
+    })
+    expect(audit).toBeTruthy()
+    const change = (audit!.after as any).changes.find((row: any) => row.skuId === sku.id)
+    expect(Number(change.from)).toBe(before)
+    expect(Number(change.to)).toBe(newPrice)
+
+    // trả giá về như cũ để không làm lệch dữ liệu dev
+    await api().put(`/manage-product/products/${product!.id}`).set(auth()).send(payload(before)).expect(200)
+    const restored = await prisma.sKU.findUnique({ where: { id: sku.id }, select: { price: true } })
+    expect(Number(restored!.price)).toBe(before)
   })
 
   it('scope chi nhánh: token chi nhánh 1 không đọc được khu vực của chi nhánh khác', async () => {

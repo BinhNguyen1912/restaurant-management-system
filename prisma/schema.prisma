@@ -139,6 +139,7 @@ model Branch {
   cashMovements CashMovement[]
   dailySummaries DailyBranchSummary[]
   reconciliationRuns ReconciliationRun[]
+  auditLogs AuditLog[]
 }
 
 /// Projection doanh thu theo (ngày, chi nhánh, tiền tệ) — đọc từ SỔ CÁI, không cộng Order.status.
@@ -1277,4 +1278,45 @@ model ReconciliationItem {
 
   @@index([runId, kind])
   @@index([paymentId])
+}
+
+/// Nhật ký thao tác nhạy cảm (ticket #10 / ADR 0001 D9): huỷ đơn, giảm giá, hoàn tiền, sửa giá.
+/// CHỈ GHI qua AuditLogService, CHỈ ĐỌC qua API — không có endpoint sửa/xoá.
+enum AuditAction {
+  ORDER_CANCELLED
+  ORDER_DISCOUNT_CHANGED
+  ORDER_PRICE_CHANGED
+  PRODUCT_PRICE_CHANGED
+  PAYMENT_REFUNDED
+}
+
+enum AuditEntityType {
+  ORDER
+  PRODUCT
+  SKU
+  PAYMENT
+}
+
+model AuditLog {
+  id         Int             @id @default(autoincrement())
+  /// User.id người thao tác (null = hệ thống/cron)
+  actorId    Int?
+  /// tên role tại thời điểm thao tác (ADMIN/STAFF/...) — giữ chuỗi, không FK: role đổi tên vẫn đọc được
+  actorRole  String?         @db.VarChar(50)
+  action     AuditAction
+  entityType AuditEntityType
+  entityId   Int
+  /// trạng thái trước/sau để giải trình (Json: chỉ trường thay đổi)
+  before     Json?
+  after      Json?
+  /// lý do — BẮT BUỘC với huỷ đơn / hoàn tiền
+  reason     String?         @db.VarChar(500)
+  branchId   Int?
+  branch     Branch?         @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  createdAt  DateTime        @default(now())
+
+  @@index([entityType, entityId])
+  @@index([action, createdAt])
+  @@index([actorId, createdAt])
+  @@index([branchId, createdAt])
 }

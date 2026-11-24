@@ -32,8 +32,13 @@ export class OrdersController {
 
   @Put(':id')
   @ZodSerializerDto(UpdateOrderResDTO)
-  async update(@Param() param: OrderIdParamDTO, @Body() body: UpdateOrderDTO, @ActiveUser('userId') userId: number) {
-    return await this.ordersService.update({ orderId: param.id, body, updatedById: userId })
+  async update(@Param() param: OrderIdParamDTO, @Body() body: UpdateOrderDTO, @ActiveUser() user: AccessTokenPayload) {
+    return await this.ordersService.update({
+      orderId: param.id,
+      body,
+      updatedById: user.userId,
+      actorRole: user.roleName,
+    })
   }
 
   @Post('create-order-for-guest/:guestId')

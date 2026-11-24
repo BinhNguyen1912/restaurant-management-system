@@ -12,6 +12,7 @@ import { PrismaService } from '@/shared/service/prisma.service'
 import { LedgerPostingService } from '@/shared/service/ledger-posting.service'
 import { LedgerIntegrityService } from '@/shared/service/ledger-integrity.service'
 import { RedisService } from '@/shared/service/redis.service'
+import { AuditLogService } from '@/shared/service/audit-log.service'
 import { TokenService } from '@/shared/service/token.service'
 import { SharedGuestRepo } from '@/shared/shared-repository/shared-guest.repo'
 import { SharedOrdersRepo } from '@/shared/shared-repository/shared-orders.repo'
@@ -44,6 +45,7 @@ const sharedService = [
   PaymentApiKeyGuard,
   CloudinaryService,
   RedisService,
+  AuditLogService,
   SharedSkuRecipeIngredientRepo,
   InventoryProcessor,
   AppGateway,

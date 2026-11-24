@@ -88,6 +88,16 @@ export const UpdateOrderSchema = z.object({
   ]),
   quantity: z.number(),
   skuId: z.number(),
+  /**
+   * Lý do — BẮT BUỘC khi huỷ đơn (kiểm ở service, để câu lỗi rõ ràng).
+   * Ghi vào audit log để giải trình khi đối soát lệch (ticket #10).
+   */
+  reason: z.string().trim().max(500).optional(),
+  /**
+   * Giảm giá áp thêm trên đơn (đồng). Có giá trị thì BE tính lại tiền và ghi audit
+   * `ORDER_DISCOUNT_CHANGED` với before/after — không cho sửa tiền mà không có dấu vết.
+   */
+  discountTotal: z.coerce.number().min(0).optional(),
 })
 export const UpdateOrderResSchema = z.object({
   order: OrderResSchema,
