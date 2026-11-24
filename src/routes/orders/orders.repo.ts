@@ -1,25 +1,40 @@
+import { resolveBranchId } from '@/shared/service/branch.resolver'
+import { toMoneyNumbers } from '@/shared/service/money-serializer'
 import { NoOrdersToPayException, OrderNotFoundException } from '@/routes/orders/orders.error'
 import { OrderQueryType, OrdersListResType, OrderDetailType } from '@/routes/orders/orders.model'
-import { OrderStatus, OrderStatusType, PaymentStatus, TypeToOrderStatusType } from '@/shared/constants/order.constant'
+import {
+  OrderStatus,
+  OrderStatusType,
+  PaymentMethod,
+  PaymentStatus,
+  TypeToOrderStatusType,
+} from '@/shared/constants/order.constant'
+import { isSameAmount } from '@/shared/service/payment-hardening'
+import { LedgerPostingService } from '@/shared/service/ledger-posting.service'
+import { buildOrderLedgerLines } from '@/shared/service/order-ledger-lines'
 import { WS_EVENTS } from '@/shared/constants/others.constant'
 import { PrismaService } from '@/shared/service/prisma.service'
 import { AppGateway } from '@/webSockets/app.gateway'
-import { Injectable } from '@nestjs/common'
+import { BadRequestException, Injectable } from '@nestjs/common'
 import { Prisma } from '@prisma/client'
 
 @Injectable()
 export class OrdersRepo {
   constructor(
     private readonly prismaService: PrismaService,
+    private readonly ledgerPosting: LedgerPostingService,
     private readonly appGateway: AppGateway,
   ) {}
 
-  async list(query: OrderQueryType): Promise<OrdersListResType> {
+  async list(query: OrderQueryType & { branchId?: number }): Promise<OrdersListResType> {
     const { limit, page } = query
     const take = limit ?? 10
     const skip = (page - 1) * take
     const where: Prisma.OrderWhereInput = {
       deletedAt: null,
+    }
+    if (query.branchId) {
+      where.branchId = query.branchId as number
     }
     if (query.tableNodeId) {
       where.tableNodeId = query.tableNodeId as number
@@ -148,7 +163,7 @@ export class OrdersRepo {
       }),
     ])
     return {
-      data: data, // Type assertion for complex Prisma types
+      data: toMoneyNumbers(data), // Type assertion for complex Prisma types
       limit,
       page,
       totalItems,
@@ -181,7 +196,7 @@ export class OrdersRepo {
 
     if (!order) throw OrderNotFoundException
 
-    return order
+    return toMoneyNumbers(order)
   }
   async payOrdersByGuest({
     guestId,
@@ -190,41 +205,102 @@ export class OrdersRepo {
     guestId: number
     updatedById: number
   }): Promise<OrderDetailType[]> {
+    const branchId = await resolveBranchId(this.prismaService, { userId: updatedById })
+
     const orders = await this.prismaService.order.findMany({
       where: {
         guestId,
         deletedAt: null,
+        // Không cho thu tiền đơn của chi nhánh khác
+        branchId,
         status: {
           in: [OrderStatus.PENDING, OrderStatus.CONFIRMED, OrderStatus.PREPARING, OrderStatus.READY],
         },
       },
+      include: { payment: true },
     })
 
     if (orders.length === 0) {
       throw NoOrdersToPayException
     }
+    // Chi thu tien khi so tien phai thu khop voi so tien da ghi tren Payment (ADR 0001 D7).
+    // Lech (vd: don da dat coc) -> khong duoc danh dau da thanh toan.
+    const mismatched = orders.filter((order) => !isSameAmount(order.payment.amount, order.grandTotal))
+    if (mismatched.length > 0) {
+      throw new BadRequestException(
+        `Số tiền không khớp ở đơn ${mismatched.map((order) => `#${order.id} (phải thu ${order.grandTotal}, đã ghi ${order.payment.amount})`).join(', ')}. Không thể ghi nhận thanh toán.`,
+      )
+    }
+
     await this.prismaService.$transaction(async (tx) => {
       const ordersIds = orders.map((order) => order.id)
       const paymentsIds = orders.map((order) => order.paymentId)
-      await tx.order.updateMany({
+      // Chi chuyen don dang mo -> PAID; neu so dong khong khop thi rollback (tranh PAID + Payment FAILED)
+      const updatedOrders = await tx.order.updateMany({
         where: {
           id: {
             in: ordersIds,
           },
+          status: {
+            in: [OrderStatus.PENDING, OrderStatus.CONFIRMED, OrderStatus.PREPARING, OrderStatus.READY],
+          },
         },
         data: { status: OrderStatus.PAID, updatedById },
       })
-      await tx.payment.updateMany({
+      if (updatedOrders.count !== ordersIds.length) {
+        throw new BadRequestException('Trạng thái đơn đã thay đổi trong lúc thu tiền. Vui lòng thử lại.')
+      }
+      // Chi chuyen tu PENDING -> SUCCESS, khong keo mot payment REFUNDED ve SUCCESS.
+      // Phai kiem so dong: neu payment da FAILED (khach bo VNPay roi tra tien mat) thi update
+      // khop 0 dong -> rollback, tranh canh Order=PAID ma Payment=FAILED.
+      const updatedPayments = await tx.payment.updateMany({
         where: {
           id: {
             in: paymentsIds,
           },
+          status: PaymentStatus.PENDING,
         },
         data: {
           status: PaymentStatus.SUCCESS,
-          method: 'CASH',
+          method: PaymentMethod.CASH,
+          paidAt: new Date(),
+          currency: 'VND',
         },
       })
+
+      if (updatedPayments.count !== paymentsIds.length) {
+        throw new BadRequestException(
+          'Có phiếu thanh toán không còn ở trạng thái chờ thu (có thể đã thất bại/hủy). Vui lòng kiểm tra lại đơn trước khi thu tiền.',
+        )
+      }
+
+      // Ghi sổ kép trong CÙNG transaction: thu tiền mà không ghi sổ là điều không xảy ra (ADR 0001 D2).
+      // eventKey theo payment => webhook/bấm lại không bao giờ ghi 2 lần.
+      for (const order of orders) {
+        const lines = buildOrderLedgerLines(
+          {
+            grandTotal: order.grandTotal,
+            subtotal: order.subtotal,
+            discountTotal: order.discountTotal,
+            serviceChargeAmount: order.serviceChargeAmount,
+            taxTotal: order.taxTotal,
+          },
+          'CASH',
+        )
+        if (lines.length === 0) continue
+
+        await this.ledgerPosting.postEntry(
+          {
+            branchId: order.branchId,
+            refType: 'ORDER_PAID_CASH',
+            refId: order.paymentId,
+            idempotencyKey: `cash:payment:${order.paymentId}`,
+            memo: `Thu tiền mặt đơn #${order.id}`,
+            lines: lines.map((line) => ({ ...line, orderId: order.id, paymentId: order.paymentId })),
+          },
+          tx,
+        )
+      }
     })
 
     const [order, sockerRecord] = await Promise.all([
@@ -267,6 +343,6 @@ export class OrdersRepo {
       })
     }
 
-    return order
+    return toMoneyNumbers(order)
   }
 }

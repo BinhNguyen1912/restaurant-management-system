@@ -1,3 +1,4 @@
+import { moneyOutputSchema } from '@/shared/models/shared-money.model'
 import { OrderStatus, PaymentStatus, TypeToOrderStatus } from '@/shared/constants/order.constant'
 import { roleName } from '@/shared/constants/role.constant'
 import { guestSchema } from '@/shared/models/shared-guest.model'
@@ -31,7 +32,7 @@ export const guestOrderItemSchema = z.object({
   productId: z.number().nullable(),
   productTranslations: z.any(),
   quantity: z.number(),
-  skuPrice: z.number(),
+  skuPrice: moneyOutputSchema,
 })
 
 export const guestOrderSchema = z.object({
@@ -58,7 +59,13 @@ export const guestOrderSchema = z.object({
   payment: z.object({
     method: z.string().nullable(),
     amount: z.string(),
-    status: z.enum([PaymentStatus.SUCCESS, PaymentStatus.FAILED, PaymentStatus.PENDING]),
+    status: z.enum([
+      PaymentStatus.SUCCESS,
+      PaymentStatus.FAILED,
+      PaymentStatus.PENDING,
+      PaymentStatus.REFUNDED,
+      PaymentStatus.PARTIALLY_REFUNDED,
+    ]),
   }),
   items: z.array(guestOrderItemSchema),
 })

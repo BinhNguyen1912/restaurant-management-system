@@ -1,7 +1,9 @@
+import { toMoneyNumbers } from '@/shared/service/money-serializer'
+import { computeOrderMoney } from '@/shared/service/order-money'
 import { CACHE_KEYS } from '@/cache/cache.constant'
 import { CacheService } from '@/cache/services/cache.service'
 import { deduct_stock } from '@/shared/constants/lua.constant'
-import { OrderStatus, TypeToOrderStatus, TypeToOrderStatusType } from '@/shared/constants/order.constant'
+import { OrderStatus, PaymentStatus, TypeToOrderStatus, TypeToOrderStatusType } from '@/shared/constants/order.constant'
 import { Inventory_Queue, ManagerRoom, WS_EVENTS } from '@/shared/constants/others.constant'
 import { SkuStatus } from '@/shared/constants/sku.constant'
 import { TableStatus, TableStatusType } from '@/shared/constants/table.constant'
@@ -194,7 +196,7 @@ export class SharedOrdersRepo {
   }: {
     tableNodeId: number
     tx: PrismaTransaction
-  }): Promise<TableNodeType> {
+  }): Promise<TableNodeType & { branchId: number }> {
     const table = await tx.tableNode.findUniqueOrThrow({
       where: {
         id: tableNodeId,
@@ -313,10 +315,17 @@ export class SharedOrdersRepo {
         })
         const validatedSkus = await Promise.all(skuPromises)
 
+        // Tinh tien bang Decimal (ADR 0001 D5/D6); tip khoan lam => 0
+        const money = computeOrderMoney({
+          lines: validatedSkus.map((item) => ({ price: item.sku.price, quantity: item.quantity })),
+        })
+
         const payment = await tx.payment.create({
           data: {
-            status: OrderStatus.PENDING,
-            amount: validatedSkus.reduce((total, item) => total + item.sku.price * item.quantity, 0),
+            // truoc day gan nham OrderStatus.PENDING vao Payment.status
+            status: PaymentStatus.PENDING,
+            amount: money.grandTotal,
+            branchId: table.branchId,
           },
         })
 
@@ -326,6 +335,14 @@ export class SharedOrdersRepo {
             status: OrderStatus.PENDING,
             type: TypeToOrderStatus.AT_TABLE,
             tableNodeId: table.id,
+            branchId: table.branchId,
+            subtotal: money.subtotal,
+            discountTotal: money.discountTotal,
+            serviceChargeRate: money.serviceChargeRate,
+            serviceChargeAmount: money.serviceChargeAmount,
+            tipAmount: money.tipAmount,
+            taxTotal: money.taxTotal,
+            grandTotal: money.grandTotal,
             items: {
               create: validatedSkus.map((item) => ({
                 skuValue: item.sku.value,
@@ -401,7 +418,7 @@ export class SharedOrdersRepo {
           })
         }
 
-        return order
+        return toMoneyNumbers(order)
       })
     } catch (error) {
       console.log(error)
@@ -619,12 +636,17 @@ export class SharedOrdersRepo {
 
       const validatedSkus = await Promise.all(skuPromises)
 
+      const money = computeOrderMoney({
+        lines: validatedSkus.map((item) => ({ price: item.sku.price, quantity: item.quantity })),
+      })
+      // Dat coc: so tien can thu la tien coc, con grandTotal van la gia tri don
+      const amountToPay = depositAmount ? depositAmount : money.grandTotal
+
       const payment = await tx.payment.create({
         data: {
-          status: OrderStatus.PENDING,
-          amount: depositAmount
-            ? depositAmount
-            : validatedSkus.reduce((total, item) => total + item.sku.price * item.quantity, 0),
+          status: PaymentStatus.PENDING,
+          amount: amountToPay,
+          branchId: table.branchId,
         },
       })
 
@@ -634,6 +656,14 @@ export class SharedOrdersRepo {
           status: OrderStatus.PENDING,
           type: TypeToOrderStatus.RESERVATION,
           tableNodeId: table.id,
+          branchId: table.branchId,
+          subtotal: money.subtotal,
+          discountTotal: money.discountTotal,
+          serviceChargeRate: money.serviceChargeRate,
+          serviceChargeAmount: money.serviceChargeAmount,
+          tipAmount: money.tipAmount,
+          taxTotal: money.taxTotal,
+          grandTotal: money.grandTotal,
           items: {
             create: validatedSkus.map((item) => ({
               skuValue: item.sku.value,
@@ -700,7 +730,7 @@ export class SharedOrdersRepo {
         })
       }
 
-      return order
+      return toMoneyNumbers(order)
     } catch (error) {
       console.log('[ERROR]', error)
       throw error

@@ -12,8 +12,126 @@ datasource db {
   shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
 }
 
+/// Danh mục tài khoản kế toán (ADR 0001 D1). Seed sẵn, không cho client tạo.
+enum LedgerAccountType {
+  ASSET
+  LIABILITY
+  REVENUE
+  EXPENSE
+  EQUITY
+}
+
+/// Bút toán đi 2 bước trong CÙNG transaction: ghi DRAFT (giữ chỗ eventKey) rồi mới POSTED.
+/// Postgres CHECK bắt buộc: POSTED ⇔ postedAt có giá trị.
+enum LedgerEntryStatus {
+  DRAFT
+  POSTED
+}
+
+/// Mỗi dòng bút toán là Nợ hoặc Có. Bất biến: Σ DEBIT = Σ CREDIT trong 1 entry.
+enum LedgerDirection {
+  DEBIT
+  CREDIT
+}
+
+/// Loại sự kiện nghiệp vụ sinh ra bút toán (ADR 0001 D3)
+enum LedgerRefType {
+  ORDER_PAID_CASH
+  ORDER_PAID_VNPAY
+  RESERVATION_DEPOSIT
+  DEPOSIT_SETTLED
+  REFUND
+  REVERSAL
+}
+
+model LedgerAccount {
+  id        Int               @id @default(autoincrement())
+  code      String            @unique @db.VarChar(50)
+  name      String            @db.VarChar(255)
+  type      LedgerAccountType
+  isCash    Boolean           @default(false)
+  currency  String            @default("VND") @db.VarChar(3)
+  isActive  Boolean           @default(true)
+  /// tài khoản hệ thống: code tham chiếu trực tiếp trong code, cấm sửa code/type, cấm tắt/xoá
+  isSystem  Boolean           @default(false)
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  lines LedgerLine[]
+
+  @@index([isSystem, code])
+}
+
+/// 1 bút toán = 1 sự kiện tiền. Append-only: sai thì ghi entry đảo, không UPDATE/DELETE.
+model LedgerEntry {
+  id             Int               @id @default(autoincrement())
+  branchId       Int
+  branch         Branch            @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  occurredAt     DateTime          @default(now())
+  refType        LedgerRefType
+  refId          Int
+  memo           String?           @db.VarChar(500)
+  currency       String            @default("VND") @db.VarChar(3)
+  /// chống ghi trùng khi webhook lặp (ADR 0001 D2)
+  idempotencyKey String            @unique @db.VarChar(160)
+  status         LedgerEntryStatus @default(DRAFT)
+  postedAt       DateTime?
+  /// sha256 của input chuẩn hoá: cùng eventKey mà nội dung khác => xung đột, không được ghi đè
+  requestHash    String            @db.Char(64)
+  /// bút toán đảo trỏ về entry gốc
+  reversalOfId   Int?              @unique
+  reversalOf     LedgerEntry?      @relation("LedgerReversal", fields: [reversalOfId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  reversal       LedgerEntry?      @relation("LedgerReversal")
+  createdAt      DateTime          @default(now())
+
+  lines LedgerLine[]
+
+  @@index([branchId, occurredAt])
+  @@index([refType, refId])
+  @@index([status, postedAt])
+}
+
+model LedgerLine {
+  id        Int             @id @default(autoincrement())
+  entryId   Int
+  entry     LedgerEntry     @relation(fields: [entryId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  accountId Int
+  account   LedgerAccount   @relation(fields: [accountId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  direction LedgerDirection
+  amount    Decimal         @db.Decimal(14, 2)
+  currency  String          @default("VND") @db.VarChar(3)
+  orderId   Int?
+  paymentId Int?
+  createdAt DateTime        @default(now())
+
+  @@index([entryId])
+  @@index([accountId, createdAt])
+}
+
+model Branch {
+  id        Int      @id @default(autoincrement())
+  code      String   @unique @db.VarChar(50)
+  name      String   @db.VarChar(255)
+  address   String   @default("")
+  timezone  String   @default("Asia/Ho_Chi_Minh") @db.VarChar(64)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tables        Table[]
+  areas         Area[]
+  tableNodes    TableNode[]
+  orders        Order[]
+  payments      Payment[]
+  reservations  Reservation[]
+  users         User[]
+  ledgerEntries LedgerEntry[]
+}
+
 model User {
   id                          Int                   @id @default(autoincrement())
+  branchId                    Int?
+  branch                      Branch?               @relation(fields: [branchId], references: [id])
   email                       String                @unique
   password                    String
   name                        String                @db.VarChar(255)
@@ -281,7 +399,7 @@ model ProductTranslation {
 model SKU {
   id                   Int                   @id @default(autoincrement())
   value                String                @db.VarChar(500)
-  price                Float
+  price                Decimal               @db.Decimal(14, 2)
   image                String
   productId            Int
   createdById          Int
@@ -326,40 +444,54 @@ model ProductSKUSnapshot {
   /// [ProducTranslations]
   productTranslations Json
   quantity            Int
-  skuPrice            Float
+  skuPrice            Decimal  @db.Decimal(14, 2)
   order               Order?   @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   product             Product? @relation(fields: [productId], references: [id], onUpdate: NoAction)
   sku                 SKU      @relation(fields: [skuId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 }
 
 model Order {
-  id                Int                  @id @default(autoincrement())
-  userId            Int?
-  guestId           Int?
-  reservationId     Int?
-  paymentId         Int
-  status            OrderStatus
-  voucherSnapshotId Int?
-  type              OrderType            @default(ONLINE)
-  receiver          Json?
-  deletedAt         DateTime?
-  createdById       Int?
-  updatedById       Int?
-  deletedById       Int?
-  createdAt         DateTime             @default(now())
-  updatedAt         DateTime             @updatedAt
-  tableNodeId       Int?
-  createdBy         User?                @relation("OrderCreateBy", fields: [createdById], references: [id])
-  deletedBy         User?                @relation("OrderDeleteBy", fields: [deletedById], references: [id])
-  guest             Guest?               @relation(fields: [guestId], references: [id])
-  payment           Payment              @relation(fields: [paymentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  reservation       Reservation?         @relation(fields: [reservationId], references: [id])
-  tableNode         TableNode?           @relation(fields: [tableNodeId], references: [id])
-  updatedBy         User?                @relation("OrderUpdateBy", fields: [updatedById], references: [id])
-  user              User?                @relation(fields: [userId], references: [id])
-  voucherSnapshot   VoucherSnapshot?     @relation(fields: [voucherSnapshotId], references: [id])
-  items             ProductSKUSnapshot[]
-  products          Product[]            @relation("OrderToProduct")
+  id                  Int                  @id @default(autoincrement())
+  userId              Int?
+  guestId             Int?
+  reservationId       Int?
+  paymentId           Int
+  status              OrderStatus
+  // Boc tach tien (ticket P0-2). Tip khoan lam: luon = 0.
+  subtotal            Decimal              @default(0) @db.Decimal(14, 2)
+  discountTotal       Decimal              @default(0) @db.Decimal(14, 2)
+  serviceChargeRate   Decimal              @default(0) @db.Decimal(5, 2)
+  serviceChargeAmount Decimal              @default(0) @db.Decimal(14, 2)
+  tipAmount           Decimal              @default(0) @db.Decimal(14, 2)
+  taxTotal            Decimal              @default(0) @db.Decimal(14, 2)
+  grandTotal          Decimal              @default(0) @db.Decimal(14, 2)
+  currency            String               @default("VND") @db.VarChar(3)
+  voucherSnapshotId   Int?
+  type                OrderType            @default(ONLINE)
+  receiver            Json?
+  deletedAt           DateTime?
+  createdById         Int?
+  updatedById         Int?
+  deletedById         Int?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  tableNodeId         Int?
+  createdBy           User?                @relation("OrderCreateBy", fields: [createdById], references: [id])
+  deletedBy           User?                @relation("OrderDeleteBy", fields: [deletedById], references: [id])
+  guest               Guest?               @relation(fields: [guestId], references: [id])
+  payment             Payment              @relation(fields: [paymentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  reservation         Reservation?         @relation(fields: [reservationId], references: [id])
+  tableNode           TableNode?           @relation(fields: [tableNodeId], references: [id])
+  updatedBy           User?                @relation("OrderUpdateBy", fields: [updatedById], references: [id])
+  user                User?                @relation(fields: [userId], references: [id])
+  voucherSnapshot     VoucherSnapshot?     @relation(fields: [voucherSnapshotId], references: [id])
+  items               ProductSKUSnapshot[]
+  products            Product[]            @relation("OrderToProduct")
+  branchId            Int
+  branch              Branch               @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([branchId, createdAt])
+  @@index([deletedAt, status, createdAt])
 }
 
 model Socket {
@@ -413,6 +545,8 @@ model Table {
   createdBy   User?       @relation("TableCreateBy", fields: [createdById], references: [id], onDelete: NoAction)
   deletedBy   User?       @relation("TableDeleteBy", fields: [deletedById], references: [id], onDelete: NoAction)
   updatedBy   User?       @relation("TableUpdateBy", fields: [updatedById], references: [id], onDelete: NoAction)
+  branchId    Int
+  branch      Branch      @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 
 model Reservation {
@@ -428,7 +562,7 @@ model Reservation {
   depositPercent  Int?
   createdById     Int?
   updatedById     Int?
-  check_in_time DateTime?
+  check_in_time   DateTime?
   deletedAt       DateTime?
   note            String?
   deletedById     Int?
@@ -441,6 +575,8 @@ model Reservation {
   tableNode       TableNode?        @relation(fields: [tableNodeId], references: [id])
   updatedBy       User?             @relation("ReservationUpdateBy", fields: [updatedById], references: [id])
   user            User              @relation("ReservationUser", fields: [userId], references: [id])
+  branchId        Int
+  branch          Branch            @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([userId])
 }
@@ -500,15 +636,59 @@ model VerificationCode {
   @@index([expiresAt])
 }
 
+enum PaymentMethod {
+  CASH
+  VNPAY
+  CARD
+  TRANSFER
+}
+
+/// Chot lai "lan thu tien nay se thu bao nhieu, cho nhung don nao" ngay luc tao URL thanh toan.
+/// Webhook chi doi chieu voi ban ghi nay, khong tinh lai tu gio hang dang thay doi.
+model PaymentIntent {
+  id         Int       @id @default(autoincrement())
+  provider   String    @db.VarChar(32)
+  reference  String    @unique @db.VarChar(128)
+  amount     Decimal   @db.Decimal(14, 2)
+  currency   String    @default("VND") @db.VarChar(3)
+  orderIds   Int[]
+  status     String    @default("PENDING") @db.VarChar(20)
+  payload    Json?
+  createdAt  DateTime  @default(now())
+  consumedAt DateTime?
+
+  @@index([status, createdAt])
+}
+
+model WebhookEvent {
+  id         Int      @id @default(autoincrement())
+  provider   String   @db.VarChar(32)
+  externalId String   @db.VarChar(128)
+  payload    Json?
+  receivedAt DateTime @default(now())
+
+  @@unique([provider, externalId])
+  @@index([receivedAt])
+}
+
 model Payment {
-  id            Int           @id @default(autoincrement())
-  amount        Decimal       @db.Decimal(10, 2)
-  method        String?
-  status        PaymentStatus @default(PENDING)
-  transactionId String?
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
-  order         Order[]
+  id             Int            @id @default(autoincrement())
+  amount         Decimal        @db.Decimal(14, 2)
+  method         PaymentMethod?
+  gatewayCode    String?        @db.VarChar(32)
+  status         PaymentStatus  @default(PENDING)
+  transactionId  String?
+  currency       String         @default("VND") @db.VarChar(3)
+  paidAt         DateTime?
+  refundedAmount Decimal        @default(0) @db.Decimal(14, 2)
+  gatewayPayload Json?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  order          Order[]
+  branchId       Int
+  branch         Branch         @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([transactionId])
 }
 
 model Message {
@@ -667,7 +847,7 @@ model Review {
 
 model Area {
   id          Int           @id @default(autoincrement())
-  name        String        @unique
+  name        String
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
   deletedAt   DateTime?
@@ -680,6 +860,10 @@ model Area {
   updatedBy   User?         @relation("AreaUpdatedBy", fields: [updatedById], references: [id])
   layouts     TableLayout[]
   tablesNode  TableNode[]
+  branchId    Int
+  branch      Branch        @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([branchId, name])
 }
 
 model TableLayout {
@@ -729,6 +913,8 @@ model TableNode {
   deletedBy    User?         @relation("TableNodeDeletedBy", fields: [deletedById], references: [id])
   layout       TableLayout?  @relation(fields: [layoutId], references: [id])
   updatedBy    User?         @relation("TableNodeUpdatedBy", fields: [updatedById], references: [id])
+  branchId     Int
+  branch       Branch        @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([areaId])
 }
@@ -885,4 +1071,6 @@ enum PaymentStatus {
   PENDING
   SUCCESS
   FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
 }

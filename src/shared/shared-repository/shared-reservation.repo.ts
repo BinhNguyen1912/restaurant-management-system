@@ -1,3 +1,4 @@
+import { toMoneyNumbers } from '@/shared/service/money-serializer'
 import { Injectable } from '@nestjs/common'
 import { PrismaService } from '../service/prisma.service'
 import { GetReservationDetailResType, ReservationType } from '../models/shared-reservation.model'
@@ -14,8 +15,8 @@ export class SharedReservationRepo {
       },
     })
   }
-  findByIdDetail(id: number): Promise<GetReservationDetailResType | null> {
-    return this.prismaService.reservation.findUnique({
+  async findByIdDetail(id: number): Promise<GetReservationDetailResType | null> {
+    const reservation = await this.prismaService.reservation.findUnique({
       where: {
         id,
         deletedAt: null,
@@ -54,5 +55,7 @@ export class SharedReservationRepo {
         },
       },
     })
+
+    return toMoneyNumbers(reservation)
   }
 }

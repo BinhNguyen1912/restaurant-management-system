@@ -9,6 +9,8 @@ import { CloudinaryService } from '@/shared/service/cloudinary.service'
 import { EmailService } from '@/shared/service/email.service'
 import { HashingService } from '@/shared/service/hashing.service'
 import { PrismaService } from '@/shared/service/prisma.service'
+import { LedgerPostingService } from '@/shared/service/ledger-posting.service'
+import { LedgerIntegrityService } from '@/shared/service/ledger-integrity.service'
 import { RedisService } from '@/shared/service/redis.service'
 import { TokenService } from '@/shared/service/token.service'
 import { SharedGuestRepo } from '@/shared/shared-repository/shared-guest.repo'
@@ -30,6 +32,8 @@ import { ReservationPaymentHandler } from './handler/ReservationPayment.handler'
 import { OrderGuestPaymentPaymentHandler } from './handler/OrderPayment.handler'
 const sharedService = [
   PrismaService,
+  LedgerPostingService,
+  LedgerIntegrityService,
   EmailService,
   HashingService,
   SharedUserRepo,

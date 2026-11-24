@@ -1,3 +1,4 @@
+import { resolveBranchId } from '@/shared/service/branch.resolver'
 import { TableNodeDetailResDTO } from '@/routes/table-node/table-node.dtos'
 import {
   GetListTableNodeResType,
@@ -16,9 +17,10 @@ import { Injectable } from '@nestjs/common'
 export class TableNodeRepo {
   constructor(private readonly prismaService: PrismaService) {}
 
-  create(data: TableNodeBodyType & { createdById: number; token: string }): Promise<TableNodeResType> {
+  async create(data: TableNodeBodyType & { createdById: number; token: string }): Promise<TableNodeResType> {
+    const branchId = await resolveBranchId(this.prismaService, { userId: data.createdById })
     return this.prismaService.tableNode.create({
-      data,
+      data: { ...data, branchId },
     })
   }
 
@@ -98,7 +100,7 @@ export class TableNodeRepo {
       data: hihi,
     }
   }
-  async list(query: TableNodeQueryType): Promise<GetListTableNodeResType> {
+  async list(query: TableNodeQueryType & { branchId?: number }): Promise<GetListTableNodeResType> {
     const take = query.limit || 10
     const skip = ((query.page || 1) - 1) * take
 
@@ -106,6 +108,9 @@ export class TableNodeRepo {
     const where: any = { deletedAt: null }
     if (query.areaId) {
       where.areaId = query.areaId
+    }
+    if (query.branchId) {
+      where.branchId = query.branchId
     }
 
     const [data, totalItems] = await Promise.all([

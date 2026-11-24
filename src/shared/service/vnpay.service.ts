@@ -1,8 +1,14 @@
+import { toMoneyNumbers } from '@/shared/service/money-serializer'
+import { isPaymentAmountMatched, recordWebhookOnce } from '@/shared/service/payment-hardening'
+import { isIntentUsable } from '@/shared/service/payment-intent'
+import { LedgerPostingService } from '@/shared/service/ledger-posting.service'
+import { buildOrderLedgerLines } from '@/shared/service/order-ledger-lines'
 import { Injectable, HttpException, HttpStatus, BadRequestException, NotFoundException } from '@nestjs/common'
 import { PrismaService } from '@/shared/service/prisma.service'
 import {
   OrderStatus,
   OrderStatusType,
+  PaymentMethod,
   PaymentStatus,
   PaymentStatusType,
   TypeToOrderStatus,
@@ -23,7 +29,7 @@ import {
 } from '@/shared/constants/others.constant'
 import { log } from 'console'
 import { generateForVnp_TxnRef } from '../helper'
-import type { Prisma } from '@prisma/client'
+import { Prisma } from '@prisma/client'
 import { OrderType } from '../models/shared-order.model'
 import { OrderGuestPaymentPaymentHandler } from '../handler/OrderPayment.handler'
 import { ReservationPaymentHandler } from '../handler/ReservationPayment.handler'
@@ -81,15 +87,20 @@ export class VnPayService {
     private readonly appGateway: AppGateway,
     private readonly orderGuestPaymentPaymentHandler: OrderGuestPaymentPaymentHandler,
     private readonly reservationPaymentHandler: ReservationPaymentHandler,
+    private readonly ledgerPosting: LedgerPostingService,
   ) {}
 
+  /**
+   * Tong tien phai thu cua cac don = tong `grandTotal` (ADR 0001 D6).
+   *
+   * Khong cong lai tu item: khi co giam gia / phi phuc vu / thue thi tong item khac so tien
+   * thuc thu, va khi do so tien VNPay thu se lech voi so tien ghi so.
+   */
   async getOrderAmount(orders: OrderResForPaymentType[]): Promise<number> {
-    return orders.reduce((acc, order) => {
-      const orderTotal = order.items.reduce((itemAcc: number, item: any) => {
-        return itemAcc + item.skuPrice * item.quantity
-      }, 0)
-      return acc + orderTotal
-    }, 0)
+    return orders
+      .reduce((acc, order: any) => acc.add(new Prisma.Decimal(order.grandTotal ?? 0)), new Prisma.Decimal(0))
+      .toDecimalPlaces(2)
+      .toNumber()
   }
 
   async createUrlVnpay({
@@ -119,7 +130,7 @@ export class VnPayService {
       vnp_Version: '2.1.0',
       vnp_Command: 'pay',
       vnp_TmnCode: tmnCode,
-      vnp_Amount: amount * 100,
+      vnp_Amount: new Prisma.Decimal(amount).mul(100).toFixed(0),
       vnp_CurrCode: 'VND',
       vnp_TxnRef: processedId,
       vnp_OrderInfo: `Thanh toán hóa đơn ${processedId}`,
@@ -142,7 +153,7 @@ export class VnPayService {
   }
 
   async createPaymentUrlForGuest({ guestId, req }: { guestId: number; req: Request }): Promise<string> {
-    const orders: OrderResForPaymentType[] = await this.prismaService.order.findMany({
+    const orders: OrderResForPaymentType[] = toMoneyNumbers(await this.prismaService.order.findMany({
       where: {
         guestId,
         status: {
@@ -161,7 +172,7 @@ export class VnPayService {
         items: true,
         guest: true,
       },
-    })
+    }))
 
     if (orders.length === 0) {
       throw new NotFoundException('Không tìm thấy đơn hàng nào để thanh toán')
@@ -171,6 +182,24 @@ export class VnPayService {
     const processedOrderId = generateForVnp_TxnRef({
       type: TypeToOrderStatus.AT_TABLE,
       userId: guestId,
+    })
+
+    // Moi lan bam "thanh toan" se tao 1 intent moi; intent cu con PENDING ma trung don thi vo hieu hoa,
+    // de URL cu khong the thu tien cho mot hoa don da thay doi.
+    await this.prismaService.paymentIntent.updateMany({
+      where: { provider: 'vnpay', status: 'PENDING', orderIds: { hasSome: orders.map((order) => order.id) } },
+      data: { status: 'VOID', consumedAt: new Date() },
+    })
+
+    // Chot so tien + danh sach don de webhook doi chieu ve sau (ADR 0001 D7)
+    await this.prismaService.paymentIntent.create({
+      data: {
+        provider: 'vnpay',
+        reference: processedOrderId,
+        amount: new Prisma.Decimal(amount),
+        orderIds: orders.map((order) => order.id),
+        payload: { type: TypeToOrderStatus.AT_TABLE, guestId },
+      },
     })
 
     const url = await this.createUrlVnpay({
@@ -219,9 +248,14 @@ export class VnPayService {
         where = { userId: targetId, deletedAt: null }
       }
 
+      // Chot lai so tien phai thu + danh sach don ngay luc tao URL (PaymentIntent).
+      // Khong tinh lai tu gio hang dang thay doi: don tao/huy giua chung se lam sai phep doi chieu.
+      const intent = await this.prismaService.paymentIntent.findUnique({ where: { reference: vnp_TxnRef } })
+
       const orders = (await this.prismaService.order.findMany({
         where: {
           ...where,
+          ...(intent && intent.orderIds.length > 0 ? { id: { in: intent.orderIds } } : {}),
           status: {
             in: [
               OrderStatus.COMPLETED,
@@ -272,24 +306,101 @@ export class VnPayService {
 
       if (rspCode === '00') {
         // --- THANH TOÁN THÀNH CÔNG ---
+        // Doi chieu so tien VNPay bao voi so tien phai thu cua chinh cac don nay (ADR 0001 D7)
+        const expectedAmount = intent
+          ? new Prisma.Decimal(intent.amount)
+          : new Prisma.Decimal(await this.getOrderAmount(orders as any))
+        if (!isPaymentAmountMatched(expectedAmount.toDecimalPlaces(2), amount)) {
+          console.error('[vnpay] amount mismatch on return', {
+            vnp_TxnRef,
+            vnp_Amount: amount,
+            expectedAmount,
+            orderIds: orders.map((order) => order.id),
+          })
+          res.redirect(`${envConfig.FRONTEND_URL}/payment-error?error=amount_mismatch`)
+          return
+        }
+
+        // Intent phải còn hiệu lực và phải khớp ĐỦ danh sách đơn đã chốt lúc tạo URL.
+        // (Nếu 1 đơn trong lô bị huỷ giữa chừng, thu đủ tiền mà chỉ ghi nhận phần còn lại là sai.)
+        if (intent) {
+          if (!isIntentUsable(intent)) {
+            console.error('[vnpay] intent khong con hieu luc', { vnp_TxnRef, status: intent.status })
+            res.redirect(`${envConfig.FRONTEND_URL}/payment-error?error=intent_expired`)
+            return
+          }
+          if (orders.length !== intent.orderIds.length) {
+            console.error('[vnpay] so don khong khop intent', {
+              vnp_TxnRef,
+              pinned: intent.orderIds.length,
+              matched: orders.length,
+            })
+            res.redirect(`${envConfig.FRONTEND_URL}/payment-error?error=orders_changed`)
+            return
+          }
+        }
+
         paymentStatus = PaymentStatus.SUCCESS
         // Logic: RESERVATION chỉ CONFIRMED (đặt cọc), TAB/ONL là PAID (thanh toán đủ)
         orderStatus = prefixToOrder === prefixToOrderStatus.RESERVATION ? OrderStatus.CONFIRMED : OrderStatus.PAID
 
         const successData = await this.prismaService.$transaction(async (tx) => {
+          // 2a0. Idempotency: cung 1 vnp_TxnRef chi duoc tao hieu ung 1 lan (goi lai return/IPN 5 lan)
+          const isFirst = await recordWebhookOnce(tx as any, {
+            provider: 'vnpay',
+            externalId: vnp_TxnRef,
+            payload: query as unknown as Prisma.InputJsonValue,
+          })
+          if (!isFirst) {
+            console.warn('[vnpay] replay webhook, bo qua ghi nhan', vnp_TxnRef)
+            return {
+              applied: false,
+              guestName: orders[0]?.guest?.name || orders[0]?.user?.name || 'Khách hàng',
+              tableName: orders[0]?.tableNode?.name || 'Chưa gán bàn',
+              amount: Number(amount) / 100,
+              status: 'success',
+              message: 'Giao dịch đã được ghi nhận trước đó',
+              bankCode: vnp_BankCode || 'VNPAY',
+              prefix: prefixToOrder,
+            }
+          }
+
+          if (intent) {
+            // Claim nguyen tu: chi 1 transaction doi duoc PENDING -> PROCESSED.
+            // Neu mot request khac vua VOID/PROCESSED intent thi count = 0 -> rollback.
+            const claimed = await tx.paymentIntent.updateMany({
+              where: { reference: vnp_TxnRef, status: 'PENDING' },
+              data: { status: 'PROCESSED', consumedAt: new Date() },
+            })
+            if (claimed.count !== 1) {
+              throw new BadRequestException('Payment intent đã được xử lý hoặc đã hết hiệu lực')
+            }
+          }
+
           // 2a. Cập nhật trạng thái CHUNG (Payment & Order)
           await tx.payment.updateMany({
             where: { id: { in: orders.map((order) => order.paymentId) } },
             data: {
               status: paymentStatus,
-              method: vnp_BankCode || 'VNPAY',
+              method: PaymentMethod.VNPAY,
+              gatewayCode: vnp_BankCode ?? null,
               transactionId: vnp_TxnRef,
+              paidAt: new Date(),
+              currency: 'VND',
+              gatewayPayload: query as unknown as Prisma.InputJsonValue,
             },
           })
 
           await tx.order.updateMany({
             where: { id: { in: orders.map((order) => order.id) } },
             data: { status: orderStatus },
+          })
+
+          // 2a1. Ghi sổ kép trong cùng transaction (ADR 0001 D2)
+          await this.postLedgerForCharge(tx as any, {
+            vnpTxnRef: vnp_TxnRef,
+            prefix: prefixToOrder,
+            orders: orders as any[],
           })
 
           // 2b. Gọi Logic Nghiệp vụ RIÊNG (Strategy)
@@ -303,6 +414,7 @@ export class VnPayService {
 
           // Dữ liệu để redirect
           return {
+            applied: true,
             guestName: orders[0]?.guest?.name || orders[0]?.user?.name || 'Khách hàng',
             tableName: orders[0]?.tableNode?.name || 'Chưa gán bàn',
             amount: Number(amount) / 100,
@@ -314,19 +426,51 @@ export class VnPayService {
         })
 
         console.log('Success Data:', successData)
-        this.appGateway.server.to(ManagerRoom).emit(WS_EVENTS.PAYMENT_SUCCESS, successData)
+        // Chi bao cho quay khi giao dich thuc su duoc ghi nhan lan dau (replay khong ban lai)
+        const { applied, ...redirectData } = successData as any
+        if (applied) {
+          this.appGateway.server.to(ManagerRoom).emit(WS_EVENTS.PAYMENT_SUCCESS, redirectData)
+        }
 
-        const redirectUrl = `${envConfig.FRONTEND_URL}/payment-success?${qs.stringify(successData)}`
+        const redirectUrl = `${envConfig.FRONTEND_URL}/payment-success?${qs.stringify(redirectData)}`
         res.redirect(redirectUrl)
       } else {
         // --- THANH TOÁN THẤT BẠI ---
         paymentStatus = PaymentStatus.FAILED
         // Giữ trạng thái Order cũ nếu thanh toán thất bại (ví dụ: PENDING)
 
+        // URL cu (intent da bi VOID/qua han) that bai thi KHONG duoc ha Payment hay huy reservation:
+        // khach con 1 URL moi dang song cho chinh don do.
+        if (intent && !isIntentUsable(intent)) {
+          console.warn('[vnpay] bo qua webhook that bai cua intent khong con hieu luc', {
+            vnp_TxnRef,
+            status: intent.status,
+          })
+          const staleData = {
+            amount: Number(amount) / 100,
+            status: 'failed',
+            message: 'Giao dịch không còn hiệu lực',
+            errorCode: rspCode,
+          }
+          res.redirect(`${envConfig.FRONTEND_URL}/payment-failed?${qs.stringify(staleData)}`)
+          return
+        }
+
         await this.prismaService.$transaction(async (tx) => {
-          // 2a. Cập nhật trạng thái Payment THẤT BẠI
+          // 2a0. Idempotency: 1 lan thu tien that bai chi duoc ghi nhan 1 lan
+          const isFirst = await recordWebhookOnce(tx as any, {
+            provider: 'vnpay',
+            externalId: `${vnp_TxnRef}:FAILED`,
+            payload: query as unknown as Prisma.InputJsonValue,
+          })
+          if (!isFirst) {
+            console.warn('[vnpay] replay webhook that bai, bo qua ghi nhan', vnp_TxnRef)
+            return
+          }
+
+          // 2a. Cập nhật trạng thái Payment THẤT BẠI — chi tu PENDING, khong keo SUCCESS/REFUNDED xuong FAILED
           await tx.payment.updateMany({
-            where: { id: { in: orders.map((order) => order.paymentId) } },
+            where: { id: { in: orders.map((order) => order.paymentId) }, status: PaymentStatus.PENDING },
             data: {
               status: paymentStatus,
               transactionId: vnp_TxnRef,
@@ -361,6 +505,54 @@ export class VnPayService {
   }
 
   // ... (các hàm khác như handleVnPayIpn, queryTransaction, verifyPayment, getClientIp, sortObject giữ nguyên)
+  /**
+   * Ghi sổ cho 1 lần thu tiền VNPay.
+   *
+   * - Đơn tại bàn: mỗi đơn 1 bút toán (Nợ VNPAY_CLEARING, Có doanh thu/phí/thuế)
+   * - Đặt cọc: 1 bút toán cọc (Nợ VNPAY_CLEARING, Có DEPOSIT_LIABILITY — KHÔNG phải doanh thu)
+   *
+   * eventKey theo `vnp_TxnRef` + payment nên IPN/return gọi lặp cũng chỉ ghi 1 lần.
+   */
+  private async postLedgerForCharge(
+    tx: any,
+    input: { vnpTxnRef: string; prefix: string; orders: any[] },
+  ): Promise<void> {
+    for (const order of input.orders) {
+      const isDeposit = input.prefix === prefixToOrderStatus.RESERVATION
+      const amount = new Prisma.Decimal(order.payment?.amount ?? 0).toDecimalPlaces(2)
+      if (amount.lessThanOrEqualTo(0)) continue
+
+      const lines = isDeposit
+        ? [
+            { accountCode: 'VNPAY_CLEARING', direction: 'DEBIT' as const, amount },
+            { accountCode: 'DEPOSIT_LIABILITY', direction: 'CREDIT' as const, amount },
+          ]
+        : buildOrderLedgerLines(
+            {
+              grandTotal: order.grandTotal,
+              subtotal: order.subtotal,
+              discountTotal: order.discountTotal,
+              serviceChargeAmount: order.serviceChargeAmount,
+              taxTotal: order.taxTotal,
+            },
+            'VNPAY_CLEARING',
+          )
+      if (lines.length === 0) continue
+
+      await this.ledgerPosting.postEntry(
+        {
+          branchId: order.branchId,
+          refType: isDeposit ? 'RESERVATION_DEPOSIT' : 'ORDER_PAID_VNPAY',
+          refId: order.paymentId,
+          idempotencyKey: `vnpay:${input.vnpTxnRef}:${order.paymentId}`,
+          memo: isDeposit ? `Cọc VNPay reservation #${order.reservationId}` : `Thu VNPay đơn #${order.id}`,
+          lines: lines.map((line) => ({ ...line, orderId: order.id, paymentId: order.paymentId })),
+        },
+        tx,
+      )
+    }
+  }
+
   async handleVnPayIpn(query: any, res: Response): Promise<void> {
     const checkVerify = this.verifyPayment(query)
 
@@ -382,10 +574,15 @@ export class VnPayService {
         // handler = this.onlinePaymentHandler
       }
 
+      const intent = await this.prismaService.paymentIntent.findUnique({ where: { reference: vnp_TxnRef } })
+
       const orders = await this.prismaService.order.findMany({
         where: {
-          guestId: parseInt(guestId),
+          ...(prefix === prefixToOrderStatus.RESERVATION || prefix === prefixToOrderStatus.ONLINE
+            ? { userId: parseInt(guestId) }
+            : { guestId: parseInt(guestId) }),
           deletedAt: null,
+          ...(intent && intent.orderIds.length > 0 ? { id: { in: intent.orderIds } } : {}),
         },
         include: { payment: true },
       })
@@ -396,7 +593,59 @@ export class VnPayService {
       }
 
       if (rspCode === '00') {
+        if (intent) {
+          if (!isIntentUsable(intent)) {
+            console.error('[vnpay] intent khong con hieu luc (ipn)', { vnp_TxnRef, status: intent.status })
+            res.status(400).send('Intent expired')
+            return
+          }
+          if (orders.length !== intent.orderIds.length) {
+            console.error('[vnpay] so don khong khop intent (ipn)', {
+              vnp_TxnRef,
+              pinned: intent.orderIds.length,
+              matched: orders.length,
+            })
+            res.status(400).send('Orders changed')
+            return
+          }
+        }
+
+        const expectedAmount = intent
+          ? new Prisma.Decimal(intent.amount)
+          : new Prisma.Decimal(await this.getOrderAmount(orders as any))
+        if (!isPaymentAmountMatched(expectedAmount.toDecimalPlaces(2), amount)) {
+          console.error('[vnpay] amount mismatch on ipn', {
+            vnp_TxnRef,
+            vnp_Amount: amount,
+            expectedAmount,
+            orderIds: orders.map((order) => order.id),
+          })
+          // VNPay se retry IPN; tra loi ro rang de ben kia thay day la loi du lieu
+          res.status(400).send('Amount mismatch')
+          return
+        }
+
         await this.prismaService.$transaction(async (tx) => {
+          const isFirst = await recordWebhookOnce(tx as any, {
+            provider: 'vnpay',
+            externalId: vnp_TxnRef,
+            payload: query as unknown as Prisma.InputJsonValue,
+          })
+          if (!isFirst) {
+            console.warn('[vnpay] replay ipn, bo qua ghi nhan', vnp_TxnRef)
+            return
+          }
+
+          if (intent) {
+            const claimed = await tx.paymentIntent.updateMany({
+              where: { reference: vnp_TxnRef, status: 'PENDING' },
+              data: { status: 'PROCESSED', consumedAt: new Date() },
+            })
+            if (claimed.count !== 1) {
+              throw new BadRequestException('Payment intent đã được xử lý hoặc đã hết hiệu lực')
+            }
+          }
+
           await tx.payment.updateMany({
             where: {
               id: {
@@ -405,7 +654,11 @@ export class VnPayService {
             },
             data: {
               status: PaymentStatus.SUCCESS,
+              method: PaymentMethod.VNPAY,
               transactionId: vnp_TxnRef,
+              paidAt: new Date(),
+              currency: 'VND',
+              gatewayPayload: query as unknown as Prisma.InputJsonValue,
             },
           })
 
@@ -416,6 +669,12 @@ export class VnPayService {
               },
             },
             data: { status: OrderStatus.PAID },
+          })
+
+          await this.postLedgerForCharge(tx as any, {
+            vnpTxnRef: vnp_TxnRef,
+            prefix,
+            orders: orders as any[],
           })
 
           await handler.handleSuccess({
@@ -429,7 +688,29 @@ export class VnPayService {
 
         res.status(200).send('OK')
       } else {
+        // That bai qua IPN: cung phai idempotent + chi ha cap payment dang PENDING
+        if (intent && !isIntentUsable(intent)) {
+          console.warn('[vnpay] bo qua ipn that bai cua intent khong con hieu luc', {
+            vnp_TxnRef,
+            status: intent.status,
+          })
+          res.status(200).send('OK')
+          return
+        }
+
         await this.prismaService.$transaction(async (tx) => {
+          const isFirst = await recordWebhookOnce(tx as any, {
+            provider: 'vnpay',
+            externalId: `${vnp_TxnRef}:FAILED`,
+            payload: query as unknown as Prisma.InputJsonValue,
+          })
+          if (!isFirst) return
+
+          await tx.payment.updateMany({
+            where: { id: { in: orders.map((order) => order.paymentId) }, status: PaymentStatus.PENDING },
+            data: { status: PaymentStatus.FAILED, transactionId: vnp_TxnRef },
+          })
+
           await handler.handleFailure({
             orders: orders as any,
             vnpTxnRef: vnp_TxnRef,

@@ -1,3 +1,5 @@
+import { PrismaService } from '@/shared/service/prisma.service'
+import { resolveBranchId } from '@/shared/service/branch.resolver'
 import { Injectable } from '@nestjs/common'
 import { ReservationRepo } from './reservation.repo'
 import { ReservationBaseQueryType, ReservationBodyType } from './reservation.model'
@@ -13,6 +15,7 @@ export class ReservationCustomerService {
   constructor(
     private readonly reservationRepo: ReservationRepo,
     private readonly sharedReservationRepo: SharedReservationRepo,
+    private readonly prismaService: PrismaService,
   ) {}
 
   private buildCustomerWhere(userId: number, query: ReservationBaseQueryType) {
@@ -44,6 +47,7 @@ export class ReservationCustomerService {
       throw ForbiddenAccessException
     }
     const where = await this.buildCustomerWhere(user.userId, query)
+    where.branchId = await resolveBranchId(this.prismaService, { userId: user.userId })
     return await this.reservationRepo.list(query, where)
   }
   async findByIdDetail(id: number) {

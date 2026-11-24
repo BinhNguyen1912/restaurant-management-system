@@ -14,7 +14,8 @@ export const RoleSchema = z.object({
   updatedAt: z.date(),
 })
 export const RolePermissionsShema = RoleSchema.extend({
-  permission: z.array(PermissionSchema),
+  // ten field phai khop voi include cua Prisma (`permissions`), neu khong guard se doc undefined
+  permissions: z.array(PermissionSchema),
 })
 export type RoleType = z.infer<typeof RoleSchema>
 export type RolePermissionsType = z.infer<typeof RolePermissionsShema>

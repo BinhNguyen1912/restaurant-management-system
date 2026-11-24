@@ -1,3 +1,4 @@
+import { moneyOutputSchema } from '@/shared/models/shared-money.model'
 import { OrderStatus, PaymentStatus, TypeToOrderStatus } from '@/shared/constants/order.constant'
 import { guestSchema } from '@/shared/models/shared-guest.model'
 import { PaymentShema } from '@/shared/models/shared-payment.model'
@@ -44,7 +45,7 @@ export const OrderItemSchema = z.object({
   productId: z.number(),
   productTranslations: z.array(z.any()),
   quantity: z.number(),
-  skuPrice: z.number(),
+  skuPrice: moneyOutputSchema,
 })
 
 export const OrderGuestSchema = guestSchema.extend({

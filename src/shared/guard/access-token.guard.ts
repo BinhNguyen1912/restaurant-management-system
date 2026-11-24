@@ -36,7 +36,9 @@ export class AccessTokenGuard implements CanActivate {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest()
     const path = request.route.path
-    const method = request.method
+    // HEAD khong co trong bang Permission (chi co GET/POST/PUT/PATCH/DELETE),
+    // theo dung ngu nghia HTTP thi HEAD dung chung quyen voi GET.
+    const method = request.method === 'HEAD' ? 'GET' : request.method
 
     const decodeAT = await this.extractAndValidationTokenFromHeader(request)
     const { roleId } = decodeAT
@@ -55,19 +57,25 @@ export class AccessTokenGuard implements CanActivate {
           },
         })
         .catch(() => {
-          throw new ForbiddenException()
+          throw new ForbiddenException('Error.PermissionDenied')
         })) as unknown as RolePermissionsType
-      const permissionObject = keyBy(role.permission, (p) => `${p.method}:${p.path}`) as CacheRole['permissions']
+      // Truoc day doc `role.permission` (sai ten -> undefined) nen permissions luon rong.
+      const permissionObject = keyBy(role.permissions, (p) => `${p.method}:${p.path}`) as CacheRole['permissions']
       cacheRole = {
         ...role,
         permissions: permissionObject,
       }
       await this.cacheService.set(cacheRoleKey, cacheRole, 1000 * 60 * 60)
-      request[REQUEST_ROLE_KEY] = role
     }
 
+    // Dat role vao request o CA hai nhanh (truoc day chi dat khi cache miss =>
+    // @ActiveRole tra undefined tu request thu 2 tro di trong 1 gio).
+    request[REQUEST_ROLE_KEY] = cacheRole
+
     const canAccess: Permission | undefined = cacheRole.permissions[`${method}:${path}`]
-    // if (!canAccess) throw new ForbiddenException()
+    if (!canAccess) {
+      throw new ForbiddenException('Error.PermissionDenied')
+    }
 
     request[REQUEST_USER_KEY] = decodeAT
     return true

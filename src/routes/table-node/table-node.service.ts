@@ -1,3 +1,5 @@
+import { PrismaService } from '@/shared/service/prisma.service'
+import { resolveBranchId } from '@/shared/service/branch.resolver'
 import { TableNodeAlreadyExitsException, TableNodeNotFoundException } from '@/routes/table-node/table-node.error'
 import {
   TableNodeBodyType,
@@ -15,6 +17,7 @@ export class TableNodeService {
   constructor(
     private readonly tableNodeRepo: TableNodeRepo,
     private readonly sharedTableNodeRepo: SharedTableNodeRepo,
+    private readonly prismaService: PrismaService,
   ) {}
   private generateToken(): string {
     return crypto.randomUUID().replace(/-/g, '')
@@ -62,8 +65,9 @@ export class TableNodeService {
     return await this.tableNodeRepo.updateBatch({ data, updatedById })
   }
 
-  async getList(query: TableNodeQueryType) {
-    return await this.tableNodeRepo.list(query)
+  async getList(query: TableNodeQueryType, userId?: number) {
+    const branchId = await resolveBranchId(this.prismaService, { userId })
+    return await this.tableNodeRepo.list({ ...query, branchId })
   }
   async delete({ TableNodeId, deletedById }: { TableNodeId: number; deletedById: number }) {
     return await this.tableNodeRepo.delete({ TableNodeId, deletedById, isHard: true })

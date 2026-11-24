@@ -1,12 +1,17 @@
+import { resolveBranchId } from '@/shared/service/branch.resolver'
 import { TableExitsException, TableNotFoundException } from '@/routes/table/table.error'
 import { CreateTableBodyType, UpdateTableBodyType } from '@/routes/table/table.model'
 import { TableRepo } from '@/routes/table/table.repo'
 import { isNotFoundPrisma, isUniqueConstraintPrisma, randomId } from '@/shared/helper'
 import { Injectable } from '@nestjs/common'
+import { PrismaService } from '@/shared/service/prisma.service'
 
 @Injectable()
 export class TableService {
-  constructor(private readonly tableRepo: TableRepo) {}
+  constructor(
+    private readonly tableRepo: TableRepo,
+    private readonly prismaService: PrismaService,
+  ) {}
 
   async create(body: CreateTableBodyType, userId: number) {
     const token = randomId()
@@ -40,9 +45,10 @@ export class TableService {
     }
   }
 
-  async getListTable() {
+  async getListTable(userId?: number) {
     try {
-      const data = await this.tableRepo.getTableList()
+      const branchId = await resolveBranchId(this.prismaService, { userId })
+      const data = await this.tableRepo.getTableList(branchId)
       return {
         message: 'Success.GetTableList',
         data,

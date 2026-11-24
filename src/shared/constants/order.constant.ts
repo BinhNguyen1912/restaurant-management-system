@@ -20,5 +20,16 @@ export const PaymentStatus = {
   SUCCESS: 'SUCCESS',
   FAILED: 'FAILED',
   PENDING: 'PENDING',
+  REFUNDED: 'REFUNDED',
+  PARTIALLY_REFUNDED: 'PARTIALLY_REFUNDED',
 } as const
 export type PaymentStatusType = (typeof PaymentStatus)[keyof typeof PaymentStatus]
+
+/** Cach thu tien (ADR 0001 D6) */
+export const PaymentMethod = {
+  CASH: 'CASH',
+  VNPAY: 'VNPAY',
+  CARD: 'CARD',
+  TRANSFER: 'TRANSFER',
+} as const
+export type PaymentMethodType = (typeof PaymentMethod)[keyof typeof PaymentMethod]

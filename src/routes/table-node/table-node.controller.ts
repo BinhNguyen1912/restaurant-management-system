@@ -26,8 +26,8 @@ export class TableNodeController {
   }
   @Get()
   @ZodSerializerDto(ListTableNodeResDTO)
-  async getList(@Body() data: EmptyBodyDTO, @Query() query: TableNodeQueryDTO) {
-    return await this.tableNodeService.getList(query)
+  async getList(@Body() data: EmptyBodyDTO, @Query() query: TableNodeQueryDTO, @ActiveUser('userId') userId: number) {
+    return await this.tableNodeService.getList(query, userId)
   }
 
   @Get(':id')

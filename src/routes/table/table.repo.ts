@@ -1,3 +1,4 @@
+import { resolveBranchId } from '@/shared/service/branch.resolver'
 import {
   CreateTableBodyType,
   TableDetailResType,
@@ -12,17 +13,19 @@ type where = { number: number; deletedAt: null }
 export class TableRepo {
   constructor(private readonly prismaService: PrismaService) {}
 
-  create(data: CreateTableBodyType & { token: string; createdById: number }): Promise<TableDetailResType['data']> {
-    return this.prismaService.table.create({ data })
+  async create(data: CreateTableBodyType & { token: string; createdById: number }): Promise<TableDetailResType['data']> {
+    const branchId = await resolveBranchId(this.prismaService, { userId: data.createdById })
+    return this.prismaService.table.create({ data: { ...data, branchId } })
   }
   getTableDetail(where: where): Promise<TableDetailResType['data'] | null> {
     return this.prismaService.table.findUnique({ where })
   }
 
-  getTableList(): Promise<TableListResType['data']> {
+  getTableList(branchId?: number): Promise<TableListResType['data']> {
     return this.prismaService.table.findMany({
       where: {
         deletedAt: null,
+        ...(branchId ? { branchId } : {}),
       },
       orderBy: {
         createdAt: 'desc',

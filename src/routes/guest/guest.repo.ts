@@ -1,3 +1,4 @@
+import { toMoneyNumbers } from '@/shared/service/money-serializer'
 import { GuestLoginResDTO } from '@/routes/guest/guest.dtos'
 import { NotFoundRefreshToken } from '@/routes/guest/guest.error'
 import {
@@ -175,6 +176,7 @@ export class GuestRepo {
       ...order,
       payment: {
         ...order.payment,
+        // API /guest/orders giu hop dong cu: so tien la string (DTO GuestOrdersList yeu cau string)
         amount: order.payment.amount.toString(),
       },
       items: order.items.map((item) => ({
@@ -183,7 +185,7 @@ export class GuestRepo {
     }))
 
     return {
-      data: transformedData,
+      data: toMoneyNumbers(transformedData),
       limit,
       page,
       totalItems,
