@@ -45,6 +45,8 @@ const StaffPolicy: RolePolicy = {
   REPORTS: [],
   // Đối soát lưu lịch sử: dữ liệu kế toán, chỉ ADMIN
   RECONCILIATION: [],
+  // Nhật ký thao tác nhạy cảm (huỷ đơn, giảm giá, sửa giá): chỉ ADMIN, chỉ đọc
+  'AUDIT-LOGS': [],
   // Cấu hình thuế/phí của chi nhánh: STAFF chỉ ĐỌC (để FE hiện dòng VAT khi tạo đơn)
   BRANCHES: ['GET'],
   // chi doc: noi dung menu + danh muc role

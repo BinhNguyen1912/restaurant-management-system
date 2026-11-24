@@ -12,9 +12,16 @@ import { I18nContext } from 'nestjs-i18n'
 import { roleName } from '@/shared/constants/role.constant'
 import { DEFAULT_PRODUCT_LANGUAGE } from '@/shared/constants/product.constant'
 import { isForeignKeyPrisma, isNotFoundPrisma, isUniqueConstraintPrisma } from '@/shared/helper'
+import { AuditLogService } from '@/shared/service/audit-log.service'
+import { PrismaService } from '@/shared/service/prisma.service'
+import { Prisma } from '@prisma/client'
 @Injectable()
 export class ManageProductService {
-  constructor(private readonly productRepo: ProductRepository) {}
+  constructor(
+    private readonly productRepo: ProductRepository,
+    private readonly auditLogService: AuditLogService,
+    private readonly prismaService: PrismaService,
+  ) {}
 
   validatePrivilege({
     userIdRquest,
@@ -93,7 +100,53 @@ export class ManageProductService {
     })
     try {
       const languageId = (I18nContext.current()?.lang as string) || DEFAULT_PRODUCT_LANGUAGE
+
+      // Giá bán trước khi sửa — để audit biết đổi từ bao nhiêu sang bao nhiêu (ticket #10)
+      const beforeSkus = await this.prismaService.sKU.findMany({
+        where: { productId, deletedAt: null },
+        select: { id: true, value: true, price: true },
+      })
+
       const updateProduct = await this.productRepo.update({ data, id: productId, updatedById, languageId })
+
+      // ---- audit đổi giá: chỉ ghi khi giá THẬT SỰ đổi, và không được làm hỏng việc bán hàng ----
+      const afterSkus = await this.prismaService.sKU.findMany({
+        where: { productId, deletedAt: null },
+        select: { id: true, value: true, price: true },
+      })
+      const priceChanges = afterSkus
+        .map((after) => {
+          const before = beforeSkus.find((sku) => sku.id === after.id)
+          if (!before) return null
+          if (new Prisma.Decimal(before.price).equals(after.price)) return null
+          return { skuId: after.id, value: after.value, from: before.price, to: after.price }
+        })
+        .filter((change): change is { skuId: number; value: string; from: Prisma.Decimal; to: Prisma.Decimal } => change !== null)
+      const removedSkus = beforeSkus.filter((before) => !afterSkus.some((after) => after.id === before.id))
+
+      if (priceChanges.length || removedSkus.length) {
+        await this.auditLogService.recordSafe({
+          actorId: updatedById,
+          actorRole: roleNameRequest,
+          action: priceChanges.length ? 'PRODUCT_PRICE_CHANGED' : 'ORDER_PRICE_CHANGED',
+          entityType: 'PRODUCT',
+          entityId: productId,
+          before: {
+            prices: beforeSkus.map((sku) => ({ skuId: sku.id, value: sku.value, price: sku.price.toString() })),
+          },
+          after: {
+            prices: afterSkus.map((sku) => ({ skuId: sku.id, value: sku.value, price: sku.price.toString() })),
+            changes: priceChanges.map((change) => ({
+              skuId: change.skuId,
+              value: change.value,
+              from: change.from.toString(),
+              to: change.to.toString(),
+            })),
+            removedSkuIds: removedSkus.map((sku) => sku.id),
+          },
+        })
+      }
+
       return updateProduct
     } catch (error) {
       if (isNotFoundPrisma(error)) {

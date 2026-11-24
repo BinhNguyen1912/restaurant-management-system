@@ -42,9 +42,19 @@ export class OrdersService {
       throw error
     }
   }
-  async update({ orderId, body, updatedById }: { orderId: number; body: UpdateOrderType; updatedById: number }) {
+  async update({
+    orderId,
+    body,
+    updatedById,
+    actorRole,
+  }: {
+    orderId: number
+    body: UpdateOrderType
+    updatedById: number
+    actorRole?: string | null
+  }) {
     try {
-      return await this.sharedOrdersRepo.updateOrder({ data: { ...body, orderId }, updatedById })
+      return await this.sharedOrdersRepo.updateOrder({ data: { ...body, orderId }, updatedById, actorRole })
     } catch (error) {
       throw error
     }
