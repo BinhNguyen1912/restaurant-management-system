@@ -21,7 +21,7 @@ export class MediaController {
 
   @Post('image/upload')
   @ZodSerializerDto(MediaResDTO)
-  @UseInterceptors(FilesInterceptor('files', 3))
+  @UseInterceptors(FilesInterceptor('files', 10))
   async uploadFile(@UploadedFiles() files: Express.Multer.File[]) {
     const resuft = await this.mediaService.uploadFiles(files)
     return resuft

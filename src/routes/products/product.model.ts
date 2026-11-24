@@ -59,7 +59,15 @@ import z from 'zod'
 // }
 
 //MỚI THAY
+/**
+ * Sinh danh sách SKU từ biến thể.
+ * Không có biến thể => KHÔNG sinh SKU nào (SKU mặc định do service tạo từ name + basePrice).
+ * Trước đây hàm này trả về 1 phần tử rỗng { value: '' } khi variants = [] khiến schema
+ * luôn báo lỗi "Giá trị SKU index 0 không hợp lệ" cho mọi sản phẩm không có biến thể.
+ */
 export function GenerateSKU(variants: VariantType[], prop?: { basePrice: number; image: string }): UpsertSKUBody[] {
+  if (!variants || variants.length === 0) return []
+
   function getCombine(
     arr: {
       value: string
@@ -209,6 +217,25 @@ export const GetProductDetailSchema = ProductSchema.extend({
 //     }
 //   })
 
+/** Tên món: bắt buộc, 2-100 ký tự (Product.name ở DB là VarChar 500 nhưng hiển thị UI chỉ hợp lý tới 100) */
+export const ProductNameInputSchema = z
+  .string()
+  .trim()
+  .min(2, 'Tên món phải có ít nhất 2 ký tự')
+  .max(100, 'Tên món tối đa 100 ký tự')
+
+/** Ảnh sản phẩm: phải là URL http(s) thật (chặn blob: do upload thất bại nhưng vẫn gửi lên) */
+export const ProductImagesInputSchema = z
+  .array(
+    z
+      .string()
+      .regex(/^https?:\/\/.+/i, 'Ảnh phải là URL http(s) hợp lệ')
+      .max(500, 'URL ảnh quá dài'),
+  )
+  .max(10, 'Tối đa 10 ảnh')
+
+export const ProductDescriptionInputSchema = z.string().trim().max(500, 'Mô tả tối đa 500 ký tự').default('')
+
 export const UpdateProductBodySchema = ProductSchema.pick({
   basePrice: true,
   virtualPrice: true,
@@ -218,6 +245,10 @@ export const UpdateProductBodySchema = ProductSchema.pick({
   images: true,
 })
   .extend({
+    name: ProductNameInputSchema,
+    images: ProductImagesInputSchema,
+    // Update: mô tả không bắt buộc — không gửi thì giữ nguyên mô tả cũ
+    description: z.string().trim().max(500, 'Mô tả tối đa 500 ký tự').optional(),
     categories: z.array(z.coerce.number().int().positive()),
     skus: z.array(UpsertSKUBodySchema),
   })
@@ -286,27 +317,36 @@ export const CreateProductBodySchema = ProductSchema.pick({
   images: true,
 })
   .extend({
+    name: ProductNameInputSchema,
+    images: ProductImagesInputSchema,
+    description: ProductDescriptionInputSchema,
     categories: z.array(z.coerce.number().int().positive()),
     skus: z.array(UpsertSKUBodySchema),
   })
   .strict()
-  .superRefine(({ variants, skus, basePrice, images }, ctx) => {
-    //Kiểm tra xem số lượng sku có hợp lệ không
-    if (skus.length === 0) {
-      const generatedSkus = GenerateSKU(variants, {
-        basePrice,
-        image: images[0],
-      })
-      if (generatedSkus.length > 0) {
+  .superRefine(({ variants, skus, basePrice, images, name }, ctx) => {
+    // Không có biến thể: service tự tạo 1 SKU mặc định từ name + basePrice.
+    // Client có thể gửi 0 hoặc 1 SKU; nếu gửi 1 SKU thì value phải = tên món.
+    if (variants.length === 0) {
+      if (skus.length > 1) {
         ctx.addIssue({
           code: 'custom',
           path: ['skus'],
-          message: `Số lượng SKUS nên là ${generatedSkus.length}. Vùi lòng kiểm tra lại`,
+          message: 'Sản phẩm không có biến thể chỉ cần 1 SKU mặc định',
+        })
+        return
+      }
+      if (skus.length === 1 && skus[0].value !== '' && skus[0].value !== name) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['skus', 0, 'value'],
+          message: `Khi không có biến thể, SKU phải có value = "${name}"`,
         })
       }
       return
     }
 
+    // Có biến thể: mọi tổ hợp biến thể phải được sinh đủ SKU, đúng thứ tự
     const skuValueArray = GenerateSKU(variants, {
       basePrice,
       image: images[0],
@@ -316,24 +356,17 @@ export const CreateProductBodySchema = ProductSchema.pick({
       ctx.addIssue({
         code: 'custom',
         path: ['skus'],
-        message: `Số lượng SKUS nên là ${skuValueArray.length}. Vùi lòng kiểm tra lại`,
+        message: `Cần ${skuValueArray.length} SKU theo biến thể, đang có ${skus.length}. Vui lòng kiểm tra lại`,
       })
       return
     }
 
-    //kiểm tra xem từng Sku có hợp lệ hay không
-    let wrongSKUIndex = -1
-    const isValidSKUs = skus.every((sku, index) => {
-      const isValid = sku.value === skuValueArray[index].value
-      if (!isValid) wrongSKUIndex = index
-      return isValid
-    })
-
-    if (!isValidSKUs) {
+    const wrongSKUIndex = skus.findIndex((sku, index) => sku.value !== skuValueArray[index].value)
+    if (wrongSKUIndex !== -1) {
       ctx.addIssue({
         code: 'custom',
-        path: ['skus', wrongSKUIndex],
-        message: `Giá trị SKU index ${wrongSKUIndex} không hợp lệ. Vui lòng kiểm tra lại `,
+        path: ['skus', wrongSKUIndex, 'value'],
+        message: `Giá trị SKU index ${wrongSKUIndex} không hợp lệ. Vui lòng kiểm tra lại`,
       })
     }
   })

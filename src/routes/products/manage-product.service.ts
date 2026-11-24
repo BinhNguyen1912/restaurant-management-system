@@ -10,6 +10,7 @@ import {
 import { ProductExitsException, ProductForeignKeyErrorException, ProductNotFoundException } from './product.error'
 import { I18nContext } from 'nestjs-i18n'
 import { roleName } from '@/shared/constants/role.constant'
+import { DEFAULT_PRODUCT_LANGUAGE } from '@/shared/constants/product.constant'
 import { isForeignKeyPrisma, isNotFoundPrisma, isUniqueConstraintPrisma } from '@/shared/helper'
 @Injectable()
 export class ManageProductService {
@@ -31,15 +32,15 @@ export class ManageProductService {
   }
   async create({ createdById, data }: { data: CreateProductBodyType; createdById: number }) {
     try {
-      const languageId = I18nContext.current()?.lang as string
+      const languageId = (I18nContext.current()?.lang as string) || DEFAULT_PRODUCT_LANGUAGE
 
       if (!data.variants || data.variants.length === 0) {
-        // Không có variant -> SKU mặc định
+        // Không có variant -> SKU mặc định (service là nguồn quyết định, schema chỉ kiểm tra hình dạng)
         data.skus = [
           {
-            image: '',
-            price: data.basePrice ?? 0, // dùng basePrice nếu có
-            value: `${data.name}`, // dùng tên sản phẩm hoặc fallback "Nguyên bản"
+            image: data.images?.[0] || '',
+            price: data.basePrice ?? 0,
+            value: `${data.name}`,
           },
         ]
       }
@@ -91,7 +92,7 @@ export class ManageProductService {
       roleNameRequest,
     })
     try {
-      const languageId = I18nContext.current()?.lang as string
+      const languageId = (I18nContext.current()?.lang as string) || DEFAULT_PRODUCT_LANGUAGE
       const updateProduct = await this.productRepo.update({ data, id: productId, updatedById, languageId })
       return updateProduct
     } catch (error) {
