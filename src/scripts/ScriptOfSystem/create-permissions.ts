@@ -39,6 +39,8 @@ const StaffPolicy: RolePolicy = {
   DASHBOARD: ['POST'],
   // Ca làm việc + két tiền mặt: thu ngân mở/đóng ca và ghi thu chi trong ca của mình
   'CASH-SHIFTS': ['GET', 'POST'],
+  // Nhật ký sổ cái là dữ liệu kế toán: chỉ ADMIN xem (STAFF xem được ca/két của mình)
+  LEDGER: [],
   // chi doc: noi dung menu + danh muc role
   CATEGORY: ['GET'],
   'CATEGORY-TRANSLATION': ['GET'],
