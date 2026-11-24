@@ -1,6 +1,7 @@
 import { CashShiftModule } from '@/routes/cash-shift/cash-shift.module'
 import { LedgerEntryModule } from '@/routes/ledger-entry/ledger-entry.module'
 import { ReportsModule } from '@/routes/reports/reports.module'
+import { HealthModule } from '@/routes/health/health.module'
 import { BranchModule } from '@/routes/branch/branch.module'
 import { LedgerAccountModule } from '@/routes/ledger-account/ledger-account.module'
 import { Module, OnModuleInit } from '@nestjs/common'
@@ -56,6 +57,7 @@ import { ReservationModule } from './routes/reservation/reservation.module';
     CashShiftModule,
     LedgerEntryModule,
     ReportsModule,
+    HealthModule,
     BranchModule,
     SharedModule,
     LanguageModule,

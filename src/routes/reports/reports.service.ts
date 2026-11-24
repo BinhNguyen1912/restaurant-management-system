@@ -6,6 +6,7 @@ import { PrismaService } from '@/shared/service/prisma.service'
 import { ReportsRepo } from '@/routes/reports/reports.repo'
 import { ReportRangeType } from '@/routes/reports/reports.model'
 import { aggregateSummaries, resolveRange } from '@/routes/reports/revenue-summary'
+import { SYSTEM_TIME_ZONE } from '@/shared/config/timezone'
 
 /**
  * Báo cáo doanh thu (ticket #09).
@@ -160,7 +161,7 @@ export class ReportsService {
   }
 
   /** 01:05 giờ VN mỗi ngày: tính lại 7 ngày gần nhất cho MỌI chi nhánh */
-  @Cron('0 5 1 * * *', { timeZone: 'Asia/Ho_Chi_Minh' })
+  @Cron('0 5 1 * * *', { timeZone: SYSTEM_TIME_ZONE })
   async recomputeDaily() {
     const { from } = resolveRange(undefined, undefined)
     const to = new Date(`${from}T00:00:00.000Z`)

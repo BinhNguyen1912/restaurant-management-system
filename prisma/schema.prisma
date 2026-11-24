@@ -631,6 +631,8 @@ model Reservation {
   branch          Branch            @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([userId])
+  /// danh sách đặt bàn theo thời gian (lọc deletedAt + sắp theo reservationTime)
+  @@index([deletedAt, reservationTime])
 }
 
 model Category {
@@ -741,6 +743,9 @@ model Payment {
   branch         Branch         @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([transactionId])
+  /// đối soát / báo cáo theo kỳ: lọc Payment SUCCESS trong khoảng paidAt
+  @@index([status, paidAt])
+  @@index([branchId, paidAt])
 }
 
 model Message {

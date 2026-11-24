@@ -96,6 +96,14 @@ describe('Finance (e2e)', () => {
     await app.close()
   })
 
+  it('healthcheck: public (không token), kiểm cả Postgres và Redis', async () => {
+    const res = await request(app.getHttpServer()).get('/health').expect(200)
+    expect(res.body.status).toBe('ok')
+    expect(res.body.checks).toEqual({ database: 'up', redis: 'up' })
+    expect(typeof res.body.uptimeSeconds).toBe('number')
+    expect(typeof res.body.timezone).toBe('string')
+  })
+
   it('sổ cái cân: Σ Nợ = Σ Có và không có bút toán lệch', async () => {
     const res = await api().get('/ledger/integrity').set(auth()).expect(200)
     // Bất biến của sổ kép — không phụ thuộc dữ liệu dev đang có

@@ -1,3 +1,4 @@
+import { SYSTEM_TIME_ZONE } from '@/shared/config/timezone'
 import { Injectable, Logger } from '@nestjs/common'
 import { Cron, CronExpression } from '@nestjs/schedule'
 import { InjectQueue } from '@nestjs/bull'
@@ -17,7 +18,7 @@ export class ReminderCronService {
     @InjectQueue(REMINDER_QUEUE) private reminderQueue: Queue,
   ) {}
 
-  @Cron(CronExpression.EVERY_MINUTE)
+  @Cron(CronExpression.EVERY_MINUTE, { timeZone: SYSTEM_TIME_ZONE })
   async checkDueReminders() {
     if (this.isProcessing) {
       // this.logger.debug('Reminder check already in progress, skipping...')
@@ -77,7 +78,7 @@ export class ReminderCronService {
   }
 
   // Cleanup job chạy mỗi ngày lúc 2h sáng
-  @Cron('0 2 * * *')
+  @Cron('0 2 * * *', { timeZone: SYSTEM_TIME_ZONE })
   async scheduleCleanup() {
     try {
       await this.reminderQueue.add(
