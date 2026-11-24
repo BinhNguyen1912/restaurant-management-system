@@ -308,6 +308,15 @@ export class OrdersRepo {
           },
           tx,
         )
+
+        // Đơn của reservation: chuyển phần cọc đã nhận sang doanh thu (Nợ DEPOSIT_LIABILITY / Có REVENUE_FOOD).
+        // Không có bước này thì tiền cọc nằm mãi ở nợ phải trả và doanh thu thiếu đúng phần đó.
+        if (order.reservationId) {
+          await this.ledgerPosting.settleReservationDeposit(
+            { reservationId: order.reservationId, grandTotal: order.grandTotal, branchId: order.branchId, orderId: order.id },
+            tx,
+          )
+        }
       }
     })
 

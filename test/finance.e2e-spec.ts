@@ -26,9 +26,12 @@ describe('Finance (e2e)', () => {
     reconciliationRunIds: [] as number[],
     auditEntityIds: [] as number[],
     voucherIds: [] as number[],
+    reservationIds: [] as number[],
   }
   let originalBranchSettings: { id: number; taxRate: string; serviceChargeRate: string; pricesIncludeTax: boolean } | null = null
 
+  /** ngày hôm nay theo giờ VN — KHÔNG dùng toISOString() (UTC) vì sau 17:00 giờ VN đã sang ngày khác */
+  const vnToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }).format(new Date())
   const api = () => request(app.getHttpServer())
   const auth = () => ({ Authorization: `Bearer ${token}` })
 
@@ -104,6 +107,10 @@ describe('Finance (e2e)', () => {
     if (created.paymentIds.length) await attempt('payments', () => prisma.payment.deleteMany({ where: { id: { in: created.paymentIds } } }))
     if (created.guestIds.length) await attempt('guests', () => prisma.guest.deleteMany({ where: { id: { in: created.guestIds } } }))
     if (created.areaIds.length) await attempt('areas', () => prisma.area.deleteMany({ where: { id: { in: created.areaIds } } }))
+    if (created.reservationIds.length) {
+      await attempt('deposit settled entries', () => prisma.ledgerEntry.deleteMany({ where: { refType: 'DEPOSIT_SETTLED', refId: { in: created.reservationIds } } }))
+      await attempt('reservations', () => prisma.reservation.deleteMany({ where: { id: { in: created.reservationIds } } }))
+    }
     if (created.voucherIds.length) {
       await attempt('voucher snapshots', () => prisma.voucherSnapshot.deleteMany({ where: { voucherId: { in: created.voucherIds } } }))
       await attempt('vouchers', () => prisma.voucher.deleteMany({ where: { id: { in: created.voucherIds } } }))
@@ -334,7 +341,7 @@ describe('Finance (e2e)', () => {
 
   it('đối soát lưu lịch sử: chạy 1 kỳ, ghi run + item, và Payment tiền mặt vừa thu được xếp MATCHED', async () => {
     const branch = await prisma.branch.findFirst({ where: { isActive: true }, orderBy: { id: 'asc' } })
-    const today = new Date().toISOString().slice(0, 10)
+    const today = vnToday()
 
     // tạo 1 đơn tiền mặt thật rồi thu tiền (bút toán sinh trong cùng transaction)
     const table = await takeTable(branch!.id)
@@ -562,6 +569,156 @@ describe('Finance (e2e)', () => {
       .set(auth())
       .send([{ skuId: sku!.id, quantity: 1 }])
     expect([400, 422]).toContain(missing.status)
+  })
+
+  it('tích hợp sổ cái: thu tiền mặt -> số dư từng tài khoản nhích đúng số kỳ vọng', async () => {
+    const branch = await prisma.branch.findFirst({ where: { isActive: true }, orderBy: { id: 'asc' } })
+    const table = await takeTable(branch!.id)
+    const guestLogin = await api()
+      .post('/guest/login')
+      .send({ name: 'e2e số dư', tableNodeId: table!.id, token: table!.token })
+      .expect(201)
+    const guestId = guestLogin.body.guest.id as number
+    created.guestIds.push(guestId)
+
+    const sku = await prisma.sKU.findFirst({ where: { product: { deletedAt: null, status: 'ACTIVE' } }, orderBy: { id: 'asc' } })
+    const order = await api()
+      .post(`/orders/create-order-for-guest/${guestId}`)
+      .set(auth())
+      .send([{ skuId: sku!.id, quantity: 3 }])
+      .expect(201)
+    created.orderIds.push(order.body.id)
+    created.paymentIds.push(order.body.paymentId)
+
+    /** số dư tài khoản theo code, đọc từ API thật */
+    const balances = async () => {
+      const res = await api().get('/ledger-accounts?page=1&limit=100').set(auth()).expect(200)
+      const map: Record<string, number> = {}
+      for (const row of res.body.data) map[row.code] = row.balance
+      return map
+    }
+
+    const before = await balances()
+    await api().get(`/orders/pay-orders-by-guest/${guestId}`).set(auth()).expect(200)
+    const after = await balances()
+
+    const delta = (code: string) => Number((after[code] ?? 0) - (before[code] ?? 0))
+    expect(delta('CASH')).toBe(order.body.grandTotal)
+    // REVENUE_FOOD = tiền khách trả − phí phục vụ − thuế (giá menu đã gồm VAT nên thuế bị trích ra)
+    expect(delta('REVENUE_FOOD')).toBe(order.body.grandTotal - order.body.serviceChargeAmount - order.body.taxTotal)
+    expect(delta('SERVICE_CHARGE')).toBe(order.body.serviceChargeAmount)
+    expect(delta('TAX_PAYABLE')).toBe(order.body.taxTotal)
+    // bút toán phải CÂN: tổng nhích của Nợ = tổng nhích của Có
+    expect(delta('CASH')).toBe(delta('REVENUE_FOOD') + delta('SERVICE_CHARGE') + delta('TAX_PAYABLE'))
+  })
+
+  it('tích hợp sổ cái: ghi sổ lỗi giữa transaction -> đơn và payment KHÔNG đổi trạng thái', async () => {
+    const branch = await prisma.branch.findFirst({ where: { isActive: true }, orderBy: { id: 'asc' } })
+    const table = await takeTable(branch!.id)
+    const guestLogin = await api()
+      .post('/guest/login')
+      .send({ name: 'e2e rollback', tableNodeId: table!.id, token: table!.token })
+      .expect(201)
+    const guestId = guestLogin.body.guest.id as number
+    created.guestIds.push(guestId)
+    const sku = await prisma.sKU.findFirst({ where: { product: { deletedAt: null, status: 'ACTIVE' } }, orderBy: { id: 'asc' } })
+    const order = await api()
+      .post(`/orders/create-order-for-guest/${guestId}`)
+      .set(auth())
+      .send([{ skuId: sku!.id, quantity: 1 }])
+      .expect(201)
+    created.orderIds.push(order.body.id)
+    created.paymentIds.push(order.body.paymentId)
+
+    // giả lập sổ cái chết đúng lúc thu tiền
+    const posting = app.get(LedgerPostingService)
+    const spy = jest.spyOn(posting, 'postEntry').mockRejectedValueOnce(new Error('e2e: sổ cái chết'))
+    const failed = await api().get(`/orders/pay-orders-by-guest/${guestId}`).set(auth())
+    spy.mockRestore()
+
+    expect(failed.status).toBeGreaterThanOrEqual(400)
+    const payment = await prisma.payment.findUnique({ where: { id: order.body.paymentId } })
+    const persistedOrder = await prisma.order.findUnique({ where: { id: order.body.id } })
+    // rollback: chưa thu được tiền thì không được đánh dấu đã thu
+    expect(payment!.status).toBe('PENDING')
+    expect(persistedOrder!.status).toBe('PENDING')
+    const entries = await prisma.ledgerEntry.count({ where: { refType: 'ORDER_PAID_CASH', refId: order.body.paymentId } })
+    expect(entries).toBe(0)
+  })
+
+  it('tất toán cọc: Nợ DEPOSIT_LIABILITY / Có REVENUE_FOOD, idempotent theo reservation', async () => {
+    const branch = await prisma.branch.findFirst({ where: { isActive: true }, orderBy: { id: 'asc' } })
+    const table = await takeTable(branch!.id)
+    const admin = await prisma.user.findFirst({ where: { email: 'admin@order.com' } })
+
+    const reservation = await prisma.reservation.create({
+      data: {
+        userId: admin!.id,
+        customerName: 'e2e cọc',
+        customerPhone: '0900000000',
+        guestCount: 2,
+        reservationTime: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        hasPreOrder: false,
+        tableNodeId: table!.id,
+        branchId: branch!.id,
+        depositAmount: 500_000,
+        status: 'DEPOSITED',
+      },
+    })
+    created.reservationIds.push(reservation.id)
+
+    const posting = app.get(LedgerPostingService)
+    const first = await posting.settleReservationDeposit({ reservationId: reservation.id, grandTotal: 2_000_000 })
+    expect(first).toBeTruthy()
+    // gọi lại: idempotent, không ghi thêm
+    const second = await posting.settleReservationDeposit({ reservationId: reservation.id, grandTotal: 2_000_000 })
+    expect(second?.created).toBe(false)
+
+    const entries = await prisma.ledgerEntry.findMany({
+      where: { refType: 'DEPOSIT_SETTLED', refId: reservation.id },
+      include: { lines: { include: { account: { select: { code: true } } } } },
+    })
+    expect(entries).toHaveLength(1)
+    const lines = entries[0].lines.map((line) => ({ code: line.account.code, direction: line.direction, amount: Number(line.amount) }))
+    expect(lines).toEqual(
+      expect.arrayContaining([
+        { code: 'DEPOSIT_LIABILITY', direction: 'DEBIT', amount: 500_000 },
+        { code: 'REVENUE_FOOD', direction: 'CREDIT', amount: 500_000 },
+      ]),
+    )
+    expect(entries[0].status).toBe('POSTED')
+  })
+
+  it('tất toán cọc: hoá đơn nhỏ hơn cọc -> chỉ tất toán phần dùng được', async () => {
+    const branch = await prisma.branch.findFirst({ where: { isActive: true }, orderBy: { id: 'asc' } })
+    const table = await takeTable(branch!.id)
+    const admin = await prisma.user.findFirst({ where: { email: 'admin@order.com' } })
+    const reservation = await prisma.reservation.create({
+      data: {
+        userId: admin!.id,
+        customerName: 'e2e cọc nhỏ',
+        customerPhone: '0900000001',
+        guestCount: 1,
+        reservationTime: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        hasPreOrder: false,
+        tableNodeId: table!.id,
+        branchId: branch!.id,
+        depositAmount: 500_000,
+        status: 'DEPOSITED',
+      },
+    })
+    created.reservationIds.push(reservation.id)
+
+    const posting = app.get(LedgerPostingService)
+    await posting.settleReservationDeposit({ reservationId: reservation.id, grandTotal: 300_000 })
+    const entry = await prisma.ledgerEntry.findFirst({
+      where: { refType: 'DEPOSIT_SETTLED', refId: reservation.id },
+      include: { lines: true },
+    })
+    expect(entry).toBeTruthy()
+    // 500k cọc nhưng hoá đơn 300k -> chỉ chuyển 300k sang doanh thu, phần dư vẫn là nợ khách
+    expect(entry!.lines.reduce((sum, line) => sum + Number(line.amount), 0)).toBe(600_000)
+    expect(Math.max(...entry!.lines.map((line) => Number(line.amount)))).toBe(300_000)
   })
 
   it('scope chi nhánh: token chi nhánh 1 không đọc được khu vực của chi nhánh khác', async () => {

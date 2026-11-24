@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { BadRequestException, ConflictException, Injectable } from '@nestjs/common'
 import { Prisma } from '@prisma/client'
 import { PrismaService } from '@/shared/service/prisma.service'
+import { computeDepositSettlementAmount } from '@/shared/service/deposit-settlement'
 import { checkBalanced, LedgerLineLike } from '@/shared/service/ledger-balance'
 
 export type PostLedgerLineInput = {
@@ -107,6 +108,44 @@ const isUniqueViolation = (error: unknown): boolean =>
 @Injectable()
 export class LedgerPostingService {
   constructor(private readonly prismaService: PrismaService) {}
+
+  /**
+   * Tất toán tiền cọc của 1 reservation khi khách trả nốt (ticket #07).
+   *
+   * Nợ DEPOSIT_LIABILITY / Có REVENUE_FOOD — cọc không phải doanh thu lúc nhận, chỉ thành
+   * doanh thu khi dùng để trả hoá đơn. Idempotent theo reservation: bấm lại/gọi 2 lần chỉ 1 bút toán.
+   */
+  async settleReservationDeposit(
+    input: { reservationId: number; grandTotal: Prisma.Decimal.Value; branchId?: number | null; orderId?: number | null },
+    tx?: Prisma.TransactionClient,
+  ): Promise<PostEntryResult | null> {
+    const client = (tx ?? this.prismaService) as unknown as {
+      reservation: { findUnique: (args: any) => Promise<{ depositAmount: number | null; branchId: number } | null> }
+    }
+    const reservation = await client.reservation.findUnique({
+      where: { id: input.reservationId },
+      select: { depositAmount: true, branchId: true },
+    })
+    if (!reservation) return null
+
+    const amount = computeDepositSettlementAmount(reservation.depositAmount, input.grandTotal)
+    if (amount.lessThanOrEqualTo(0)) return null
+
+    return this.postEntry(
+      {
+        branchId: input.branchId ?? reservation.branchId,
+        refType: 'DEPOSIT_SETTLED',
+        refId: input.reservationId,
+        idempotencyKey: `deposit-settled:reservation:${input.reservationId}`,
+        memo: `Tất toán cọc reservation #${input.reservationId}`,
+        lines: [
+          { accountCode: 'DEPOSIT_LIABILITY', direction: 'DEBIT', amount, orderId: input.orderId ?? null },
+          { accountCode: 'REVENUE_FOOD', direction: 'CREDIT', amount, orderId: input.orderId ?? null },
+        ],
+      },
+      tx,
+    )
+  }
 
   async postEntry(input: PostEntryInput, tx?: Prisma.TransactionClient): Promise<PostEntryResult> {
     this.assertInput(input)
