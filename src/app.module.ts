@@ -1,3 +1,4 @@
+import { CashShiftModule } from '@/routes/cash-shift/cash-shift.module'
 import { LedgerAccountModule } from '@/routes/ledger-account/ledger-account.module'
 import { Module, OnModuleInit } from '@nestjs/common'
 import { AppController } from './app.controller'
@@ -49,6 +50,7 @@ import { ReservationModule } from './routes/reservation/reservation.module';
 @Module({
   imports: [
     LedgerAccountModule,
+    CashShiftModule,
     SharedModule,
     LanguageModule,
     AuthModule,

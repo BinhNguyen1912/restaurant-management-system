@@ -37,6 +37,8 @@ const StaffPolicy: RolePolicy = {
   'UNIT-CONVERSION': ['GET', 'POST', 'PATCH', 'DELETE'],
   MEDIA: ['POST'],
   DASHBOARD: ['POST'],
+  // Ca làm việc + két tiền mặt: thu ngân mở/đóng ca và ghi thu chi trong ca của mình
+  'CASH-SHIFTS': ['GET', 'POST'],
   // chi doc: noi dung menu + danh muc role
   CATEGORY: ['GET'],
   'CATEGORY-TRANSLATION': ['GET'],
