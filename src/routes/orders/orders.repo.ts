@@ -1,4 +1,4 @@
-import { resolveBranchId } from '@/shared/service/branch.resolver'
+import { resolveBranchIdByGuest } from '@/shared/service/branch.resolver'
 import { toMoneyNumbers } from '@/shared/service/money-serializer'
 import { NoOrdersToPayException, OrderNotFoundException } from '@/routes/orders/orders.error'
 import { OrderQueryType, OrdersListResType, OrderDetailType } from '@/routes/orders/orders.model'
@@ -171,9 +171,10 @@ export class OrdersRepo {
     }
   }
 
-  async getById(orderId: number): Promise<OrderDetailType | null> {
-    const order = await this.prismaService.order.findUnique({
-      where: { id: orderId, deletedAt: null },
+  async getById(orderId: number, branchId?: number): Promise<OrderDetailType | null> {
+    const order = await this.prismaService.order.findFirst({
+      // Có branchId -> đơn của chi nhánh khác trả về "không tìm thấy" thay vì lộ dữ liệu
+      where: { id: orderId, deletedAt: null, ...(branchId ? { branchId } : {}) },
       include: {
         createdBy: {
           select: { name: true, id: true },
@@ -205,7 +206,9 @@ export class OrdersRepo {
     guestId: number
     updatedById: number
   }): Promise<OrderDetailType[]> {
-    const branchId = await resolveBranchId(this.prismaService, { userId: updatedById })
+    // Token GUEST mang userId = Guest.id -> KHONG tra bang User (co the khop nham nhan vien
+    // cua chi nhanh khac). Lay chi nhanh tu ban khach dang ngoi.
+    const branchId = await resolveBranchIdByGuest(this.prismaService, guestId)
 
     const orders = await this.prismaService.order.findMany({
       where: {

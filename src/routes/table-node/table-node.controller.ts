@@ -13,6 +13,7 @@ import {
   UpdateTableNodeBodyBatchResDTO,
 } from '@/routes/table-node/table-node.dtos'
 import { ActiveUser } from '@/shared/decorators/active-user.decorator'
+import { AccessTokenPayload } from '@/shared/types/jwt.types'
 import { EmptyBodyDTO } from '@/shared/dtos/respone.dto'
 
 @Controller('table-node')
@@ -26,14 +27,14 @@ export class TableNodeController {
   }
   @Get()
   @ZodSerializerDto(ListTableNodeResDTO)
-  async getList(@Body() data: EmptyBodyDTO, @Query() query: TableNodeQueryDTO, @ActiveUser('userId') userId: number) {
-    return await this.tableNodeService.getList(query, userId)
+  async getList(@Body() data: EmptyBodyDTO, @Query() query: TableNodeQueryDTO, @ActiveUser() user: AccessTokenPayload) {
+    return await this.tableNodeService.getList(query, user)
   }
 
   @Get(':id')
   @ZodSerializerDto(TableNodeDetailResDTO)
-  async getTableNodeById(@Param() params: TableNodeParamsDTO) {
-    return await this.tableNodeService.getTableNodeById(params.id)
+  async getTableNodeById(@Param() params: TableNodeParamsDTO, @ActiveUser() user: AccessTokenPayload) {
+    return await this.tableNodeService.getTableNodeById(params.id, user)
   }
 
   @Put(':id')

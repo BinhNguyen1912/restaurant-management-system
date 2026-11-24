@@ -47,7 +47,7 @@ export class ReservationCustomerService {
       throw ForbiddenAccessException
     }
     const where = await this.buildCustomerWhere(user.userId, query)
-    where.branchId = await resolveBranchId(this.prismaService, { userId: user.userId })
+    where.branchId = await resolveBranchId(this.prismaService, { userId: user.userId, roleName: user.roleName })
     return await this.reservationRepo.list(query, where)
   }
   async findByIdDetail(id: number) {

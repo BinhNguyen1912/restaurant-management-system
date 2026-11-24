@@ -1,18 +1,13 @@
 import { BadRequestException } from '@nestjs/common'
 import { PrismaService } from '@/shared/service/prisma.service'
+import { roleName } from '@/shared/constants/role.constant'
 
 type PrismaLike = {
   user: { findUnique: (args: any) => Promise<{ branchId: number | null } | null> }
+  guest: { findUnique: (args: any) => Promise<{ tableNode: { branchId: number } | null } | null> }
   branch: { findFirst: (args: any) => Promise<{ id: number } | null> }
 }
 
-/**
- * Xac dinh chi nhanh cho 1 ban ghi moi (ADR 0001 D4).
- *
- * Thu tu: chi nhanh cua nguoi tao (User.branchId) -> chi nhanh active dau tien.
- * Giai doan 1 chi co 1 chi nhanh that; khi mo chi nhanh thu 2 thi gan User.branchId
- * cho tung nhan vien la du, khong phai sua code.
- */
 /**
  * Chi nhanh cua 1 ban (TableNode) — dung cho du lieu gan voi ban (don tai ban, reservation).
  * Dat truoc: ban thuoc chi nhanh nao thi du lieu thuoc chi nhanh do.
@@ -29,18 +24,56 @@ export async function resolveBranchIdByTableNode(
   return tableNode.branchId
 }
 
+/**
+ * Xac dinh chi nhanh cho 1 thao tac (ADR 0001 D4).
+ *
+ * QUAN TRONG: `userId` trong token **không** phải lúc nào cũng là `User.id`:
+ * token của khách (guest) mang `userId = Guest.id`. Nếu tra thẳng bảng `User` bằng id đó
+ * thì có thể khớp sang một nhân viên khác và trả về **nhầm chi nhánh** (lỗi im lặng,
+ * chỉ lộ khi có ≥ 2 chi nhánh). Vì vậy phải truyền `roleName` để chọn đúng bảng:
+ *  - GUEST  -> Guest.id -> TableNode.branchId (bàn khách đang ngồi)
+ *  - còn lại -> User.branchId
+ *
+ * Fallback: chi nhánh active đầu tiên.
+ */
+/**
+ * Chi nhanh cua 1 khach (Guest) = chi nhanh cua ban khach dang ngoi.
+ * Dung cho endpoint do khach goi (token GUEST mang `userId = Guest.id`) de khong tra nham bang `User`.
+ */
+export async function resolveBranchIdByGuest(
+  prisma: { guest: { findUnique: (args: any) => Promise<any> } },
+  guestId: number,
+): Promise<number> {
+  const guest = await prisma.guest.findUnique({
+    where: { id: guestId },
+    select: { tableNode: { select: { branchId: true } } },
+  })
+  if (!guest) throw new BadRequestException(`Không tìm thấy khách #${guestId}`)
+  if (!guest.tableNode) throw new BadRequestException(`Khách #${guestId} chưa gắn với bàn nào nên không xác định được chi nhánh`)
+  return guest.tableNode.branchId
+}
+
 export async function resolveBranchId(
   prisma: PrismaService | PrismaLike,
-  options: { userId?: number | null } = {},
+  options: { userId?: number | null; roleName?: string | null } = {},
 ): Promise<number> {
   const client = prisma as PrismaLike
+  const isGuestToken = options.roleName === roleName.GUEST
 
   if (options.userId) {
-    const user = await client.user.findUnique({
-      where: { id: options.userId },
-      select: { branchId: true },
-    })
-    if (user?.branchId) return user.branchId
+    if (isGuestToken) {
+      const guest = await client.guest.findUnique({
+        where: { id: options.userId },
+        select: { tableNode: { select: { branchId: true } } },
+      })
+      if (guest?.tableNode?.branchId) return guest.tableNode.branchId
+    } else {
+      const user = await client.user.findUnique({
+        where: { id: options.userId },
+        select: { branchId: true },
+      })
+      if (user?.branchId) return user.branchId
+    }
   }
 
   const branch = await client.branch.findFirst({

@@ -6,9 +6,9 @@ import { TableNodeDetailResType, TableNodeType } from '../models/shared-tableNod
 export class SharedTableNodeRepo {
   constructor(private readonly prismaService: PrismaService) {}
 
-  GetTableNodeById(TableNodeId: number): Promise<TableNodeDetailResType | null> {
-    return this.prismaService.tableNode.findUnique({
-      where: { id: TableNodeId, deletedAt: null },
+  GetTableNodeById(TableNodeId: number, branchId?: number): Promise<TableNodeDetailResType | null> {
+    return this.prismaService.tableNode.findFirst({
+      where: { id: TableNodeId, deletedAt: null, ...(branchId ? { branchId } : {}) },
       include: {
         area: {
           select: {
