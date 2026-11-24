@@ -9,6 +9,7 @@ import {
   UpdateAreaBodyDTO,
 } from '@/routes/area/area.dtos'
 import { ActiveUser } from '@/shared/decorators/active-user.decorator'
+import { AccessTokenPayload } from '@/shared/types/jwt.types'
 import { ZodSerializerDto } from 'nestjs-zod'
 import { EmptyBodyDTO } from '@/shared/dtos/respone.dto'
 import { getListAreaResSchema } from '@/routes/area/area.model'
@@ -19,19 +20,19 @@ export class AreaController {
 
   @Post()
   @ZodSerializerDto(AreaResDTO)
-  async create(@Body() data: AreaBodyDTO, @ActiveUser('userId') userId: number) {
-    return await this.areaService.create({ data, createdById: userId })
+  async create(@Body() data: AreaBodyDTO, @ActiveUser() user: AccessTokenPayload) {
+    return await this.areaService.create({ data, createdById: user.userId, actorRoleName: user.roleName })
   }
   @Get()
   @ZodSerializerDto(ListAreaResDTO)
-  async getList(@Body() data: EmptyBodyDTO, @Query() query: AreaQueryDTO) {
-    return await this.areaService.getList(query)
+  async getList(@Body() data: EmptyBodyDTO, @Query() query: AreaQueryDTO, @ActiveUser() user: AccessTokenPayload) {
+    return await this.areaService.getList(query, user)
   }
 
   @Get(':id')
   @ZodSerializerDto(AreaResDTO)
-  async getAreaById(@Param() params: AreaParamsDTO) {
-    return await this.areaService.getAreaById(params.id)
+  async getAreaById(@Param() params: AreaParamsDTO, @ActiveUser() user: AccessTokenPayload) {
+    return await this.areaService.getAreaById(params.id, user)
   }
 
   @Put(':id')

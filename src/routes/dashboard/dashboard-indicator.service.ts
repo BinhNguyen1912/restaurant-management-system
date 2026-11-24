@@ -14,9 +14,12 @@ export class DashboardIndicatorService {
 
   async getDashboardIndicator(
     { fromDate, toDate }: DashboardIndicatorQueryType,
-    userId?: number,
+    actor?: { userId?: number; roleName?: string },
   ): Promise<DashboardIndicatorType> {
-    const branchId = await resolveBranchId(this.prismaService, { userId })
+    const branchId = await resolveBranchId(this.prismaService, {
+      userId: actor?.userId,
+      roleName: actor?.roleName,
+    })
     const fromDateObj = fromDate ? new Date(fromDate) : new Date()
     const toDateObj = toDate ? new Date(toDate) : new Date()
     const [orders, guests, products] = await Promise.all([

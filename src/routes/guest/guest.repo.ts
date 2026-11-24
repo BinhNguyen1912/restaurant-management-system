@@ -260,4 +260,19 @@ export class GuestRepo {
       },
     })
   }
+
+  /** Cấu hình VAT/phí của chi nhánh mà khách đang ngồi (dùng cho FE hiện breakdown trước khi đặt món) */
+  findTaxSettingsByGuest(guestId: number) {
+    return this.prismaService.guest.findUnique({
+      where: { id: guestId },
+      select: {
+        tableNode: {
+          select: {
+            branchId: true,
+            branch: { select: { name: true, taxRate: true, serviceChargeRate: true, pricesIncludeTax: true } },
+          },
+        },
+      },
+    })
+  }
 }

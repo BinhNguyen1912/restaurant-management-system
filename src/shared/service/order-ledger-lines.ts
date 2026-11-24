@@ -8,6 +8,11 @@ export type OrderMoneyParts = {
   serviceChargeAmount: Prisma.Decimal.Value
   taxTotal: Prisma.Decimal.Value
   tipAmount?: Prisma.Decimal.Value
+  /**
+   * Doanh thu thuần (đã trừ VAT) khi giá menu ĐÃ gồm thuế — `computeOrderMoney` trả về.
+   * Không truyền thì suy ra: grandTotal − phí − thuế (đúng cho cả 2 kiểu giá).
+   */
+  revenue?: Prisma.Decimal.Value
 }
 
 export type LedgerLineSpec = {
@@ -20,8 +25,12 @@ export type PaymentAccount = 'CASH' | 'VNPAY_CLEARING'
 
 const ZERO = new Prisma.Decimal(0)
 
+/**
+ * Sổ cái chỉ nhận số nguyên đồng (CK_LedgerLine_amount: amount > 0 AND amount = round(amount)).
+ * VND không có đơn vị lẻ nên làm tròn về đồng ở đây, phần chênh đi vào ROUNDING_ADJUSTMENT.
+ */
 const d = (value: Prisma.Decimal.Value | undefined | null): Prisma.Decimal =>
-  value === undefined || value === null ? new Prisma.Decimal(0) : new Prisma.Decimal(value).toDecimalPlaces(2)
+  value === undefined || value === null ? new Prisma.Decimal(0) : new Prisma.Decimal(value).toDecimalPlaces(0)
 
 /**
  * Sinh các dòng bút toán cho 1 đơn đã thu tiền.
@@ -44,13 +53,21 @@ export function buildOrderLedgerLines(parts: OrderMoneyParts, paidInto: PaymentA
     { accountCode: paidInto, direction: 'DEBIT', amount: grandTotal },
   ]
 
-  const revenue = d(parts.subtotal).minus(d(parts.discountTotal))
+  const service = d(parts.serviceChargeAmount)
+  const tax = d(parts.taxTotal)
+  const tip = d(parts.tipAmount)
+
+  // Doanh thu KHÔNG gồm VAT: caller truyền `revenue` (computeOrderMoney đã trừ thuế khi giá
+  // menu đã gồm VAT). Không truyền thì suy ra subtotal − discount như cũ, phần lệch còn lại đi
+  // vào ROUNDING_ADJUSTMENT để bút toán luôn cân.
+  const revenue =
+    parts.revenue !== undefined && parts.revenue !== null
+      ? d(parts.revenue)
+      : d(parts.subtotal).minus(d(parts.discountTotal))
   if (revenue.greaterThan(0)) lines.push({ accountCode: 'REVENUE_FOOD', direction: 'CREDIT', amount: revenue })
 
-  const service = d(parts.serviceChargeAmount)
   if (service.greaterThan(0)) lines.push({ accountCode: 'SERVICE_CHARGE', direction: 'CREDIT', amount: service })
 
-  const tax = d(parts.taxTotal)
   if (tax.greaterThan(0)) lines.push({ accountCode: 'TAX_PAYABLE', direction: 'CREDIT', amount: tax })
 
   const credited = lines
@@ -59,9 +76,9 @@ export function buildOrderLedgerLines(parts: OrderMoneyParts, paidInto: PaymentA
 
   const difference = grandTotal.minus(credited)
   if (difference.greaterThan(0)) {
-    lines.push({ accountCode: 'ROUNDING_ADJUSTMENT', direction: 'CREDIT', amount: difference.toDecimalPlaces(2) })
+    lines.push({ accountCode: 'ROUNDING_ADJUSTMENT', direction: 'CREDIT', amount: difference.toDecimalPlaces(0) })
   } else if (difference.lessThan(0)) {
-    lines.push({ accountCode: 'ROUNDING_ADJUSTMENT', direction: 'DEBIT', amount: difference.abs().toDecimalPlaces(2) })
+    lines.push({ accountCode: 'ROUNDING_ADJUSTMENT', direction: 'DEBIT', amount: difference.abs().toDecimalPlaces(0) })
   }
 
   return lines

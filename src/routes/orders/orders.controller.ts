@@ -1,6 +1,7 @@
 import { Body, Controller, Post, Res, HttpStatus, Query, Get, Param, Put } from '@nestjs/common'
 import { OrdersService } from './orders.service'
 import { ActiveUser } from '@/shared/decorators/active-user.decorator'
+import { AccessTokenPayload } from '@/shared/types/jwt.types'
 import {
   GuestIdParamDTO,
   ListOrdersDTO,
@@ -18,15 +19,15 @@ export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
 
   @Post('lists')
-  async list(@Body() query: ListOrdersDTO, @ActiveUser('userId') userId: number) {
-    return await this.ordersService.list(query, userId)
+  async list(@Body() query: ListOrdersDTO, @ActiveUser() user: AccessTokenPayload) {
+    return await this.ordersService.list(query, user)
   }
 
   @Get(':id')
   @ZodSerializerDto(OrderDetailResDTO)
-  async getById(@Param('id') id: string) {
+  async getById(@Param('id') id: string, @ActiveUser() user: AccessTokenPayload) {
     const orderId = Number(id)
-    return await this.ordersService.getById(orderId)
+    return await this.ordersService.getById(orderId, user)
   }
 
   @Put(':id')

@@ -8,7 +8,8 @@ export class MediaConfigService implements MulterOptionsFactory {
     return {
       storage: memoryStorage(),
       limits: {
-        fileSize: 2 * 1024 * 1024,
+        // Form thêm món ghi "mỗi ảnh < 5MB": ảnh chụp điện thoại thường 2–4MB
+        fileSize: 5 * 1024 * 1024,
       },
       fileFilter(req, file, callback) {
         const allowedMimeTypes = /\/(jpg|jpeg|png)$/

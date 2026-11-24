@@ -1,4 +1,4 @@
-import { HttpException, HttpStatus, Injectable } from '@nestjs/common'
+import { BadRequestException, HttpException, HttpStatus, Injectable } from '@nestjs/common'
 
 import { I18nContext } from 'nestjs-i18n'
 import { CategoryRepo } from '@/routes/categories/category.repo'
@@ -52,6 +52,25 @@ export class GuestService {
       if (error instanceof JsonWebTokenError) {
         throw new HttpException(error.message, HttpStatus.UNAUTHORIZED)
       }
+    }
+  }
+
+  /**
+   * Cấu hình VAT / phí phục vụ của chi nhánh mà khách đang ngồi.
+   * Khách phải thấy trước khi đặt món: giá menu đã gồm VAT hay chưa, VAT bao nhiêu %.
+   */
+  async getBranchTaxSettings(guestId: number) {
+    const guest = await this.guestRepo.findTaxSettingsByGuest(guestId)
+    if (!guest?.tableNode) {
+      throw new BadRequestException('Khách chưa gắn với bàn nào nên không xác định được chi nhánh')
+    }
+    const { branch } = guest.tableNode
+    return {
+      branchId: guest.tableNode.branchId,
+      branchName: branch.name,
+      taxRate: Number(branch.taxRate),
+      serviceChargeRate: Number(branch.serviceChargeRate),
+      pricesIncludeTax: branch.pricesIncludeTax,
     }
   }
 
