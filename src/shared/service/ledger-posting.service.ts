@@ -20,6 +20,7 @@ export type LedgerRefType =
   | 'DEPOSIT_SETTLED'
   | 'REFUND'
   | 'REVERSAL'
+  | 'CASH_VARIANCE'
 
 export type PostEntryInput = {
   branchId: number

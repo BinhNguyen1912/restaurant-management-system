@@ -37,6 +37,12 @@ const StaffPolicy: RolePolicy = {
   'UNIT-CONVERSION': ['GET', 'POST', 'PATCH', 'DELETE'],
   MEDIA: ['POST'],
   DASHBOARD: ['POST'],
+  // Ca làm việc + két tiền mặt: thu ngân mở/đóng ca và ghi thu chi trong ca của mình
+  'CASH-SHIFTS': ['GET', 'POST'],
+  // Nhật ký sổ cái là dữ liệu kế toán: chỉ ADMIN xem (STAFF xem được ca/két của mình)
+  LEDGER: [],
+  // Cấu hình thuế/phí của chi nhánh: STAFF chỉ ĐỌC (để FE hiện dòng VAT khi tạo đơn)
+  BRANCHES: ['GET'],
   // chi doc: noi dung menu + danh muc role
   CATEGORY: ['GET'],
   'CATEGORY-TRANSLATION': ['GET'],

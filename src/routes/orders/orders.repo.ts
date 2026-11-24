@@ -287,6 +287,11 @@ export class OrdersRepo {
             discountTotal: order.discountTotal,
             serviceChargeAmount: order.serviceChargeAmount,
             taxTotal: order.taxTotal,
+            // Doanh thu thuần: trừ thuế ra khi giá menu đã gồm VAT
+            revenue: new Prisma.Decimal(order.grandTotal)
+              .minus(order.serviceChargeAmount)
+              .minus(order.taxTotal)
+              .minus(order.tipAmount),
           },
           'CASH',
         )

@@ -7,7 +7,8 @@ const prisma = new PrismaClient()
  *
  * - Chạy lại nhiều lần vẫn an toàn (idempotent): món/danh mục tìm theo `name`, SKU theo (productId, value).
  * - Không đụng tới đơn hàng / thanh toán / sổ cái.
- * - Ảnh dùng URL picsum (http hợp lệ) để khỏi phụ thuộc Cloudinary khi demo.
+ * - KHÔNG seed ảnh ngoài (trước đây dùng picsum.photos): ảnh demo bị next/image chặn host
+ *   và làm trắng trang. Để trống -> FE hiện placeholder, admin tự upload ảnh thật.
  *
  * Chạy:  npm run seed:catalog
  *        npm run seed:catalog -- --dry-run     (chỉ in ra sẽ làm gì, không ghi DB)
@@ -34,7 +35,11 @@ const LANGUAGES: { id: string; name: string }[] = [
   { id: 'en', name: 'English' },
 ]
 
-const img = (seed: string) => `https://picsum.photos/seed/${seed}/800/600`
+/**
+ * Ảnh seed = rỗng. Muốn có ảnh demo thì upload qua trang quản lý món (Cloudinary),
+ * đừng dùng host ngoài vì next/image chỉ nhận host khai báo trong next.config.mjs.
+ */
+const img = (_seed: string) => ''
 
 const CATEGORIES: SeedCategory[] = [
   { name: 'Khai vị', description: 'Món nhẹ mở đầu bữa ăn', logo: img('khai-vi') },

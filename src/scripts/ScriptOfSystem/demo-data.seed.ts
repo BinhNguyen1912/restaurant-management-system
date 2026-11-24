@@ -148,7 +148,8 @@ async function main() {
         rotation: 0,
         width: 100,
         height: 100,
-        imageUrl: `https://picsum.photos/seed/${encodeURIComponent(node.name)}/200/200`,
+        // Rỗng: sơ đồ bàn dùng icon mặc định; admin upload ảnh bàn thật nếu cần
+        imageUrl: '',
         areaId,
         branchId,
         layoutId: node.area === 'MAIN/Sảnh chính' ? layoutId : undefined,

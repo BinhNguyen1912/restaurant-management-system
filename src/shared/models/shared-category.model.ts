@@ -4,10 +4,12 @@ import { z } from 'zod'
 export const CategorySchema = z.object({
   id: z.number(),
   parentCategoryId: z.number().nullable(),
-  logo: z
-    .string({ message: 'Error.LogoMustBeString' })
-    .min(2, { message: 'Error.TooShort' })
-    .max(500, { message: 'Error.TooLong' }),
+  /**
+   * Ảnh danh mục CÓ THỂ rỗng (danh mục chưa upload ảnh). Schema này là schema OUTPUT
+   * (ZodSerializerDto) nên không được `min(2)`: một danh mục chưa có ảnh sẽ làm cả
+   * `GET /category` trả 500. Ràng buộc "phải có ảnh" nằm ở body schema (`CategoryBodySchema`).
+   */
+  logo: z.string({ message: 'Error.LogoMustBeString' }).max(500, { message: 'Error.TooLong' }).default(''),
   name: z
     .string({ message: 'Error.NameMustBeString' })
     .min(2, { message: 'Error.TooShort' })

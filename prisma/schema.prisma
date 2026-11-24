@@ -42,6 +42,7 @@ enum LedgerRefType {
   DEPOSIT_SETTLED
   REFUND
   REVERSAL
+  CASH_VARIANCE
 }
 
 model LedgerAccount {
@@ -115,6 +116,12 @@ model Branch {
   address   String   @default("")
   timezone  String   @default("Asia/Ho_Chi_Minh") @db.VarChar(64)
   isActive  Boolean  @default(true)
+  /// VAT (%) áp cho hoá đơn của chi nhánh — 0 = không tính thuế
+  taxRate          Decimal @default(0) @db.Decimal(5, 2)
+  /// Phí phục vụ (%) tính trên tiền món sau giảm giá
+  serviceChargeRate Decimal @default(0) @db.Decimal(5, 2)
+  /// Giá trên menu đã bao gồm VAT chưa (VN: thường là ĐÃ gồm) — quyết định VAT cộng thêm hay trích ra
+  pricesIncludeTax Boolean @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -126,6 +133,8 @@ model Branch {
   reservations  Reservation[]
   users         User[]
   ledgerEntries LedgerEntry[]
+  cashShifts    CashShift[]
+  cashMovements CashMovement[]
 }
 
 model User {
@@ -157,6 +166,9 @@ model User {
   createdCategoryTranslations CategoryTranslation[] @relation("CategoryTranslationCreateBy")
   deletedCategoryTranslations CategoryTranslation[] @relation("CategoryTranslationDeleteBy")
   updatedCategoryTranslations CategoryTranslation[] @relation("CategoryTranslationUpdateBy")
+  cashShiftsOpened            CashShift[]           @relation("CashShiftStaff")
+  cashShiftsClosed            CashShift[]           @relation("CashShiftClosedBy")
+  cashMovementsCreated        CashMovement[]        @relation("CashMovementCreatedBy")
   createdGuest                Guest[]               @relation("GuestCreateBy")
   deletedGuest                Guest[]               @relation("GuestDeleteBy")
   updatedGuest                Guest[]               @relation("GuestUpdateBy")
@@ -461,6 +473,8 @@ model Order {
   subtotal            Decimal              @default(0) @db.Decimal(14, 2)
   discountTotal       Decimal              @default(0) @db.Decimal(14, 2)
   serviceChargeRate   Decimal              @default(0) @db.Decimal(5, 2)
+  /// VAT (%) áp tại thời điểm tạo đơn — đổi cấu hình chi nhánh không làm sai đơn cũ
+  taxRate             Decimal              @default(0) @db.Decimal(5, 2)
   serviceChargeAmount Decimal              @default(0) @db.Decimal(14, 2)
   tipAmount           Decimal              @default(0) @db.Decimal(14, 2)
   taxTotal            Decimal              @default(0) @db.Decimal(14, 2)
@@ -917,6 +931,77 @@ model TableNode {
   branch       Branch        @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([areaId])
+}
+
+
+/// Ca làm việc + két tiền mặt (ADR 0001 D7).
+/// Đối soát cuối ca là nguồn thứ hai để đối chiếu với sổ cái (CASH).
+enum CashShiftStatus {
+  OPEN
+  CLOSED
+}
+
+enum CashMovementType {
+  /// Thu tiền vào két (không phải doanh thu: đổi tiền lẻ, nộp thêm quỹ...)
+  IN
+  /// Chi tiền ra khỏi két (mua vặt, trả nhà cung cấp, nộp quỹ...)
+  OUT
+}
+
+model CashShift {
+  id           Int             @id @default(autoincrement())
+  branchId     Int
+  /// Người mở ca
+  staffId      Int
+  status       CashShiftStatus @default(OPEN)
+  openedAt     DateTime        @default(now())
+  closedAt     DateTime?
+  /// Tiền lẻ/tiền mặt có sẵn trong két khi mở ca
+  openingFloat Decimal         @db.Decimal(14, 2)
+  /// Số tiền mặt thực đếm khi đóng ca
+  countedCash  Decimal?        @db.Decimal(14, 2)
+  /// openingFloat + Σ thu tiền mặt + Σ IN - Σ OUT (chốt tại thời điểm đóng)
+  expectedCash Decimal?        @db.Decimal(14, 2)
+  /// countedCash - expectedCash (>0 thừa, <0 thiếu)
+  variance     Decimal?        @db.Decimal(14, 2)
+  /// Σ Payment CASH đã PAID trong ca (chốt tại thời điểm đóng)
+  cashIn       Decimal         @default(0) @db.Decimal(14, 2)
+  /// Σ CashMovement OUT trong ca
+  cashOut      Decimal         @default(0) @db.Decimal(14, 2)
+  note         String?         @db.VarChar(500)
+  closedById   Int?
+  /// Bút toán ghi lệch két (thiếu/thừa), null nếu khớp
+  ledgerEntryId Int?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  branch    Branch         @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  staff     User           @relation("CashShiftStaff", fields: [staffId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  closedBy  User?          @relation("CashShiftClosedBy", fields: [closedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  movements CashMovement[]
+
+  @@index([branchId, status])
+  @@index([branchId, openedAt])
+  @@index([staffId])
+}
+
+model CashMovement {
+  id          Int              @id @default(autoincrement())
+  shiftId     Int
+  type        CashMovementType
+  reason      String           @db.VarChar(255)
+  amount      Decimal          @db.Decimal(14, 2)
+  /// Ảnh/video chứng từ (hoá đơn, biên nhận) — Cloudinary URL
+  evidenceUrls String[]        @default([])
+  branchId    Int
+  createdById Int?
+  createdAt   DateTime         @default(now())
+
+  shift     CashShift @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  branch    Branch    @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  createdBy User?     @relation("CashMovementCreatedBy", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([shiftId])
 }
 
 model Reminders {

@@ -534,6 +534,11 @@ export class VnPayService {
               discountTotal: order.discountTotal,
               serviceChargeAmount: order.serviceChargeAmount,
               taxTotal: order.taxTotal,
+              // Doanh thu thuần: giá menu đã gồm VAT thì phải trừ thuế ra khỏi doanh thu
+              revenue: new Prisma.Decimal(order.grandTotal)
+                .minus(order.serviceChargeAmount)
+                .minus(order.taxTotal)
+                .minus(order.tipAmount),
             },
             'VNPAY_CLEARING',
           )
