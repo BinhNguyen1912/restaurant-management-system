@@ -75,6 +75,11 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     await this.redisClient.set(key, String(value))
   }
 
+  /** PING thật tới Redis (healthcheck) — không dùng cache-manager vì nó có fallback trong RAM */
+  async ping(): Promise<string> {
+    return this.redisClient.ping()
+  }
+
   async del(key: string): Promise<void> {
     await this.redisClient.del(key)
   }
