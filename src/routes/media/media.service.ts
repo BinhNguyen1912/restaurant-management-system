@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common'
 import { UploadApiErrorResponse, UploadApiResponse, v2 } from 'cloudinary'
 import { MediaResType } from './media.model'
-import { CloudinaryService } from '@/shared/service/cloudinary.service'
+import { CloudinaryService, resolveResourceType } from '@/shared/service/cloudinary.service'
 @Injectable()
 export class MediaService {
   constructor(private readonly cloudinaryService: CloudinaryService) {}
@@ -13,14 +13,15 @@ export class MediaService {
     const uploaded = await Promise.all(
       files.map((file) =>
         this.cloudinaryService.uploadFile(file, {
-          resourceType: file.mimetype.startsWith('video/') ? 'video' : 'image',
+          resourceType: resolveResourceType(file.mimetype),
           folder: 'cash-evidence',
         }),
       ),
     )
     return {
       data: uploaded.map((item) => ({
-        url: item.url as string,
+        // `secure_url` = https; `url` mặc định là http và bị chặn khi làm chứng từ
+        url: (item.secure_url ?? item.url) as string,
         mimeType: `${item.resource_type}/${item.format}`,
         fileName: `${item.display_name ?? item.public_id}.${item.format}`,
       })),
@@ -33,7 +34,8 @@ export class MediaService {
       return {
         data: resuft.map((item) => {
           return {
-            url: item.url as string,
+            // https: ảnh sản phẩm cũng nên là https để next/image + CSP không chặn
+            url: (item.secure_url ?? item.url) as string,
             mimeType: `${item.resource_type}/${item.format}`,
             fileName: `${item.display_name}.${item.format}`,
           }
