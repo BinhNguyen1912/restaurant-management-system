@@ -22,7 +22,9 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "seed:ledger-accounts": "npx ts-node -r tsconfig-paths/register src/scripts/ScriptOfSystem/ledger-accounts.seed.ts"
+    "seed:ledger-accounts": "npx ts-node -r tsconfig-paths/register src/scripts/ScriptOfSystem/ledger-accounts.seed.ts",
+    "seed:catalog": "npx ts-node -r tsconfig-paths/register src/scripts/ScriptOfSystem/catalog.seed.ts",
+    "db:dump": "npx ts-node -r tsconfig-paths/register src/scripts/ScriptOfSystem/dump-data.ts"
   },
   "dependencies": {
     "@keyv/redis": "^2.8.5",
