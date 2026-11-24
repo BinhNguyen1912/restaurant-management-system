@@ -43,6 +43,8 @@ enum LedgerRefType {
   REFUND
   REVERSAL
   CASH_VARIANCE
+  /// Đối soát VNPay: chuyển tiền đang chờ về (VNPAY_CLEARING) sang BANK
+  VNPAY_SETTLEMENT
 }
 
 model LedgerAccount {

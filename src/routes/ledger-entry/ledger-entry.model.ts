@@ -15,6 +15,7 @@ export const LedgerRefTypeSchema = z.enum([
   'REFUND',
   'REVERSAL',
   'CASH_VARIANCE',
+  'VNPAY_SETTLEMENT',
 ])
 
 export const LedgerEntryStatusSchema = z.enum(['DRAFT', 'POSTED'])
@@ -91,6 +92,62 @@ export const LedgerIntegrityResSchema = z.object({
   checkedAt: z.date(),
 })
 
+/**
+ * Đối soát Payment ↔ sổ cái (ticket #13): tiền đã thu theo phương thức phải bằng
+ * số dư tài khoản nhận tiền tương ứng (CASH / VNPAY_CLEARING).
+ */
+export const LedgerReconciliationQuerySchema = z.object({
+  fromDate: z.string().trim().optional(),
+  toDate: z.string().trim().optional(),
+  branchId: z.coerce.number().int().positive().optional(),
+})
+
+export const LedgerReconciliationResSchema = z.object({
+  fromDate: z.string().nullable(),
+  toDate: z.string().nullable(),
+  branchId: z.number().nullable(),
+  methods: z.array(
+    z.object({
+      method: z.enum(['CASH', 'VNPAY']),
+      /** tài khoản nhận tiền tương ứng trong sổ cái */
+      accountCode: z.string(),
+      payments: z.number(),
+      paymentAmount: moneyOutputSchema,
+      ledgerAmount: moneyOutputSchema,
+      /** paymentAmount - ledgerAmount; ≠ 0 là lệch */
+      difference: moneyOutputSchema,
+    }),
+  ),
+  totals: z.object({
+    paymentAmount: moneyOutputSchema,
+    ledgerAmount: moneyOutputSchema,
+    difference: moneyOutputSchema,
+  }),
+  /** số dư hiện tại của tiền chờ về (all-time), theo chi nhánh nếu có lọc */
+  vnpayClearingBalance: moneyOutputSchema,
+  /** payment SUCCESS chưa có bút toán POSTED (trong kỳ) */
+  paymentsWithoutEntry: z.array(
+    z.object({ paymentId: z.number(), method: z.string().nullable(), amount: moneyOutputSchema }),
+  ),
+  checkedAt: z.date(),
+})
+
+export const SettleVnpayClearingSchema = z.object({
+  /** số tiền ngân hàng đã báo có */
+  amount: z.coerce
+    .number()
+    .positive('Số tiền phải lớn hơn 0')
+    .max(100_000_000_000, 'Số tiền quá lớn')
+    .transform((value) => Math.round(value)),
+  /** mã giao dịch/sao kê ngân hàng — dùng làm idempotencyKey, không được trùng */
+  reference: z.string().trim().min(3, 'Mã đối soát quá ngắn').max(120),
+  branchId: z.coerce.number().int().positive().optional(),
+  note: z.string().trim().max(500).optional(),
+})
+
+export type LedgerReconciliationQueryType = z.infer<typeof LedgerReconciliationQuerySchema>
+export type LedgerReconciliationResType = z.infer<typeof LedgerReconciliationResSchema>
+export type SettleVnpayClearingType = z.infer<typeof SettleVnpayClearingSchema>
 export type LedgerEntryType = z.infer<typeof LedgerEntrySchema>
 export type LedgerEntryQueryType = z.infer<typeof LedgerEntryQuerySchema>
 export type LedgerEntryListResType = z.infer<typeof LedgerEntryListResSchema>

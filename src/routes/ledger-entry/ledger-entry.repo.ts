@@ -139,3 +139,161 @@ export class LedgerEntryRepo {
     }
   }
 }
+
+/**
+ * Đối soát Payment ↔ sổ cái (ticket #13).
+ *
+ * Nguyên tắc: tiền đã thu theo 1 phương thức phải bằng số phát sinh Nợ trên tài khoản nhận tiền
+ * tương ứng — CASH cho tiền mặt, VNPAY_CLEARING cho VNPay. Lệch = có giao dịch thu mà không ghi sổ
+ * (hoặc ghi sổ không có giao dịch thật).
+ */
+export type ReconciliationInput = { fromDate?: string; toDate?: string; branchId?: number }
+
+@Injectable()
+export class LedgerReconciliationRepo {
+  constructor(private readonly prismaService: PrismaService) {}
+
+  private periodRange(input: ReconciliationInput) {
+    if (!input.fromDate && !input.toDate) return undefined
+    const range: Prisma.DateTimeFilter = {}
+    if (input.fromDate) range.gte = new Date(`${input.fromDate}T00:00:00`)
+    if (input.toDate) range.lte = new Date(`${input.toDate}T23:59:59.999`)
+    return range
+  }
+
+  /** Tổng thu theo phương thức: Payment SUCCESS (mốc thời gian = paidAt) */
+  private async paymentTotals(input: ReconciliationInput) {
+    const paidAt = this.periodRange(input)
+    const rows = await this.prismaService.payment.groupBy({
+      by: ['method'],
+      where: {
+        status: 'SUCCESS',
+        ...(paidAt ? { paidAt } : {}),
+        ...(input.branchId ? { branchId: input.branchId } : {}),
+      },
+      _sum: { amount: true },
+      _count: { _all: true },
+    })
+    return rows
+  }
+
+  /** Tổng phát sinh Nợ trên tài khoản nhận tiền (chỉ bút toán POSTED) */
+  private async ledgerDebitTotals(accountCodes: string[], input: ReconciliationInput) {
+    const occurredAt = this.periodRange(input)
+    const rows = await this.prismaService.ledgerLine.groupBy({
+      by: ['accountId'],
+      where: {
+        direction: 'DEBIT',
+        entry: {
+          status: 'POSTED',
+          ...(occurredAt ? { occurredAt } : {}),
+          ...(input.branchId ? { branchId: input.branchId } : {}),
+        },
+        account: { code: { in: accountCodes } },
+      },
+      _sum: { amount: true },
+    })
+    const accounts = await this.prismaService.ledgerAccount.findMany({
+      where: { code: { in: accountCodes } },
+      select: { id: true, code: true },
+    })
+    const codeById = new Map(accounts.map((account) => [account.id, account.code]))
+    const byCode = new Map<string, Prisma.Decimal>()
+    for (const row of rows) {
+      const code = codeById.get(row.accountId)
+      if (code) byCode.set(code, row._sum.amount ?? new Prisma.Decimal(0))
+    }
+    return byCode
+  }
+
+  /** Số dư hiện tại của tiền chờ về VNPAY_CLEARING = Σ Nợ − Σ Có */
+  async clearingBalance(branchId?: number) {
+    const rows = await this.prismaService.ledgerLine.groupBy({
+      by: ['direction'],
+      where: {
+        account: { code: 'VNPAY_CLEARING' },
+        entry: { status: 'POSTED', ...(branchId ? { branchId } : {}) },
+      },
+      _sum: { amount: true },
+    })
+    const debit = rows.find((row) => row.direction === 'DEBIT')?._sum.amount ?? new Prisma.Decimal(0)
+    const credit = rows.find((row) => row.direction === 'CREDIT')?._sum.amount ?? new Prisma.Decimal(0)
+    return debit.minus(credit)
+  }
+
+  /** Payment SUCCESS chưa có bút toán POSTED — chính là phần gây lệch */
+  async paymentsWithoutEntry(input: ReconciliationInput) {
+    const paidAt = this.periodRange(input)
+    const orderPayments = await this.prismaService.payment.findMany({
+      where: {
+        status: 'SUCCESS',
+        ...(paidAt ? { paidAt } : {}),
+        ...(input.branchId ? { branchId: input.branchId } : {}),
+        order: { some: { deletedAt: null } },
+      },
+      select: { id: true, method: true, amount: true },
+      orderBy: { id: 'asc' },
+      take: 50,
+    })
+    if (!orderPayments.length) return []
+
+    const posted = await this.prismaService.ledgerEntry.findMany({
+      where: {
+        status: 'POSTED',
+        refType: { in: ['ORDER_PAID_CASH', 'ORDER_PAID_VNPAY'] },
+        refId: { in: orderPayments.map((payment) => payment.id) },
+      },
+      select: { refId: true },
+    })
+    const postedIds = new Set(posted.map((entry) => entry.refId))
+    return orderPayments
+      .filter((payment) => !postedIds.has(payment.id))
+      .map((payment) => ({ paymentId: payment.id, method: payment.method, amount: payment.amount }))
+  }
+
+  async reconcile(input: ReconciliationInput) {
+    const [payments, ledgerDebits, clearing, missing] = await Promise.all([
+      this.paymentTotals(input),
+      this.ledgerDebitTotals(['CASH', 'VNPAY_CLEARING'], input),
+      this.clearingBalance(input.branchId),
+      this.paymentsWithoutEntry(input),
+    ])
+
+    const sumBy = (method: 'CASH' | 'VNPAY') => {
+      const row = payments.find((item) => item.method === method)
+      return { amount: row?._sum.amount ?? new Prisma.Decimal(0), count: row?._count._all ?? 0 }
+    }
+
+    const build = (method: 'CASH' | 'VNPAY', accountCode: string) => {
+      const payment = sumBy(method)
+      const ledgerAmount = ledgerDebits.get(accountCode) ?? new Prisma.Decimal(0)
+      return {
+        method,
+        accountCode,
+        payments: payment.count,
+        paymentAmount: payment.amount,
+        ledgerAmount,
+        difference: payment.amount.minus(ledgerAmount),
+      }
+    }
+
+    const methods = [build('CASH', 'CASH'), build('VNPAY', 'VNPAY_CLEARING')]
+    const totalPayment = methods.reduce((total, item) => total.add(item.paymentAmount), new Prisma.Decimal(0))
+    const totalLedger = methods.reduce((total, item) => total.add(item.ledgerAmount), new Prisma.Decimal(0))
+
+    return {
+      fromDate: input.fromDate ?? null,
+      toDate: input.toDate ?? null,
+      branchId: input.branchId ?? null,
+      methods,
+      totals: {
+        paymentAmount: totalPayment,
+        ledgerAmount: totalLedger,
+        difference: totalPayment.minus(totalLedger),
+      },
+      vnpayClearingBalance: clearing,
+      paymentsWithoutEntry: missing,
+      checkedAt: new Date(),
+    }
+  }
+}

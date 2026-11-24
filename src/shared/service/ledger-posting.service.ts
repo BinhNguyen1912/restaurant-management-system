@@ -21,6 +21,7 @@ export type LedgerRefType =
   | 'REFUND'
   | 'REVERSAL'
   | 'CASH_VARIANCE'
+  | 'VNPAY_SETTLEMENT'
 
 export type PostEntryInput = {
   branchId: number
