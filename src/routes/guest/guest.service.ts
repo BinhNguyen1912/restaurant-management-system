@@ -74,9 +74,17 @@ export class GuestService {
     }
   }
 
-  async createOrderByGuest({ data, guestId }: { data: CreateNewOrderType; guestId: number }) {
+  async createOrderByGuest({
+    data,
+    guestId,
+    voucherCode,
+  }: {
+    data: CreateNewOrderType
+    guestId: number
+    voucherCode?: string
+  }) {
     try {
-      return await this.sharedOrdersRepo.CreateOrdersForGuest({ guestId, orderItems: data })
+      return await this.sharedOrdersRepo.CreateOrdersForGuest({ guestId, orderItems: data, voucherCode })
     } catch (error) {
       throw error
     }

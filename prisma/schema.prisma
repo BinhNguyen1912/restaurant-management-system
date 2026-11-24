@@ -401,8 +401,8 @@ model Product {
   images              String[]
   /// [Variants]
   variants            Json
-  basePrice           Float
-  virtualPrice        Float
+  basePrice           Decimal              @db.Decimal(14, 2)
+  virtualPrice        Decimal              @db.Decimal(14, 2)
   name                String               @db.VarChar(500)
   publishedAt         DateTime?
   createdById         Int?
@@ -835,7 +835,7 @@ model Voucher {
   id               Int               @id @default(autoincrement())
   code             String            @unique @db.VarChar(100)
   discountType     VoucherType
-  discountValue    Float
+  discountValue    Decimal           @db.Decimal(14, 2)
   startAt          DateTime
   endAt            DateTime
   usageLimit       Int?
@@ -857,7 +857,10 @@ model VoucherSnapshot {
   voucherId     Int
   code          String
   discountType  VoucherType
-  discountValue Float
+  discountValue Decimal     @db.Decimal(14, 2)
+  /// Số tiền THỰC SỰ đã giảm cho đơn này (khác `discountValue`: PERCENT 10% của 100k = 10k).
+  /// Không có cột này thì đối soát/audit chỉ biết "voucher 10%" mà không biết đã trừ bao nhiêu tiền.
+  appliedDiscount Decimal  @default(0) @db.Decimal(14, 2)
   startAt       DateTime
   endAt         DateTime
   createdAt     DateTime    @default(now())

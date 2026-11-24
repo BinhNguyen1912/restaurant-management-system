@@ -52,8 +52,10 @@ export const VariantsSchema = z.array(VariantSchema).superRefine((variants, ctx)
 export const ProductSchema = z.object({
   id: z.number(),
   name: z.string(),
-  basePrice: z.number().positive('Giá cơ bản phải lớn hơn 0'),
-  virtualPrice: z.number().positive('Giá ảo phải lớn hơn 0'),
+  // Giá là Decimal trong DB (ticket #02) nhưng hợp đồng API là number:
+  // coerce nhận cả Decimal (khi serialize) lẫn number/string (khi client gửi lên).
+  basePrice: z.coerce.number().positive('Giá cơ bản phải lớn hơn 0'),
+  virtualPrice: z.coerce.number().positive('Giá ảo phải lớn hơn 0'),
   status: z.enum([ProductStatus.ACTIVE, ProductStatus.INACTIVE, ProductStatus.HIDDEN]),
   variants: z.union([VariantsSchema, z.any()]).transform((val) => {
     if (Array.isArray(val)) {

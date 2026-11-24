@@ -63,13 +63,15 @@ export class OrdersService {
     guestId,
     orderItems,
     createdById,
+    voucherCode,
   }: {
     guestId: number
     orderItems: CreateNewOrderType
     createdById: number
+    voucherCode?: string
   }) {
     try {
-      return await this.sharedOrdersRepo.CreateOrdersForGuest({ guestId, orderItems, createdById })
+      return await this.sharedOrdersRepo.CreateOrdersForGuest({ guestId, orderItems, createdById, voucherCode })
     } catch (error) {
       console.log('[ERROR.ORDER-REPO]', error)
 

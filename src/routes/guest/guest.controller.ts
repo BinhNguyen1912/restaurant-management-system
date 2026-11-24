@@ -51,10 +51,16 @@ export class GuestController {
     })
   }
   @Post('new-order')
-  async createOrder(@Body() createOrderDto: GuestCreateNewOrderDTO, @ActiveUser('userId') userId: number) {
+  async createOrder(
+    @Body() createOrderDto: GuestCreateNewOrderDTO,
+    @ActiveUser('userId') userId: number,
+    /** mã voucher (tuỳ chọn) — body vẫn là mảng món để không phá client cũ */
+    @Query('voucherCode') voucherCode?: string,
+  ) {
     const result = await this.guestService.createOrderByGuest({
       data: createOrderDto,
       guestId: userId,
+      voucherCode,
     })
     return result
   }

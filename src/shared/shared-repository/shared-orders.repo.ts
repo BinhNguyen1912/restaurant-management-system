@@ -17,6 +17,7 @@ import {
 import { PrismaService } from '@/shared/service/prisma.service'
 import { RedisService } from '@/shared/service/redis.service'
 import { AuditLogService } from '@/shared/service/audit-log.service'
+import { VoucherService } from '@/shared/service/voucher.service'
 import { AppGateway } from '@/webSockets/app.gateway'
 import { InjectQueue } from '@nestjs/bullmq'
 import { BadRequestException } from '@nestjs/common'
@@ -31,6 +32,7 @@ export class SharedOrdersRepo {
     @InjectQueue(Inventory_Queue) private readonly inventoryQueue: Queue,
     private readonly appGateway: AppGateway,
     private readonly auditLogService: AuditLogService,
+    private readonly voucherService: VoucherService,
   ) {}
 
   async validateIngredientByLuaBeforeCreateOrder(orderItems: CreateNewOrderType): Promise<{
@@ -270,10 +272,13 @@ export class SharedOrdersRepo {
     guestId,
     orderItems,
     createdById,
+    voucherCode,
   }: {
     guestId: number
     orderItems: CreateNewOrderType
     createdById?: number
+    /** mã voucher khách nhập — áp trong cùng transaction, ghi snapshot kèm giá trị giảm thực tế */
+    voucherCode?: string
   }): Promise<OrderResType> {
     try {
       const checkAndDeductStock = await this.validateIngredientByLuaBeforeCreateOrder(orderItems)
@@ -334,8 +339,20 @@ export class SharedOrdersRepo {
         const validatedSkus = await Promise.all(skuPromises)
 
         // Tinh tien bang Decimal (ADR 0001 D5/D6); tip khoan lam => 0
+        const lines = validatedSkus.map((item) => ({ price: item.sku.price, quantity: item.quantity }))
+        const subtotal = lines
+          .reduce((total, line) => total.add(new Prisma.Decimal(line.price).mul(line.quantity)), new Prisma.Decimal(0))
+          .toDecimalPlaces(0)
+
+        // Voucher (ticket #02): kiểm + ghi snapshot TRONG transaction; snapshot giữ đúng số tiền
+        // đã giảm nên đơn cũ không đổi số khi voucher bị sửa/xoá về sau.
+        const voucher = voucherCode?.trim()
+          ? await this.voucherService.applyVoucher({ code: voucherCode, subtotal }, tx)
+          : null
+
         const money = computeOrderMoney({
-          lines: validatedSkus.map((item) => ({ price: item.sku.price, quantity: item.quantity })),
+          lines,
+          discountTotal: voucher?.appliedDiscount ?? 0,
           taxRate: table.taxRate,
           serviceChargeRate: table.serviceChargeRate,
           pricesIncludeTax: table.pricesIncludeTax,
@@ -378,6 +395,7 @@ export class SharedOrdersRepo {
               })),
             },
             paymentId: payment.id,
+            voucherSnapshotId: voucher?.snapshotId ?? null,
             createdById: createdById ?? null,
           },
           include: {
