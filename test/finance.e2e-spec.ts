@@ -23,6 +23,7 @@ describe('Finance (e2e)', () => {
     areaIds: [],
     branchIds: [],
     reportEntryKeys: [] as string[],
+    reconciliationRunIds: [] as number[],
   }
   let originalBranchSettings: { id: number; taxRate: string; serviceChargeRate: string; pricesIncludeTax: boolean } | null = null
 
@@ -86,6 +87,10 @@ describe('Finance (e2e)', () => {
     if (created.paymentIds.length) await attempt('payments', () => prisma.payment.deleteMany({ where: { id: { in: created.paymentIds } } }))
     if (created.guestIds.length) await attempt('guests', () => prisma.guest.deleteMany({ where: { id: { in: created.guestIds } } }))
     if (created.areaIds.length) await attempt('areas', () => prisma.area.deleteMany({ where: { id: { in: created.areaIds } } }))
+    if (created.reconciliationRunIds.length) {
+      await attempt('reconciliation items', () => prisma.reconciliationItem.deleteMany({ where: { runId: { in: created.reconciliationRunIds } } }))
+      await attempt('reconciliation runs', () => prisma.reconciliationRun.deleteMany({ where: { id: { in: created.reconciliationRunIds } } }))
+    }
     if (created.reportEntryKeys.length) {
       await attempt('report ledger lines', () => prisma.ledgerLine.deleteMany({ where: { entry: { idempotencyKey: { in: created.reportEntryKeys } } } }))
       await attempt('report ledger entries', () => prisma.ledgerEntry.deleteMany({ where: { idempotencyKey: { in: created.reportEntryKeys } } }))
@@ -301,6 +306,53 @@ describe('Finance (e2e)', () => {
       .expect(201)
     expect(typeof dashboard.body.revenue).toBe('number')
     expect(dashboard.body.revenueByDate.length).toBeGreaterThan(0)
+  })
+
+  it('đối soát lưu lịch sử: chạy 1 kỳ, ghi run + item, và Payment tiền mặt vừa thu được xếp MATCHED', async () => {
+    const branch = await prisma.branch.findFirst({ where: { isActive: true }, orderBy: { id: 'asc' } })
+    const today = new Date().toISOString().slice(0, 10)
+
+    // tạo 1 đơn tiền mặt thật rồi thu tiền (bút toán sinh trong cùng transaction)
+    const table = await prisma.tableNode.findFirst({ where: { branchId: branch!.id, status: 'AVAILABLE' }, orderBy: { id: 'asc' } })
+    const guestLogin = await api()
+      .post('/guest/login')
+      .send({ name: 'e2e đối soát', tableNodeId: table!.id, token: table!.token })
+      .expect(201)
+    const guestId = guestLogin.body.guest.id as number
+    created.guestIds.push(guestId)
+    const sku = await prisma.sKU.findFirst({ where: { product: { deletedAt: null, status: 'ACTIVE' } }, orderBy: { id: 'asc' } })
+    const order = await api()
+      .post(`/orders/create-order-for-guest/${guestId}`)
+      .set(auth())
+      .send([{ skuId: sku!.id, quantity: 1 }])
+      .expect(201)
+    created.orderIds.push(order.body.id)
+    created.paymentIds.push(order.body.paymentId)
+    await api().get(`/orders/pay-orders-by-guest/${guestId}`).set(auth()).expect(200)
+
+    // chạy đối soát kỳ hôm nay cho chi nhánh này
+    const run = await api()
+      .post('/reconciliation/runs')
+      .set(auth())
+      .send({ fromDate: today, toDate: today, branchId: branch!.id })
+      .expect(201)
+    created.reconciliationRunIds.push(run.body.run.id)
+    expect(run.body.run.status).toBe('COMPLETED')
+    expect(run.body.run.summary.byKind.MATCHED ?? 0).toBeGreaterThanOrEqual(1)
+    expect(run.body.run.summary.byKind.MISSING_IN_LEDGER ?? 0).toBe(0)
+
+    // chi tiết: item của payment vừa thu phải MATCHED, đúng số tiền
+    const detail = await api().get(`/reconciliation/runs/${run.body.run.id}`).set(auth()).expect(200)
+    const item = detail.body.items.find((row: any) => row.paymentId === order.body.paymentId)
+    expect(item).toBeTruthy()
+    expect(item.kind).toBe('MATCHED')
+    expect(item.amountDelta).toBe(0)
+
+    // lịch sử có run này; đánh dấu xử lý được
+    const list = await api().get(`/reconciliation/runs?branchId=${branch!.id}`).set(auth()).expect(200)
+    expect(list.body.data.map((row: any) => row.id)).toContain(run.body.run.id)
+    const updated = await api().post(`/reconciliation/items/${item.id}/status`).set(auth()).send({ status: 'RESOLVED' }).expect(201)
+    expect(updated.body.item.status).toBe('RESOLVED')
   })
 
   it('scope chi nhánh: token chi nhánh 1 không đọc được khu vực của chi nhánh khác', async () => {

@@ -138,6 +138,7 @@ model Branch {
   cashShifts    CashShift[]
   cashMovements CashMovement[]
   dailySummaries DailyBranchSummary[]
+  reconciliationRuns ReconciliationRun[]
 }
 
 /// Projection doanh thu theo (ngày, chi nhánh, tiền tệ) — đọc từ SỔ CÁI, không cộng Order.status.
@@ -1201,4 +1202,79 @@ enum PaymentStatus {
   FAILED
   REFUNDED
   PARTIALLY_REFUNDED
+}
+
+/// Đối soát theo kỳ (ticket #13): mỗi lần chạy là 1 "run" giữ lại làm bằng chứng,
+/// không tính live rồi quên. Sai lệch được ghi thành từng item để người ta xử lý tiếp.
+enum ReconciliationRunStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum ReconciliationKind {
+  /// khớp: Payment SUCCESS có đúng 1 bút toán, số tiền trùng
+  MATCHED
+  /// có Payment SUCCESS nhưng KHÔNG có bút toán (tiền đã thu, sổ không biết)
+  MISSING_IN_LEDGER
+  /// có bút toán nhưng số tiền khác Payment
+  AMOUNT_MISMATCH
+  /// 1 Payment có nhiều hơn 1 bút toán
+  DUPLICATE
+  /// VNPay báo trạng thái khác Payment nội bộ (querydr)
+  STATUS_MISMATCH
+}
+
+enum ReconciliationItemStatus {
+  OPEN
+  RESOLVED
+  IGNORED
+}
+
+enum ReconciliationRefType {
+  PAYMENT
+  VNPAY
+}
+
+model ReconciliationRun {
+  id         Int                   @id @default(autoincrement())
+  /// kỳ theo ngày nghiệp vụ (giờ VN), lưu dạng DATE
+  periodFrom DateTime              @db.Date
+  periodTo   DateTime              @db.Date
+  branchId   Int?
+  branch     Branch?               @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  status     ReconciliationRunStatus @default(RUNNING)
+  /// đếm theo kind + tổng tiền (Json để thêm loại kiểm mới không phải migrate)
+  summary    Json?
+  /// lý do run FAILED (không im lặng)
+  error      String?               @db.VarChar(1000)
+  startedAt  DateTime              @default(now())
+  finishedAt DateTime?
+
+  items ReconciliationItem[]
+
+  @@index([branchId, periodFrom])
+  @@index([status, startedAt])
+}
+
+model ReconciliationItem {
+  id            Int                     @id @default(autoincrement())
+  runId         Int
+  run           ReconciliationRun        @relation(fields: [runId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  kind          ReconciliationKind
+  refType       ReconciliationRefType
+  /// Payment.id (hoặc mã giao dịch VNPay) — khoá để tra ngược
+  refId         Int
+  paymentId     Int?
+  ledgerEntryId Int?
+  transactionId String?                 @db.VarChar(128)
+  amountExpected Decimal                @db.Decimal(14, 2)
+  amountActual   Decimal                @db.Decimal(14, 2)
+  amountDelta    Decimal                @default(0) @db.Decimal(14, 2)
+  status        ReconciliationItemStatus @default(OPEN)
+  detail        Json?
+  createdAt     DateTime                @default(now())
+
+  @@index([runId, kind])
+  @@index([paymentId])
 }
