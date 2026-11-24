@@ -173,13 +173,15 @@ export class ProductRepository {
     }))
   }
 
-  findById(productId: number): Promise<ProductType | null> {
-    return this.prismaService.product.findUnique({
+  async findById(productId: number): Promise<ProductType | null> {
+    // Giá là Decimal trong DB (ticket #02); ra API vẫn là number -> đổi tại biên repo
+    const product = await this.prismaService.product.findUnique({
       where: {
         id: productId,
         deletedAt: null,
       },
     })
+    return toMoneyNumbers<ProductType | null>(product)
   }
 
   async createdById(data: CreateProductBodyType, createdById: number, languageId: string): Promise<GetProductDetailType> {
@@ -430,12 +432,14 @@ export class ProductRepository {
 
   async delete({ deletedById, id }: { id: number; deletedById: number }, isHard?: boolean): Promise<ProductType> {
     if (isHard) {
-      return this.prismaService.product.delete({
-        where: {
-          id,
-          deletedAt: null,
-        },
-      })
+      return toMoneyNumbers<ProductType>(
+        await this.prismaService.product.delete({
+          where: {
+            id,
+            deletedAt: null,
+          },
+        }),
+      )
     }
     const now = new Date()
     const [, product] = await Promise.all([
@@ -470,6 +474,6 @@ export class ProductRepository {
         },
       }),
     ])
-    return product as any
+    return toMoneyNumbers<ProductType>(product)
   }
 }

@@ -34,8 +34,9 @@ export const DashboardIndicatorQuerySchema = z.object({
 export const ProductIndicatorSchema = z.object({
   id: z.number(),
   name: z.string(),
-  basePrice: z.number(),
-  virtualPrice: z.number(),
+  // giá là Decimal trong DB (ticket #02) -> coerce về number khi trả ra
+  basePrice: z.coerce.number(),
+  virtualPrice: z.coerce.number(),
   images: z.array(z.string()),
   status: z.string(),
   createdAt: z.date(),

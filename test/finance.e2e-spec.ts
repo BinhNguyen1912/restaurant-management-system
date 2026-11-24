@@ -25,6 +25,7 @@ describe('Finance (e2e)', () => {
     reportEntryKeys: [] as string[],
     reconciliationRunIds: [] as number[],
     auditEntityIds: [] as number[],
+    voucherIds: [] as number[],
   }
   let originalBranchSettings: { id: number; taxRate: string; serviceChargeRate: string; pricesIncludeTax: boolean } | null = null
 
@@ -103,6 +104,10 @@ describe('Finance (e2e)', () => {
     if (created.paymentIds.length) await attempt('payments', () => prisma.payment.deleteMany({ where: { id: { in: created.paymentIds } } }))
     if (created.guestIds.length) await attempt('guests', () => prisma.guest.deleteMany({ where: { id: { in: created.guestIds } } }))
     if (created.areaIds.length) await attempt('areas', () => prisma.area.deleteMany({ where: { id: { in: created.areaIds } } }))
+    if (created.voucherIds.length) {
+      await attempt('voucher snapshots', () => prisma.voucherSnapshot.deleteMany({ where: { voucherId: { in: created.voucherIds } } }))
+      await attempt('vouchers', () => prisma.voucher.deleteMany({ where: { id: { in: created.voucherIds } } }))
+    }
     if (created.auditEntityIds.length) {
       await attempt('audit logs', () => prisma.auditLog.deleteMany({ where: { entityId: { in: created.auditEntityIds } } }))
     }
@@ -471,6 +476,92 @@ describe('Finance (e2e)', () => {
     await api().put(`/manage-product/products/${product!.id}`).set(auth()).send(payload(before)).expect(200)
     const restored = await prisma.sKU.findUnique({ where: { id: sku.id }, select: { price: true } })
     expect(Number(restored!.price)).toBe(before)
+  })
+
+  it('voucher: đặt món kèm mã giảm giá -> snapshot giữ số tiền đã giảm, discountTotal + payment khớp', async () => {
+    const branch = await prisma.branch.findFirst({ where: { isActive: true }, orderBy: { id: 'asc' } })
+    const table = await takeTable(branch!.id)
+    expect(table).toBeTruthy()
+
+    const guestLogin = await api()
+      .post('/guest/login')
+      .send({ name: 'e2e voucher', tableNodeId: table!.id, token: table!.token })
+      .expect(201)
+    const guestId = guestLogin.body.guest.id as number
+    created.guestIds.push(guestId)
+
+    const sku = await prisma.sKU.findFirst({ where: { product: { deletedAt: null, status: 'ACTIVE' } }, orderBy: { id: 'asc' } })
+    const code = `E2E${Date.now()}`
+    const voucher = await prisma.voucher.create({
+      data: {
+        code,
+        discountType: 'PERCENT',
+        discountValue: 10,
+        startAt: new Date(Date.now() - 60_000),
+        endAt: new Date(Date.now() + 60 * 60 * 1000),
+        usageLimit: 5,
+        status: 'ACTIVE',
+      },
+    })
+    created.voucherIds.push(voucher.id)
+
+    const quantity = 2
+    const order = await api()
+      .post(`/orders/create-order-for-guest/${guestId}?voucherCode=${code}`)
+      .set(auth())
+      .send([{ skuId: sku!.id, quantity }])
+      .expect(201)
+    created.orderIds.push(order.body.id)
+    created.paymentIds.push(order.body.paymentId)
+
+    const expectedSubtotal = Number(sku!.price) * quantity
+    const expectedDiscount = Math.round((expectedSubtotal * 10) / 100)
+    expect(order.body.subtotal).toBe(expectedSubtotal)
+    expect(order.body.discountTotal).toBe(expectedDiscount)
+    // tiền phải thu = công thức chung (ADR D6): VAT "đã gồm trong giá" thì KHÔNG cộng thêm lần nữa
+    const config = await prisma.branch.findUnique({ where: { id: branch!.id } })
+    const taxAddedOnTop = config!.pricesIncludeTax ? 0 : order.body.taxTotal
+    expect(order.body.grandTotal).toBe(
+      order.body.subtotal - order.body.discountTotal + order.body.serviceChargeAmount + taxAddedOnTop,
+    )
+
+    const snapshot = await prisma.voucherSnapshot.findFirst({ where: { voucherId: voucher.id } })
+    expect(snapshot).toBeTruthy()
+    expect(snapshot!.code).toBe(code)
+    expect(Number(snapshot!.appliedDiscount)).toBe(expectedDiscount)
+    expect(Number(snapshot!.discountValue)).toBe(10)
+    expect(order.body.voucherSnapshotId).toBe(snapshot!.id)
+
+    const payment = await prisma.payment.findUnique({ where: { id: order.body.paymentId } })
+    expect(Number(payment!.amount)).toBe(order.body.grandTotal)
+
+    // 2) voucher hết hạn -> 400, KHÔNG tạo đơn
+    const expiredCode = `EXP${Date.now()}`
+    const expired = await prisma.voucher.create({
+      data: {
+        code: expiredCode,
+        discountType: 'FIXED',
+        discountValue: 10_000,
+        startAt: new Date(Date.now() - 120_000),
+        endAt: new Date(Date.now() - 60_000),
+        status: 'ACTIVE',
+      },
+    })
+    created.voucherIds.push(expired.id)
+    const before = await prisma.order.count()
+    const rejected = await api()
+      .post(`/orders/create-order-for-guest/${guestId}?voucherCode=${expiredCode}`)
+      .set(auth())
+      .send([{ skuId: sku!.id, quantity: 1 }])
+    expect([400, 422]).toContain(rejected.status)
+    expect(await prisma.order.count()).toBe(before)
+
+    // 3) mã không tồn tại -> 400
+    const missing = await api()
+      .post(`/orders/create-order-for-guest/${guestId}?voucherCode=KHONGCOMA${Date.now()}`)
+      .set(auth())
+      .send([{ skuId: sku!.id, quantity: 1 }])
+    expect([400, 422]).toContain(missing.status)
   })
 
   it('scope chi nhánh: token chi nhánh 1 không đọc được khu vực của chi nhánh khác', async () => {

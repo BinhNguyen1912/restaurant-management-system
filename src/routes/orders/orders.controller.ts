@@ -46,8 +46,14 @@ export class OrdersController {
     @Body() body: GuestCreateNewOrderDTO,
     @Param('guestId') guestId: string,
     @ActiveUser('userId') userId: number,
+    @Query('voucherCode') voucherCode?: string,
   ) {
-    return await this.ordersService.createOrderForGuest({ guestId: +guestId, orderItems: body, createdById: userId })
+    return await this.ordersService.createOrderForGuest({
+      guestId: +guestId,
+      orderItems: body,
+      createdById: userId,
+      voucherCode,
+    })
   }
 
   @Get('pay-orders-by-guest/:guestId')
