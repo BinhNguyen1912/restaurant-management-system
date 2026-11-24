@@ -43,6 +43,8 @@ const StaffPolicy: RolePolicy = {
   LEDGER: [],
   // Báo cáo doanh thu (đọc projection từ sổ cái): dữ liệu tài chính, chỉ ADMIN
   REPORTS: [],
+  // Đối soát lưu lịch sử: dữ liệu kế toán, chỉ ADMIN
+  RECONCILIATION: [],
   // Cấu hình thuế/phí của chi nhánh: STAFF chỉ ĐỌC (để FE hiện dòng VAT khi tạo đơn)
   BRANCHES: ['GET'],
   // chi doc: noi dung menu + danh muc role
