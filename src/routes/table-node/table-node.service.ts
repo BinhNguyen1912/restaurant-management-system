@@ -39,8 +39,13 @@ export class TableNodeService {
     }
   }
 
-  async getTableNodeById(TableNodeId: number) {
-    const TableNode = await this.sharedTableNodeRepo.GetTableNodeById(TableNodeId)
+  async getTableNodeById(TableNodeId: number, actor?: { userId?: number; roleName?: string }) {
+    // Ban cua chi nhanh khac -> coi nhu khong ton tai
+    const branchId = await resolveBranchId(this.prismaService, {
+      userId: actor?.userId,
+      roleName: actor?.roleName,
+    })
+    const TableNode = await this.sharedTableNodeRepo.GetTableNodeById(TableNodeId, branchId)
     if (!TableNode) throw TableNodeNotFoundException
     return TableNode
   }
@@ -65,8 +70,11 @@ export class TableNodeService {
     return await this.tableNodeRepo.updateBatch({ data, updatedById })
   }
 
-  async getList(query: TableNodeQueryType, userId?: number) {
-    const branchId = await resolveBranchId(this.prismaService, { userId })
+  async getList(query: TableNodeQueryType, actor?: { userId?: number; roleName?: string }) {
+    const branchId = await resolveBranchId(this.prismaService, {
+      userId: actor?.userId,
+      roleName: actor?.roleName,
+    })
     return await this.tableNodeRepo.list({ ...query, branchId })
   }
   async delete({ TableNodeId, deletedById }: { TableNodeId: number; deletedById: number }) {

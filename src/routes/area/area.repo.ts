@@ -13,26 +13,34 @@ import { Injectable } from '@nestjs/common'
 export class AreaRepo {
   constructor(private readonly prismaService: PrismaService) {}
 
-  async create(data: AreaBodyType & { createdById: number }): Promise<AreaResType> {
-    const branchId = await resolveBranchId(this.prismaService, { userId: data.createdById })
-    return this.prismaService.area.create({ data: { ...data, branchId } })
+  async create(data: AreaBodyType & { createdById: number; actorRoleName?: string }): Promise<AreaResType> {
+    const { actorRoleName, ...areaData } = data
+    const branchId = await resolveBranchId(this.prismaService, { userId: data.createdById, roleName: actorRoleName })
+    return this.prismaService.area.create({ data: { ...areaData, branchId } })
   }
 
-  update(areaId: number, data: UpdateAreaBodyType & { updatedById: number }): Promise<AreaResType> {
+  update(
+    areaId: number,
+    data: UpdateAreaBodyType & { updatedById: number },
+    branchId?: number,
+  ): Promise<AreaResType> {
     return this.prismaService.area.update({
-      where: { id: areaId, deletedAt: null },
+      // Co branchId -> khong sua duoc khu vuc cua chi nhanh khac (Prisma se bao khong tim thay)
+      where: { id: areaId, deletedAt: null, ...(branchId ? { branchId } : {}) },
       data: {
         ...data,
         updatedById: data.updatedById,
       },
     })
   }
-  async list(query: AreaQueryType): Promise<GetListAreaResType> {
+  async list(query: AreaQueryType, branchId?: number): Promise<GetListAreaResType> {
     const take = query.limit
     const skip = (query.page - 1) * query.limit
+    // Loc theo chi nhanh: khu vuc cua chi nhanh khac khong duoc lo ra
+    const where = { deletedAt: null, ...(branchId ? { branchId } : {}) }
     const [data, totalItems] = await Promise.all([
-      this.prismaService.area.findMany({ where: { deletedAt: null }, take, skip }),
-      this.prismaService.area.count({ where: { deletedAt: null } }),
+      this.prismaService.area.findMany({ where, take, skip }),
+      this.prismaService.area.count({ where }),
     ])
     return {
       data,
@@ -42,26 +50,31 @@ export class AreaRepo {
       limit: query.limit,
     }
   }
-  GetAreaById(areaId: number): Promise<AreaResType | null> {
-    return this.prismaService.area.findUnique({ where: { id: areaId, deletedAt: null } })
+  GetAreaById(areaId: number, branchId?: number): Promise<AreaResType | null> {
+    return this.prismaService.area.findFirst({
+      where: { id: areaId, deletedAt: null, ...(branchId ? { branchId } : {}) },
+    })
   }
   delete({
     areaId,
     isHard,
     deletedById,
+    branchId,
   }: {
     areaId: number
     isHard?: boolean
     deletedById?: number
+    branchId?: number
   }): Promise<AreaResType> {
+    const where = { id: areaId, deletedAt: null, ...(branchId ? { branchId } : {}) }
     return isHard
       ? this.prismaService.area.update({
-          where: { id: areaId, deletedAt: null },
+          where,
           data: {
             deletedAt: new Date(),
             deletedById,
           },
         })
-      : this.prismaService.area.delete({ where: { id: areaId, deletedAt: null } })
+      : this.prismaService.area.delete({ where })
   }
 }

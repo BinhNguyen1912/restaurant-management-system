@@ -2,6 +2,7 @@ import { resolveBranchId } from '@/shared/service/branch.resolver'
 import { BadRequestException, Injectable } from '@nestjs/common'
 
 import { OrdersRepo } from '@/routes/orders/orders.repo'
+import { OrderNotFoundException } from '@/routes/orders/orders.error'
 import { OrderQueryType } from '@/routes/orders/orders.model'
 import { CreateNewOrderType, UpdateOrderType } from '@/shared/models/shared-order.model'
 import { SharedOrdersRepo } from '@/shared/shared-repository/shared-orders.repo'
@@ -14,19 +15,29 @@ export class OrdersService {
     private readonly sharedOrdersRepo: SharedOrdersRepo,
     private readonly prismaService: PrismaService,
   ) {}
-  async list(query: OrderQueryType, userId?: number) {
+  async list(query: OrderQueryType, actor?: { userId?: number; roleName?: string }) {
     try {
       // Loc theo chi nhanh cua nguoi dang dang nhap (ADR 0001 D4): don cua chi nhanh khac khong lo ra
-      const branchId = await resolveBranchId(this.prismaService, { userId })
+      const branchId = await resolveBranchId(this.prismaService, {
+        userId: actor?.userId,
+        roleName: actor?.roleName,
+      })
       return await this.ordersRepo.list({ ...query, branchId })
     } catch (error) {
       throw error
     }
   }
 
-  async getById(orderId: number) {
+  async getById(orderId: number, actor?: { userId?: number; roleName?: string }) {
     try {
-      return await this.ordersRepo.getById(orderId)
+      // Doc theo id van phai kiem chi nhanh: neu khong, biet id la doc duoc don chi nhanh khac
+      const branchId = await resolveBranchId(this.prismaService, {
+        userId: actor?.userId,
+        roleName: actor?.roleName,
+      })
+      const order = await this.ordersRepo.getById(orderId, branchId)
+      if (!order) throw OrderNotFoundException
+      return order
     } catch (error) {
       throw error
     }
