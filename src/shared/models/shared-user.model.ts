@@ -12,6 +12,8 @@ export const UserSchema = z.object({
   phoneNumber: z.string().min(10).max(15).nullable().optional(),
   status: z.enum([UserStatus.ACTIVE, UserStatus.INACTIVE, UserStatus.BLOCKED]).default(UserStatus.INACTIVE),
   roleId: z.number().positive(),
+  /** chi nhánh nhân viên làm việc (null = chưa gán) — cột có sẵn trong DB */
+  branchId: z.number().positive().nullable().optional(),
   totpSecret: z.string().nullable().optional(),
   createdById: z.number().nullable(),
   updatedById: z.number().nullable(),

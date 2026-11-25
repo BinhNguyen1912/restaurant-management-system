@@ -11,7 +11,10 @@ export const UserBodySchema = UserSchema.pick({
   avatar: true,
   roleId: true,
   status: true,
-}).strict()
+})
+  // chi nhánh nhân viên làm việc: quyết định dữ liệu họ nhìn thấy (ADR 0001 D4)
+  .extend({ branchId: z.number().int().positive().nullable().optional() })
+  .strict()
 export const UpdateUserBodySchema = UserBodySchema.extend({
   password: z.string().nullable().optional(),
   changePassword: z.boolean(),

@@ -22,6 +22,16 @@ export class SharedUserRepo {
       },
     }) as any
   }
+  /** Chi nhánh của nhân viên (cho màn hình đăng nhập / header). null = chưa gán chi nhánh */
+  findBranchOfUser(userId: number) {
+    return this.prismaService.user
+      .findUnique({
+        where: { id: userId },
+        select: { branch: { select: { id: true, code: true, name: true, isActive: true } } },
+      })
+      .then((user) => user?.branch ?? null)
+  }
+
   findUserIncludeRolePermissions(uniqueUser: whereUniqueUserType): Promise<UserTypeWithRolePermissions | null> {
     return this.prismaService.user.findFirst({
       where: {

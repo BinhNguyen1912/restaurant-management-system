@@ -141,8 +141,22 @@ export class AuthService {
       roleName: user.role.name,
     })
 
+    // Chi nhánh nhân viên thuộc về (null = chưa gán). FE hiện ngay trên header để người dùng biết
+    // mình đang thao tác dữ liệu của chi nhánh nào — sai chi nhánh là sai số liệu, không báo lỗi.
+    const branch = user.branchId
+      ? await this.sharedUserRepo.findBranchOfUser(user.id)
+      : null
+
     return {
-      user: { id: user.id, email: user.email, name: user.name, avatar: user.avatar, roleName: user.role.name },
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        avatar: user.avatar,
+        roleName: user.role.name,
+        branchId: user.branchId ?? null,
+        branch,
+      },
       accessToken,
       refreshToken,
     }

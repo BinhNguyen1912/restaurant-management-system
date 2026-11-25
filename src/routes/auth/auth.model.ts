@@ -35,6 +35,12 @@ export const registerResSchema = z.object({
     name: z.string().min(2).max(32),
     avatar: z.string().url().nullable().optional(),
     roleName: z.enum([roleName.ADMIN, roleName.GUEST, roleName.STAFF, roleName.USER]),
+    /** chi nhánh nhân viên thuộc về (null = chưa gán) */
+    branchId: z.number().nullable().optional(),
+    branch: z
+      .object({ id: z.number(), code: z.string(), name: z.string(), isActive: z.boolean() })
+      .nullable()
+      .optional(),
   }),
   accessToken: z.string(),
   refreshToken: z.string(),

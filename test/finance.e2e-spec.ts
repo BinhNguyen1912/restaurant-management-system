@@ -16,8 +16,9 @@ describe('Finance (e2e)', () => {
   let app: INestApplication
   let prisma: PrismaService
   let token: string
-  const created: { shiftIds: number[]; orderIds: number[]; paymentIds: number[]; guestIds: number[]; areaIds: number[]; branchIds: number[] } = {
+  const created: { shiftIds: number[]; orderIds: number[]; paymentIds: number[]; guestIds: number[]; areaIds: number[]; branchIds: number[]; userIds: number[] } = {
     shiftIds: [],
+    userIds: [],
     orderIds: [],
     paymentIds: [],
     guestIds: [],
@@ -883,6 +884,50 @@ describe('Finance (e2e)', () => {
     await api().post('/reports/revenue/recompute').set(auth()).send({ fromDate: today, toDate: today, branchId: branch!.id }).expect(201)
     const report = await api().get(`/reports/revenue?fromDate=${today}&toDate=${today}&branchId=${branch!.id}`).set(auth()).expect(200)
     expect(report.body.totals.cogs).toBeGreaterThanOrEqual(124_000)
+  })
+
+  it('chi nhánh: tạo -> sửa -> login nhân viên trả đúng chi nhánh đang hoạt động', async () => {
+    const code = `E2E${Date.now().toString().slice(-6)}`
+    const createdRes = await api()
+      .post('/branches')
+      .set(auth())
+      .send({ code, name: 'Chi nhánh E2E', address: '1 Đường Test' })
+      .expect(201)
+    const branchId = createdRes.body.data.id as number
+    created.branchIds.push(branchId)
+
+    // sửa tên + tắt hoạt động
+    await api().put(`/branches/${branchId}`).set(auth()).send({ name: 'Chi nhánh E2E (sửa)' }).expect(200)
+
+    // danh sách phải có chi nhánh mới kèm số nhân viên/bàn đang dùng
+    const list = await api().get('/branches').set(auth()).expect(200)
+    const row = list.body.data.find((item: any) => item.id === branchId)
+    expect(row).toBeTruthy()
+    expect(row.name).toBe('Chi nhánh E2E (sửa)')
+    expect(row.usage).toEqual(expect.objectContaining({ users: expect.any(Number) }))
+
+    // tạo nhân viên thuộc chi nhánh đó rồi đăng nhập: phải trả về đúng chi nhánh
+    const staffRole = await prisma.role.findFirst({ where: { name: 'STAFF' } })
+    const email = `e2e-branch-${Date.now()}@example.com`
+    const staffRes = await api()
+      .post('/users')
+      .set(auth())
+      .send({
+        email,
+        password: '123456',
+        name: 'NV Chi Nhánh',
+        branchId,
+        roleId: staffRole!.id,
+        status: 'ACTIVE',
+      })
+      .expect(201)
+    created.userIds.push(staffRes.body.id ?? staffRes.body.data?.id)
+    expect(staffRes.body.branchId).toBe(branchId) // nhân viên lưu đúng chi nhánh
+
+    // POST mặc định trả 201 trong Nest (không đổi contract của /auth/login)
+    const login = await api().post('/auth/login').send({ email, password: '123456' }).expect(201)
+    expect(login.body.user.branchId).toBe(branchId)
+    expect(login.body.user.branch).toEqual(expect.objectContaining({ id: branchId, name: 'Chi nhánh E2E (sửa)' }))
   })
 
   it('tổng quan: đủ 4 ô tiền cho kỳ, có kỳ so sánh và % (null khi kỳ trước bằng 0)', async () => {
