@@ -120,7 +120,7 @@ describe('LedgerPostingService.postEntry', () => {
 
     await expect(
       service.postEntry({ ...baseInput, lines: [{ accountCode: 'CASH', direction: 'DEBIT', amount: 1000 }] }, client),
-    ).rejects.toThrow(/2 dòng/)
+    ).rejects.toThrow('Error.InvalidLedgerEntry') // message lỗi là key để FE dịch
   })
 
   it('tài khoản ngừng dùng hoặc sai tiền tệ thì từ chối', async () => {
