@@ -39,16 +39,28 @@ export class SharedOrdersRepo {
     errors: any[]
     updated: any[]
     lowStock: any[]
+    /** đã trừ bao nhiêu mỗi nguyên liệu — để job đồng bộ DB hoàn tác đúng số (ticket #17) */
+    deducted: { ingredientId: number; quantity: number }[]
   }> {
     const luaScript = this.redisService.luaScripts.get(deduct_stock.split('.')[0])
     if (!luaScript) {
       throw new Error('Lua script for stock deduction not loaded')
     }
-    const checkAndDeductStock = await this.redisService.runLuaScript<{
-      errors: any[]
-      updated: any[]
-      lowStock: any[]
+    const rawDeduct = await this.redisService.runLuaScript<{
+      errors: any[] | Record<string, never>
+      updated: any[] | Record<string, never>
+      lowStock: any[] | Record<string, never>
+      deducted: { ingredientId: number; quantity: number }[] | Record<string, never>
     }>(luaScript, orderItems)
+
+    // Lua trả bảng RỖNG dưới dạng `{}` (cjson không phân biệt array/object) -> chuẩn hoá về mảng,
+    // nếu không `for..of` sẽ nổ "not iterable" đúng vào lúc thuận lợi nhất (không có lỗi nào).
+    const checkAndDeductStock = {
+      errors: Array.isArray(rawDeduct.errors) ? rawDeduct.errors : [],
+      updated: Array.isArray(rawDeduct.updated) ? rawDeduct.updated : [],
+      lowStock: Array.isArray(rawDeduct.lowStock) ? rawDeduct.lowStock : [],
+      deducted: Array.isArray(rawDeduct.deducted) ? rawDeduct.deducted : [],
+    }
 
     if (checkAndDeductStock.errors && checkAndDeductStock.errors.length > 0) {
       console.log('checkAndDeductStock.errors', checkAndDeductStock.errors)
@@ -116,7 +128,8 @@ export class SharedOrdersRepo {
 
           // Xử lý lỗi Ingredient missing
           if (error.message && error.message.includes('Ingredient missing')) {
-            const skuId = error.skuId
+            // Lua trả skuId dạng CHUỖI -> Prisma cần số, không thì nổ 500 khi đang báo lỗi cho người dùng
+            const skuId = Number(error.skuId)
             const skuDetails = await this.prismaService.sKU.findUnique({
               where: { id: skuId },
               include: {
@@ -427,6 +440,7 @@ export class SharedOrdersRepo {
           {
             orderId: order.id,
             updatedIngredients: checkAndDeductStock.updated, //mang nglieu đc tru vao redis
+            deducted: checkAndDeductStock.deducted ?? [], // số đã trừ, để hoàn tác đúng nếu DB lỗi
             lowStockItems: checkAndDeductStock.lowStock || [], // Truyền thông tin lowStock
           },
           {

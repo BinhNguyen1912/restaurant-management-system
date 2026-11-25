@@ -4,6 +4,7 @@ import request from 'supertest'
 import { AppModule } from '../src/app.module'
 import { PrismaService } from '../src/shared/service/prisma.service'
 import { LedgerPostingService } from '../src/shared/service/ledger-posting.service'
+import { RedisService } from '../src/shared/service/redis.service'
 
 /**
  * E2E API thật (supertest + AppModule): gọi HTTP như FE, chạm DB thật, dọn dữ liệu sau khi chạy.
@@ -34,6 +35,55 @@ describe('Finance (e2e)', () => {
 
   /** ngày hôm nay theo giờ VN — KHÔNG dùng toISOString() (UTC) vì sau 17:00 giờ VN đã sang ngày khác */
   const vnToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }).format(new Date())
+  /**
+   * Test tạo đơn cần tồn kho dồn dàng: các lần chạy trước đã trừ dần tồn trong Redis nên kết quả
+   * phụ thuộc lịch sử. Trước khi chạy, nâng tồn mọi nguyên liệu lên mức lớn và NHỚ giá trị cũ để trả lại.
+   */
+  const stockBackup = new Map<string, Record<string, string>>()
+  /** trạng thái SKU trước khi test (test trước có thể đã đánh OUT_OF_STOCK các SKU này) */
+  const skuStatusBackup = new Map<number, string>()
+  const recipeBackup = new Map<string, unknown | null>()
+  const redisServiceForTests = () => app.get(RedisService)
+
+  const resetSkuStatuses = async () => {
+    // Test tạo đơn cần SKU bán được; trạng thái OUT_OF_STOCK do lần chạy trước để lại thì phải trả về.
+    const skus = await prisma.sKU.findMany({ where: { deletedAt: null }, select: { id: true, status: true } })
+    for (const sku of skus) {
+      skuStatusBackup.set(sku.id, sku.status)
+      if (sku.status !== 'AVAILABLE') {
+        await prisma.sKU.update({ where: { id: sku.id }, data: { status: 'AVAILABLE' } })
+      }
+    }
+  }
+
+  const restoreSkuStatuses = async () => {
+    for (const [id, status] of skuStatusBackup) {
+      await prisma.sKU.update({ where: { id }, data: { status: status as never } })
+    }
+  }
+
+  const topUpIngredientStock = async () => {
+    const redis = redisServiceForTests()
+    const ingredients = await prisma.ingredient.findMany({ where: { deletedAt: null }, select: { id: true } })
+    for (const ingredient of ingredients) {
+      const key = `ingredient:${ingredient.id}`
+      const hash = ((await redis.getHash<string>(key)) ?? {}) as Record<string, string>
+      if (!stockBackup.has(key)) stockBackup.set(key, hash)
+      if (hash.stock !== undefined) {
+        await redis.setHash(key, { ...hash, stock: 1_000_000 })
+      }
+    }
+  }
+
+  const restoreIngredientStock = async () => {
+    const redis = redisServiceForTests()
+    for (const [key, hash] of stockBackup) {
+      // {} = hash mới do test tạo -> xoá hẳn; còn lại trả nguyên giá trị cũ
+      if (Object.keys(hash).length === 0) await redis.del(key)
+      else await redis.setHash(key, hash)
+    }
+  }
+
   const api = () => request(app.getHttpServer())
   const auth = () => ({ Authorization: `Bearer ${token}` })
 
@@ -57,6 +107,9 @@ describe('Finance (e2e)', () => {
     app = moduleRef.createNestApplication()
     await app.init()
     prisma = app.get(PrismaService)
+
+    await topUpIngredientStock()
+    await resetSkuStatuses()
 
     const login = await api()
       .post('/auth/login')
@@ -140,6 +193,12 @@ describe('Finance (e2e)', () => {
     }
     if (created.branchIds.length) await attempt('branches', () => prisma.branch.deleteMany({ where: { id: { in: created.branchIds } } }))
 
+    for (const [key, value] of recipeBackup) {
+      if (value === null) await redisServiceForTests().del(key)
+      else await redisServiceForTests().setJson(key, value)
+    }
+    await restoreIngredientStock()
+    await restoreSkuStatuses()
     await app.close()
   })
 
@@ -758,6 +817,18 @@ describe('Finance (e2e)', () => {
     })
     created.ingredientIds.push(ingredientA.id, ingredientB.id)
 
+    // Lua đọc tồn kho từ Redis -> nguyên liệu mới tạo phải có hash, nếu không sẽ báo thiếu hàng
+    for (const ingredient of [ingredientA, ingredientB]) {
+      const key = `ingredient:${ingredient.id}`
+      stockBackup.set(key, {} as Record<string, string>)
+      await redisServiceForTests().setHash(key, {
+        stock: 1_000_000,
+        minStock: 0,
+        unitId: ingredient.unitId,
+        name: ingredient.name,
+      })
+    }
+
     const recipeA = await prisma.sKURecipeIngredient.create({
       data: { skuId: skus[0].id, ingredientId: ingredientA.id, quantity: 0.2, unitId: unit!.name, createdById: 1 },
     })
@@ -765,6 +836,18 @@ describe('Finance (e2e)', () => {
       data: { skuId: skus[1].id, ingredientId: ingredientB.id, quantity: 0.1, unitId: unit!.name, createdById: 1 },
     })
     created.recipeIds.push(recipeA.id, recipeB.id)
+
+    // Cache recipe trên Redis là thứ Lua đọc khi trừ kho -> phải cập nhật, và trả lại sau test
+    for (const sku of skus) {
+      const key = `recipe:${sku.id}`
+      if (!recipeBackup.has(key)) recipeBackup.set(key, await redisServiceForTests().getJson(key))
+    }
+    await redisServiceForTests().setJson(`recipe:${skus[0].id}`, [
+      { ingredientId: ingredientA.id, quantity: 0.2, unitId: unit!.name },
+    ])
+    await redisServiceForTests().setJson(`recipe:${skus[1].id}`, [
+      { ingredientId: ingredientB.id, quantity: 0.1, unitId: unit!.name },
+    ])
 
     const order = await api()
       .post(`/orders/create-order-for-guest/${guestId}`)
