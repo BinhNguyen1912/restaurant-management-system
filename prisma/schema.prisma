@@ -45,6 +45,8 @@ enum LedgerRefType {
   CASH_VARIANCE
   /// Đối soát VNPay: chuyển tiền đang chờ về (VNPAY_CLEARING) sang BANK
   VNPAY_SETTLEMENT
+  /// Giá vốn hàng bán của 1 đơn đã thu tiền (Nợ COGS / Có INVENTORY) — ticket #11
+  ORDER_COGS
 }
 
 model LedgerAccount {
@@ -815,6 +817,8 @@ model Ingredient {
   name                String
   stock               Float                 @default(0)
   unitId              String
+  /// Giá nhập bình quân cho 1 đơn vị `unitId` (ticket #11). 0 = chưa khai giá -> COGS = 0, không đoán.
+  unitCost            Decimal               @default(0) @db.Decimal(14, 2)
   minStock            Float?                @default(0)
   isActive            Boolean               @default(true)
   createdAt           DateTime              @default(now())

@@ -124,7 +124,8 @@ export function aggregateSummaries(rows: LedgerRow[], timeZone = 'Asia/Ho_Chi_Mi
         cell.rounding = cell.rounding.add(signed(row.direction, amount))
         break
       case 'COGS':
-        cell.cogs = cell.cogs.add(signed(row.direction, amount))
+        // COGS là tài khoản CHI PHÍ: Nợ = tăng giá vốn (ngược với tài khoản doanh thu)
+        cell.cogs = cell.cogs.add(row.direction === 'DEBIT' ? amount : amount.negated())
         break
       default:
         break

@@ -78,6 +78,17 @@ describe('aggregateSummaries — bảng tổng hợp doanh thu', () => {
     expect(cell.grandTotal.toNumber()).toBe(0)
   })
 
+  it('COGS là chi phí: ghi Nợ thì cột cogs TĂNG (không âm)', () => {
+    const [cell] = aggregateSummaries([
+      ...cashOrder,
+      row({ accountCode: 'COGS', direction: 'DEBIT', amount: '40000', refType: 'ORDER_COGS', refId: 1 }),
+      row({ accountCode: 'INVENTORY', direction: 'CREDIT', amount: '40000', refType: 'ORDER_COGS', refId: 1 }),
+    ])
+    expect(cell.cogs.toNumber()).toBe(40000)
+    // và không ảnh hưởng doanh thu
+    expect(cell.grandTotal.toNumber()).toBe(108500)
+  })
+
   it('2 chi nhánh × 3 ngày: tách ô đúng, không lẫn chi nhánh/ngày', () => {
     const rows: LedgerRow[] = []
     for (const [branchId, day] of [

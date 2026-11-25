@@ -27,6 +27,8 @@ describe('Finance (e2e)', () => {
     auditEntityIds: [] as number[],
     voucherIds: [] as number[],
     reservationIds: [] as number[],
+    recipeIds: [] as number[],
+    ingredientIds: [] as number[],
   }
   let originalBranchSettings: { id: number; taxRate: string; serviceChargeRate: string; pricesIncludeTax: boolean } | null = null
 
@@ -107,6 +109,15 @@ describe('Finance (e2e)', () => {
     if (created.paymentIds.length) await attempt('payments', () => prisma.payment.deleteMany({ where: { id: { in: created.paymentIds } } }))
     if (created.guestIds.length) await attempt('guests', () => prisma.guest.deleteMany({ where: { id: { in: created.guestIds } } }))
     if (created.areaIds.length) await attempt('areas', () => prisma.area.deleteMany({ where: { id: { in: created.areaIds } } }))
+    if (created.recipeIds.length) {
+      await attempt('recipes', () => prisma.sKURecipeIngredient.deleteMany({ where: { id: { in: created.recipeIds } } }))
+    }
+    if (created.ingredientIds.length) {
+      await attempt('ingredients', () => prisma.ingredient.deleteMany({ where: { id: { in: created.ingredientIds } } }))
+    }
+    if (created.orderIds.length) {
+      await attempt('cogs entries', () => prisma.ledgerEntry.deleteMany({ where: { refType: 'ORDER_COGS', refId: { in: created.orderIds } } }))
+    }
     if (created.reservationIds.length) {
       await attempt('deposit settled entries', () => prisma.ledgerEntry.deleteMany({ where: { refType: 'DEPOSIT_SETTLED', refId: { in: created.reservationIds } } }))
       await attempt('reservations', () => prisma.reservation.deleteMany({ where: { id: { in: created.reservationIds } } }))
@@ -719,6 +730,74 @@ describe('Finance (e2e)', () => {
     // 500k cọc nhưng hoá đơn 300k -> chỉ chuyển 300k sang doanh thu, phần dư vẫn là nợ khách
     expect(entry!.lines.reduce((sum, line) => sum + Number(line.amount), 0)).toBe(600_000)
     expect(Math.max(...entry!.lines.map((line) => Number(line.amount)))).toBe(300_000)
+  })
+
+  it('COGS: đơn 2 món khác recipe -> bút toán Nợ COGS / Có INVENTORY đúng định lượng × đơn giá', async () => {
+    const branch = await prisma.branch.findFirst({ where: { isActive: true }, orderBy: { id: 'asc' } })
+    const table = await takeTable(branch!.id)
+    const guestLogin = await api()
+      .post('/guest/login')
+      .send({ name: 'e2e cogs', tableNodeId: table!.id, token: table!.token })
+      .expect(201)
+    const guestId = guestLogin.body.guest.id as number
+    created.guestIds.push(guestId)
+
+    // 2 món khác nhau, mỗi món 1 recipe riêng
+    const skus = await prisma.sKU.findMany({
+      where: { product: { deletedAt: null, status: 'ACTIVE' } },
+      orderBy: { id: 'asc' },
+      take: 2,
+    })
+    expect(skus.length).toBe(2)
+    const unit = await prisma.unit.findFirst({ where: { name: { in: ['kg', 'g'] } }, orderBy: { name: 'asc' } })
+    const ingredientA = await prisma.ingredient.create({
+      data: { name: `e2e bò ${Date.now()}`, unitId: unit!.name, stock: 10, unitCost: 300_000 },
+    })
+    const ingredientB = await prisma.ingredient.create({
+      data: { name: `e2e bánh ${Date.now()}`, unitId: unit!.name, stock: 10, unitCost: 40_000 },
+    })
+    created.ingredientIds.push(ingredientA.id, ingredientB.id)
+
+    const recipeA = await prisma.sKURecipeIngredient.create({
+      data: { skuId: skus[0].id, ingredientId: ingredientA.id, quantity: 0.2, unitId: unit!.name, createdById: 1 },
+    })
+    const recipeB = await prisma.sKURecipeIngredient.create({
+      data: { skuId: skus[1].id, ingredientId: ingredientB.id, quantity: 0.1, unitId: unit!.name, createdById: 1 },
+    })
+    created.recipeIds.push(recipeA.id, recipeB.id)
+
+    const order = await api()
+      .post(`/orders/create-order-for-guest/${guestId}`)
+      .set(auth())
+      .send([
+        { skuId: skus[0].id, quantity: 2 },
+        { skuId: skus[1].id, quantity: 1 },
+      ])
+      .expect(201)
+    created.orderIds.push(order.body.id)
+    created.paymentIds.push(order.body.paymentId)
+
+    await api().get(`/orders/pay-orders-by-guest/${guestId}`).set(auth()).expect(200)
+
+    // 2 × 0,2 × 300.000 + 1 × 0,1 × 40.000 = 124.000
+    const entry = await prisma.ledgerEntry.findFirst({
+      where: { refType: 'ORDER_COGS', refId: order.body.id },
+      include: { lines: { include: { account: { select: { code: true } } } } },
+    })
+    expect(entry).toBeTruthy()
+    const lines = entry!.lines.map((line) => ({ code: line.account.code, direction: line.direction, amount: Number(line.amount) }))
+    expect(lines).toEqual(
+      expect.arrayContaining([
+        { code: 'COGS', direction: 'DEBIT', amount: 124_000 },
+        { code: 'INVENTORY', direction: 'CREDIT', amount: 124_000 },
+      ]),
+    )
+
+    // báo cáo doanh thu đọc COGS từ sổ -> cột cogs phải lên số (dựng lại projection của hôm nay)
+    const today = vnToday()
+    await api().post('/reports/revenue/recompute').set(auth()).send({ fromDate: today, toDate: today, branchId: branch!.id }).expect(201)
+    const report = await api().get(`/reports/revenue?fromDate=${today}&toDate=${today}&branchId=${branch!.id}`).set(auth()).expect(200)
+    expect(report.body.totals.cogs).toBeGreaterThanOrEqual(124_000)
   })
 
   it('scope chi nhánh: token chi nhánh 1 không đọc được khu vực của chi nhánh khác', async () => {

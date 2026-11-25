@@ -14,6 +14,7 @@ import { LedgerIntegrityService } from '@/shared/service/ledger-integrity.servic
 import { RedisService } from '@/shared/service/redis.service'
 import { AuditLogService } from '@/shared/service/audit-log.service'
 import { VoucherService } from '@/shared/service/voucher.service'
+import { CogsService } from '@/shared/service/cogs.service'
 import { TokenService } from '@/shared/service/token.service'
 import { SharedGuestRepo } from '@/shared/shared-repository/shared-guest.repo'
 import { SharedOrdersRepo } from '@/shared/shared-repository/shared-orders.repo'
@@ -48,6 +49,7 @@ const sharedService = [
   RedisService,
   AuditLogService,
   VoucherService,
+  CogsService,
   SharedSkuRecipeIngredientRepo,
   InventoryProcessor,
   AppGateway,

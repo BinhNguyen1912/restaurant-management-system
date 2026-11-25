@@ -2,6 +2,7 @@ import { toMoneyNumbers } from '@/shared/service/money-serializer'
 import { isPaymentAmountMatched, recordWebhookOnce } from '@/shared/service/payment-hardening'
 import { isIntentUsable } from '@/shared/service/payment-intent'
 import { LedgerPostingService } from '@/shared/service/ledger-posting.service'
+import { CogsService } from '@/shared/service/cogs.service'
 import { buildOrderLedgerLines } from '@/shared/service/order-ledger-lines'
 import { Injectable, HttpException, HttpStatus, BadRequestException, NotFoundException } from '@nestjs/common'
 import { PrismaService } from '@/shared/service/prisma.service'
@@ -88,6 +89,7 @@ export class VnPayService {
     private readonly orderGuestPaymentPaymentHandler: OrderGuestPaymentPaymentHandler,
     private readonly reservationPaymentHandler: ReservationPaymentHandler,
     private readonly ledgerPosting: LedgerPostingService,
+    private readonly cogsService: CogsService,
   ) {}
 
   /**
@@ -555,6 +557,11 @@ export class VnPayService {
         },
         tx,
       )
+
+      // Giá vốn của đơn (chỉ đơn bán hàng, không phải bút toán cọc)
+      if (!isDeposit) {
+        await this.cogsService.postOrderCogs({ orderId: order.id, branchId: order.branchId }, tx)
+      }
 
       // Đơn tất toán của reservation: chuyển cọc sang doanh thu (bút toán RIÊNG, idempotent theo reservation)
       if (!isDeposit && order.reservationId) {

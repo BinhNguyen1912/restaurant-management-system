@@ -16,6 +16,7 @@ export const LedgerRefTypeSchema = z.enum([
   'REVERSAL',
   'CASH_VARIANCE',
   'VNPAY_SETTLEMENT',
+  'ORDER_COGS',
 ])
 
 export const LedgerEntryStatusSchema = z.enum(['DRAFT', 'POSTED'])
