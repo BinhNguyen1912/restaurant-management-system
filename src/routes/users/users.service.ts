@@ -95,7 +95,9 @@ export class UsersService {
   }) {
     try {
       if (data.changePassword) {
-        const { email, name, roleId, avatar, password, phoneNumber, status } = data
+        // `branchId` phải nằm trong đây: trước đây service chỉ bóc đúng danh sách trường cố định
+        // nên đổi chi nhánh (hoặc bỏ gán = null) bị nuốt im lặng — API trả 200 mà DB không đổi.
+        const { email, name, roleId, avatar, password, phoneNumber, status, branchId } = data
         const currentUser = await this.sharedUserRepo.findUniqueUser({ id })
         //Lấy thông tin user được update ra và kiểm tra tồm tại
         if (!currentUser) throw UserNotFoundException
@@ -119,12 +121,14 @@ export class UsersService {
           status,
           updatedById,
           email,
+          // undefined = không gửi thì Prisma giữ nguyên; null = bỏ gán chi nhánh
+          branchId,
         })
       } else {
         //Lấy thông tin user được update ra và kiểm tra tồm tại
         const currentUser = await this.sharedUserRepo.findUniqueUser({ id })
         if (!currentUser) throw UserNotFoundException
-        const { email, name, roleId, avatar, phoneNumber, status } = data
+        const { email, name, roleId, avatar, phoneNumber, status, branchId } = data
         //Kiểm tra xem người dùng đó có tự cập nhật role của chính mình không , nếu có thì không cho phép
         this.verifyYourSelf({ userAgentId: id, userTagetId: updatedById })
 
@@ -144,6 +148,8 @@ export class UsersService {
           status,
           updatedById,
           email,
+          // undefined = không gửi thì Prisma giữ nguyên; null = bỏ gán chi nhánh
+          branchId,
         })
       }
     } catch (error) {
