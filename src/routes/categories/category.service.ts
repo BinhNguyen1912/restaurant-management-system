@@ -5,7 +5,9 @@ import {
   CategoryCanNotBeItsOwnPararentException,
   CategoryNotFoundException,
 } from './category.error'
-import { I18nContext } from 'nestjs-i18n'
+import { Locale } from '@/shared/i18n/locale'
+import { localizeCategory } from '@/shared/i18n/localize'
+import { GetAllLanguages } from '@/shared/constants/others.constant'
 import { CategoryRepo } from '@/routes/categories/category.repo'
 import { isForeignKeyPrisma, isNotFoundPrisma, isUniqueConstraintPrisma } from '@/shared/helper'
 import { GuestRepo } from '@/routes/guest/guest.repo'
@@ -24,12 +26,11 @@ export class CategoryService {
       throw error
     }
   }
-  async findUnique(id: number) {
-    const languageId = I18nContext.current()?.lang
-    const category = await this.categoryRepo.findUnique(id, languageId as string)
+  async findUnique(id: number, locale: Locale = 'vi') {
+    const category = await this.categoryRepo.findUnique(id, GetAllLanguages)
 
     if (!category) throw CategoryNotFoundException
-    return category
+    return localizeCategory(category as any, locale) as any
   }
 
   async update({ data, id, updatedById }: { id: number; data: UpdateCategoryBodyType; updatedById: number }) {
@@ -62,10 +63,10 @@ export class CategoryService {
       throw error
     }
   }
-  async getAll(parentCategoryId?: number) {
+  async getAll(parentCategoryId: number | undefined, locale: Locale = 'vi') {
     try {
-      const languageId = I18nContext.current()?.lang
-      return await this.categoryRepo.findAll({ parentCategoryId, languageId: languageId as string })
+      const result = await this.categoryRepo.findAll({ parentCategoryId, languageId: GetAllLanguages })
+      return { ...result, data: (result.data as any[]).map((item) => localizeCategory(item, locale)) } as any
     } catch (error) {
       if (isNotFoundPrisma(error)) {
         throw CategoryNotFoundException

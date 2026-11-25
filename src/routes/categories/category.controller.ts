@@ -11,6 +11,8 @@ import {
   UpdateCategoryBodyDTO,
 } from '@/routes/categories/category.dtos'
 import { ActiveUser } from '@/shared/decorators/active-user.decorator'
+import { LocaleParam } from '@/shared/decorators/locale.decorator'
+import { Locale } from '@/shared/i18n/locale'
 
 @Controller('category')
 export class CategoryController {
@@ -25,8 +27,8 @@ export class CategoryController {
 
   @Get(':parentCategoryId')
   @ZodSerializerDto(getCategoryDetailDTO)
-  async findUnique(@Param() param: getCategoryParamDTO) {
-    const resuft = await this.categoryService.findUnique(param.parentCategoryId)
+  async findUnique(@Param() param: getCategoryParamDTO, @LocaleParam() locale: Locale) {
+    const resuft = await this.categoryService.findUnique(param.parentCategoryId, locale)
     return resuft
   }
 
@@ -47,7 +49,7 @@ export class CategoryController {
 
   @Get()
   @ZodSerializerDto(getAllCategoryDTO)
-  async getAll(@Query() query: GetCategoryQueryDTO) {
-    return await this.categoryService.getAll(query.parentCategoryId)
+  async getAll(@Query() query: GetCategoryQueryDTO, @LocaleParam() locale: Locale) {
+    return await this.categoryService.getAll(query.parentCategoryId, locale)
   }
 }

@@ -885,6 +885,71 @@ describe('Finance (e2e)', () => {
     expect(report.body.totals.cogs).toBeGreaterThanOrEqual(124_000)
   })
 
+  it('đa ngôn ngữ: en trả en, vi trả vi, thiếu bản dịch thì rơi về vi', async () => {
+    // Sản phẩm có sẵn bản dịch tiếng Việt -> thêm bản dịch tiếng Anh để chứng minh chọn đúng ngôn ngữ
+    const product = await prisma.product.findFirst({
+      where: { deletedAt: null, productTranslations: { some: { languageId: 'vi' } } },
+      select: { id: true, name: true, productTranslations: { select: { languageId: true, name: true } } },
+    })
+    expect(product).toBeTruthy()
+    const viName = product!.productTranslations.find((item) => item.languageId === 'vi')!.name
+    const enName = `e2e EN ${Date.now()}`
+    await prisma.productTranslation.create({
+      data: { productId: product!.id, languageId: 'en', name: enName, description: 'e2e en desc' },
+    })
+
+    try {
+      const en = await api().get(`/product/detail/${product!.id}`).set({ 'X-Locale': 'en' }).expect(200)
+      expect(en.body.name).toBe(enName)
+      expect(en.body.productTranslations).toHaveLength(1)
+      expect(en.body.productTranslations[0].languageId).toBe('en')
+
+      const vi = await api().get(`/product/detail/${product!.id}`).expect(200)
+      expect(vi.body.name).toBe(viName)
+      expect(vi.body.productTranslations[0].languageId).toBe('vi')
+
+      // ?lang= thắng header, ngôn ngữ không hỗ trợ thì rơi về vi
+      const queryWins = await api()
+        .get(`/product/detail/${product!.id}?lang=vi`)
+        .set({ 'X-Locale': 'en' })
+        .expect(200)
+      expect(queryWins.body.name).toBe(viName)
+
+      const unsupported = await api().get(`/product/detail/${product!.id}?lang=fr`).expect(200)
+      expect(unsupported.body.name).toBe(viName)
+
+      const acceptLanguage = await api()
+        .get(`/product/detail/${product!.id}`)
+        .set({ 'Accept-Language': 'en-US,en;q=0.9' })
+        .expect(200)
+      expect(acceptLanguage.body.name).toBe(enName)
+
+      // danh mục: cùng một cơ chế
+      const category = await prisma.category.findFirst({
+        where: { deletedAt: null, parentCategoryId: null, categoryTranslations: { some: { languageId: 'vi' } } },
+        select: { id: true, name: true, categoryTranslations: { select: { languageId: true, name: true } } },
+      })
+      const viCategoryName = category!.categoryTranslations.find((item) => item.languageId === 'vi')?.name ?? category!.name
+      const enCategoryName = `e2e CAT EN ${Date.now()}`
+      await prisma.categoryTranslation.create({
+        data: { categoryId: category!.id, languageId: 'en', name: enCategoryName, description: 'e2e cat en' },
+      })
+      try {
+        const catEn = await api().get('/category').set(auth()).set({ 'X-Locale': 'en' }).expect(200)
+        const catRowEn = catEn.body.data.find((item: any) => item.id === category!.id)
+        expect(catRowEn?.name).toBe(enCategoryName)
+
+        const catVi = await api().get('/category').set(auth()).expect(200)
+        const catRowVi = catVi.body.data.find((item: any) => item.id === category!.id)
+        expect(catRowVi?.name).toBe(viCategoryName)
+      } finally {
+        await prisma.categoryTranslation.deleteMany({ where: { categoryId: category!.id, languageId: 'en' } })
+      }
+    } finally {
+      await prisma.productTranslation.deleteMany({ where: { productId: product!.id, languageId: 'en' } })
+    }
+  })
+
   it('quản lý voucher: tạo -> dùng được -> tắt thì khách bị chặn -> xoá mềm', async () => {
     const branch = await prisma.branch.findFirst({ where: { isActive: true }, orderBy: { id: 'asc' } })
     const table = await takeTable(branch!.id)

@@ -1,6 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common'
 
-import { I18nContext } from 'nestjs-i18n'
 import { isForeignKeyPrisma, isNotFoundPrisma, isUniqueConstraintPrisma } from '@/shared/helper'
 import {
   CreateIngredientBodyType,
@@ -51,7 +50,6 @@ export class IngredientService {
     }
   }
   async findUnique(id: number) {
-    // const languageId = I18nContext.current()?.lang
     const ingredient = await this.ingredientRepo.findUnique(id)
     if (!ingredient) throw IngredientNotFoundException
     return ingredient
@@ -104,7 +102,6 @@ export class IngredientService {
   }
   async getAll(props: { query: IngredientQueryType }) {
     try {
-      //   const languageId = I18nContext.current()?.lang
       return await this.ingredientRepo.findAll(props.query)
     } catch (error) {
       if (isNotFoundPrisma(error)) {
