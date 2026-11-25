@@ -37,6 +37,11 @@ export const getProfileDetailResSchema = UserSchema.omit({
       }).strip(),
     ),
   }),
+  /** chi nhánh đang làm việc — null = chưa gán */
+  branch: z
+    .object({ id: z.number(), code: z.string(), name: z.string(), isActive: z.boolean() })
+    .nullable()
+    .optional(),
 })
 
 export const UpdateProfileResSchema = UserSchema.omit({
