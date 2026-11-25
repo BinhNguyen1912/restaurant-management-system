@@ -177,7 +177,7 @@ export class VnPayService {
     }))
 
     if (orders.length === 0) {
-      throw new NotFoundException('Không tìm thấy đơn hàng nào để thanh toán')
+      throw new NotFoundException('Error.NoOrdersToPay')
     }
 
     const amount = await this.getOrderAmount(orders)
@@ -375,7 +375,7 @@ export class VnPayService {
               data: { status: 'PROCESSED', consumedAt: new Date() },
             })
             if (claimed.count !== 1) {
-              throw new BadRequestException('Payment intent đã được xử lý hoặc đã hết hiệu lực')
+              throw new BadRequestException('Error.PaymentIntentProcessedOrExpired')
             }
           }
 
@@ -662,7 +662,7 @@ export class VnPayService {
               data: { status: 'PROCESSED', consumedAt: new Date() },
             })
             if (claimed.count !== 1) {
-              throw new BadRequestException('Payment intent đã được xử lý hoặc đã hết hiệu lực')
+              throw new BadRequestException('Error.PaymentIntentProcessedOrExpired')
             }
           }
 

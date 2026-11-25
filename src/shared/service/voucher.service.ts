@@ -105,7 +105,7 @@ export class VoucherService {
 
     const appliedDiscount = computeVoucherDiscount(voucher, subtotal)
     if (appliedDiscount.lessThanOrEqualTo(0)) {
-      throw new BadRequestException('Voucher không giảm được đồng nào cho đơn này')
+      throw new BadRequestException('Error.VoucherGivesNoDiscount')
     }
 
     const snapshot = await tx.voucherSnapshot.create({

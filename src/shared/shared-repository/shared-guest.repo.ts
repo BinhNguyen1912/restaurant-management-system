@@ -26,10 +26,10 @@ export class SharedGuestRepo {
       throw new UnprocessableEntityException('Error.TableNodeNotFound')
     }
     if (table.status == TableStatus.OUT_OF_SERVICE) {
-      throw new UnprocessableEntityException('Bàn hỏng hoặc bàn không sử dụng được')
+      throw new UnprocessableEntityException('Error.TableBrokenOrUnavailable')
     }
     if (table.status == TableStatus.RESERVED) {
-      throw new UnprocessableEntityException('Bàn đang được đặt trước. Vui lòng liên hệ với Nhà Hàng')
+      throw new UnprocessableEntityException('Error.TableReserved')
     }
 
     let guest = await this.prismaService.guest.create({
@@ -89,7 +89,7 @@ export class SharedGuestRepo {
       throw new UnprocessableEntityException('Error.TableIsHidden')
     }
     if (table.status == TableStatus.OUT_OF_SERVICE) {
-      throw new UnprocessableEntityException('Bàn hỏng hoặc bàn không sử dụng được')
+      throw new UnprocessableEntityException('Error.TableBrokenOrUnavailable')
     }
 
     const guest = await this.prismaService.guest.create({

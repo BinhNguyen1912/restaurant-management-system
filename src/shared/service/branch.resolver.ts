@@ -82,6 +82,6 @@ export async function resolveBranchId(
     select: { id: true },
   })
 
-  if (!branch) throw new BadRequestException('Chưa cấu hình chi nhánh nào. Tạo Branch trước khi tạo dữ liệu.')
+  if (!branch) throw new BadRequestException('Error.BranchNotConfigured')
   return branch.id
 }

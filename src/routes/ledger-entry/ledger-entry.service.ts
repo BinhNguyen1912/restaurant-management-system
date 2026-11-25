@@ -106,7 +106,7 @@ export class LedgerEntryService {
       orderBy: { id: 'asc' },
       select: { id: true },
     })
-    if (!branch) throw new BadRequestException('Chưa cấu hình chi nhánh nào')
+    if (!branch) throw new BadRequestException('Error.BranchNotConfigured')
     return branch.id
   }
 }
