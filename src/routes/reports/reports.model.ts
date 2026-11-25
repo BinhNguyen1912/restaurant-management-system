@@ -88,6 +88,12 @@ export const DashboardOverviewResSchema = z.object({
     /** tiền món trước giảm giá */
     gross: moneyOutputSchema,
     tax: moneyOutputSchema,
+    discount: moneyOutputSchema,
+    serviceCharge: moneyOutputSchema,
+    tip: moneyOutputSchema,
+    /** tiền vào quỹ theo phương thức — cho biểu đồ tròn "Tiền mặt / VNPay" */
+    cashIn: moneyOutputSchema,
+    vnpayIn: moneyOutputSchema,
     /** khách thực trả = net + tip + tax */
     grandTotal: moneyOutputSchema,
     /** doanh thu thuần (không gồm thuế, không gồm tip) */

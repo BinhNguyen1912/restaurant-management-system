@@ -889,8 +889,8 @@ describe('Finance (e2e)', () => {
     const res = await api().get('/dashboard/overview').set(auth()).expect(200)
     const data = res.body.data
 
-    // 4 ô tiền người dùng nhìn thấy
-    for (const key of ['gross', 'tax', 'grandTotal', 'net', 'refund']) {
+    // số cho các thẻ và biểu đồ (tiền mặt/ngân hàng, giảm giá, phụ thu, tip)
+    for (const key of ['gross', 'tax', 'grandTotal', 'net', 'refund', 'discount', 'serviceCharge', 'tip', 'cashIn', 'vnpayIn']) {
       expect(typeof data[key]).toBe('number')
     }
     expect(typeof data.orderCount).toBe('number')
