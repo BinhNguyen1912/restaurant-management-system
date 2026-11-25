@@ -4,6 +4,7 @@ import { ReportsModule } from '@/routes/reports/reports.module'
 import { HealthModule } from '@/routes/health/health.module'
 import { ReconciliationModule } from '@/routes/reconciliation/reconciliation.module'
 import { AuditLogModule } from '@/routes/audit-log/audit-log.module'
+import { VoucherModule } from '@/routes/voucher/voucher.module'
 import { BranchModule } from '@/routes/branch/branch.module'
 import { LedgerAccountModule } from '@/routes/ledger-account/ledger-account.module'
 import { Module, OnModuleInit } from '@nestjs/common'
@@ -62,6 +63,7 @@ import { ReservationModule } from './routes/reservation/reservation.module';
     HealthModule,
     ReconciliationModule,
     AuditLogModule,
+    VoucherModule,
     BranchModule,
     SharedModule,
     LanguageModule,

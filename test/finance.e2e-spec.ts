@@ -27,6 +27,7 @@ describe('Finance (e2e)', () => {
     reconciliationRunIds: [] as number[],
     auditEntityIds: [] as number[],
     voucherIds: [] as number[],
+    userIds: [] as number[],
     reservationIds: [] as number[],
     recipeIds: [] as number[],
     ingredientIds: [] as number[],
@@ -175,6 +176,7 @@ describe('Finance (e2e)', () => {
       await attempt('deposit settled entries', () => prisma.ledgerEntry.deleteMany({ where: { refType: 'DEPOSIT_SETTLED', refId: { in: created.reservationIds } } }))
       await attempt('reservations', () => prisma.reservation.deleteMany({ where: { id: { in: created.reservationIds } } }))
     }
+    if (created.userIds.length) await attempt('users', () => prisma.user.deleteMany({ where: { id: { in: created.userIds } } }))
     if (created.voucherIds.length) {
       await attempt('voucher snapshots', () => prisma.voucherSnapshot.deleteMany({ where: { voucherId: { in: created.voucherIds } } }))
       await attempt('vouchers', () => prisma.voucher.deleteMany({ where: { id: { in: created.voucherIds } } }))
@@ -881,6 +883,144 @@ describe('Finance (e2e)', () => {
     await api().post('/reports/revenue/recompute').set(auth()).send({ fromDate: today, toDate: today, branchId: branch!.id }).expect(201)
     const report = await api().get(`/reports/revenue?fromDate=${today}&toDate=${today}&branchId=${branch!.id}`).set(auth()).expect(200)
     expect(report.body.totals.cogs).toBeGreaterThanOrEqual(124_000)
+  })
+
+  it('quản lý voucher: tạo -> dùng được -> tắt thì khách bị chặn -> xoá mềm', async () => {
+    const branch = await prisma.branch.findFirst({ where: { isActive: true }, orderBy: { id: 'asc' } })
+    const table = await takeTable(branch!.id)
+    const guestLogin = await api()
+      .post('/guest/login')
+      .send({ name: 'e2e voucher admin', tableNodeId: table!.id, token: table!.token })
+      .expect(201)
+    const guestId = guestLogin.body.guest.id as number
+    created.guestIds.push(guestId)
+    const sku = await prisma.sKU.findFirst({ where: { product: { deletedAt: null } }, orderBy: { id: 'asc' } })
+
+    const code = `ADMIN${Date.now()}`.slice(0, 20)
+    const createdVoucher = await api()
+      .post('/vouchers')
+      .set(auth())
+      .send({
+        code,
+        discountType: 'PERCENT',
+        discountValue: 10,
+        startAt: new Date(Date.now() - 60_000).toISOString(),
+        endAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        usageLimit: 3,
+      })
+      .expect(201)
+    const voucherId = createdVoucher.body.data.id as number
+    created.voucherIds.push(voucherId)
+    expect(createdVoucher.body.data.code).toBe(code)
+    expect(createdVoucher.body.data.usedCount).toBe(0)
+
+    // chưa đăng nhập -> 401; STAFF (không có quyền VOUCHERS) -> 403
+    expect((await api().get('/vouchers')).status).toBe(401)
+    const staffRole = await prisma.role.findFirst({ where: { name: 'STAFF' } })
+    const staffEmail = `staff-voucher-${Date.now()}@e2e.local`
+    const bcrypt = await import('bcrypt')
+    const staffUser = await prisma.user.create({
+      data: {
+        email: staffEmail,
+        name: 'e2e voucher staff',
+        password: await bcrypt.hash('123456', 10),
+        status: 'ACTIVE',
+        roleId: staffRole!.id,
+      },
+    })
+    created.userIds.push(staffUser.id)
+    const staffToken = (
+      await api().post('/auth/login').send({ email: staffEmail, password: '123456' }).expect(201)
+    ).body.accessToken as string
+    expect((await api().get('/vouchers').set({ Authorization: `Bearer ${staffToken}` })).status).toBe(403)
+
+    // trùng mã -> 409
+    await api()
+      .post('/vouchers')
+      .set(auth())
+      .send({
+        code,
+        discountType: 'FIXED',
+        discountValue: 10000,
+        startAt: new Date().toISOString(),
+        endAt: new Date(Date.now() + 60_000).toISOString(),
+      })
+      .expect(409)
+
+    // PERCENT > 100 -> 422 (validate schema)
+    const invalid = await api()
+      .post('/vouchers')
+      .set(auth())
+      .send({
+        code: `${code}X`,
+        discountType: 'PERCENT',
+        discountValue: 150,
+        startAt: new Date().toISOString(),
+        endAt: new Date(Date.now() + 60_000).toISOString(),
+      })
+    expect([400, 422]).toContain(invalid.status)
+
+    // danh sách thấy voucher + usableNow
+    const list = await api().get(`/vouchers?search=${code}`).set(auth()).expect(200)
+    const row = list.body.data.find((item: any) => item.id === voucherId)
+    expect(row.usableNow).toBe(true)
+    expect(row.usedCount).toBe(0)
+
+    // dùng thật 2 lần -> usedCount = 2 (mỗi đơn phải vào created.* để teardown dọn sạch)
+    for (let i = 0; i < 2; i += 1) {
+      const usedOrder = await api()
+        .post(`/orders/create-order-for-guest/${guestId}?voucherCode=${code}`)
+        .set(auth())
+        .send([{ skuId: sku!.id, quantity: 1 }])
+        .expect(201)
+      created.orderIds.push(usedOrder.body.id)
+      created.paymentIds.push(usedOrder.body.paymentId)
+    }
+    const afterUse = await api().get(`/vouchers/${voucherId}`).set(auth()).expect(200)
+    expect(afterUse.body.data.usedCount).toBe(2)
+
+    // hạ usageLimit xuống dưới số lượt đã dùng -> 400 (usageLimit phải là số nguyên, nếu không sẽ 422)
+    const lowered = await api()
+      .put(`/vouchers/${voucherId}`)
+      .set(auth())
+      .send({
+        code,
+        discountType: 'PERCENT',
+        discountValue: 10,
+        startAt: new Date(Date.now() - 60_000).toISOString(),
+        endAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        usageLimit: 1,
+      })
+    expect(lowered.status).toBe(400)
+    expect(String(lowered.body.message)).toContain('2')
+
+    // tắt voucher -> khách bị chặn khi áp mã
+    await api().patch(`/vouchers/${voucherId}/status`).set(auth()).send({ status: 'INACTIVE' }).expect(200)
+    const blocked = await api()
+      .post(`/orders/create-order-for-guest/${guestId}?voucherCode=${code}`)
+      .set(auth())
+      .send([{ skuId: sku!.id, quantity: 1 }])
+    expect([400, 422]).toContain(blocked.status)
+
+    // xoá mềm -> không còn trong danh sách, chi tiết 404
+    await api().delete(`/vouchers/${voucherId}`).set(auth()).expect(200)
+    const afterDelete = await api().get(`/vouchers?search=${code}`).set(auth()).expect(200)
+    expect(afterDelete.body.data.some((item: any) => item.id === voucherId)).toBe(false)
+    expect((await api().get(`/vouchers/${voucherId}`).set(auth())).status).toBe(404)
+
+    // tạo lại đúng mã vừa xoá mềm: cột code là unique ở DB nên phải 409 kèm lý do, KHÔNG được 500
+    const recreate = await api()
+      .post('/vouchers')
+      .set(auth())
+      .send({
+        code,
+        discountType: 'PERCENT',
+        discountValue: 5,
+        startAt: new Date().toISOString(),
+        endAt: new Date(Date.now() + 60_000).toISOString(),
+      })
+    expect(recreate.status).toBe(409)
+    expect(String(recreate.body.message)).toContain(code)
   })
 
   it('scope chi nhánh: token chi nhánh 1 không đọc được khu vực của chi nhánh khác', async () => {

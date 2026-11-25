@@ -47,6 +47,8 @@ const StaffPolicy: RolePolicy = {
   RECONCILIATION: [],
   // Nhật ký thao tác nhạy cảm (huỷ đơn, giảm giá, sửa giá): chỉ ADMIN, chỉ đọc
   'AUDIT-LOGS': [],
+  // Quản lý voucher (tạo/sửa/tắt mã): ADMIN; khách chỉ nhập mã khi đặt món
+  VOUCHERS: [],
   // Cấu hình thuế/phí của chi nhánh: STAFF chỉ ĐỌC (để FE hiện dòng VAT khi tạo đơn)
   BRANCHES: ['GET'],
   // chi doc: noi dung menu + danh muc role
