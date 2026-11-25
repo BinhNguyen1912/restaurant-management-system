@@ -47,8 +47,9 @@ export class VoucherRepo {
     })
   }
 
-  findByCode(code: string) {
-    return this.prismaService.voucher.findFirst({ where: { code: code.trim().toUpperCase(), deletedAt: null } })
+  /** tìm cả mã đã xoá mềm: cột `code` là unique ở DB nên phải kiểm cả row đã xoá, nếu không sẽ nổ P2002 */
+  findAnyByCode(code: string) {
+    return this.prismaService.voucher.findFirst({ where: { code: code.trim().toUpperCase() } })
   }
 
   create(data: VoucherBodyType & { createdById: number }) {

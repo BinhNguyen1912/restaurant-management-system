@@ -20,12 +20,14 @@ export const VoucherBodySchema = z
   .object({
     code: codeSchema,
     discountType: VoucherTypeSchema,
-    discountValue: z.coerce.number().positive('Giá trị giảm phải lớn hơn 0'),
+    // trần theo cột Decimal(14,2) — vượt là Postgres ném lỗi 500 thay vì 422
+    discountValue: z.coerce.number().positive('Giá trị giảm phải lớn hơn 0').max(1_000_000_000, 'Giá trị giảm quá lớn'),
     startAt: z.coerce.date(),
     endAt: z.coerce.date(),
-    /** null = không giới hạn lượt */
-    usageLimit: z.coerce.number().int().positive().nullable().optional(),
-    status: VoucherStatusSchema.optional(),
+    /** null = không giới hạn lượt; trần theo cột Int 32-bit */
+    usageLimit: z.coerce.number().int().positive().max(1_000_000, 'Số lượt quá lớn').nullable().optional(),
+    /** EXPIRED chỉ do hệ thống đặt (đọc ở response), client chỉ bật/tắt được ACTIVE <-> INACTIVE */
+    status: z.enum(['ACTIVE', 'INACTIVE']).optional(),
   })
   .superRefine((data, ctx) => {
     if (data.discountType === 'PERCENT' && data.discountValue > 100) {
@@ -59,6 +61,11 @@ export const VoucherResSchema = z.object({
   status: VoucherStatusSchema,
   createdAt: z.date(),
   updatedAt: z.date(),
+})
+
+export const VoucherDetailResSchema = z.object({
+  message: z.string(),
+  data: VoucherResSchema,
 })
 
 export const VoucherListResSchema = z.object({

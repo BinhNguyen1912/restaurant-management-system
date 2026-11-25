@@ -5,6 +5,7 @@ import { AccessTokenPayload } from '@/shared/types/jwt.types'
 import { VoucherService } from '@/routes/voucher/voucher.service'
 import {
   VoucherBodyDTO,
+  VoucherDetailResDTO,
   VoucherListResDTO,
   VoucherQueryDTO,
   VoucherStatusBodyDTO,
@@ -22,16 +23,19 @@ export class VoucherController {
   }
 
   @Get(':id')
+  @ZodSerializerDto(VoucherDetailResDTO)
   async detail(@Param('id', ParseIntPipe) id: number) {
     return await this.voucherService.detail(id)
   }
 
   @Post()
+  @ZodSerializerDto(VoucherDetailResDTO)
   async create(@Body() body: VoucherBodyDTO, @ActiveUser('userId') userId: number) {
     return await this.voucherService.create(body, userId)
   }
 
   @Put(':id')
+  @ZodSerializerDto(VoucherDetailResDTO)
   async update(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: VoucherBodyDTO,
@@ -41,6 +45,7 @@ export class VoucherController {
   }
 
   @Patch(':id/status')
+  @ZodSerializerDto(VoucherDetailResDTO)
   async updateStatus(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: VoucherStatusBodyDTO,
