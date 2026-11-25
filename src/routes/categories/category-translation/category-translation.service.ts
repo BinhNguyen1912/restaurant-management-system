@@ -26,6 +26,11 @@ export class CategoryTranslationService {
       throw error
     }
   }
+  async listByCategory(categoryId: number) {
+    const data = await this.categoryTranslationRepo.findByCategory(categoryId)
+    return { message: 'Success.CategoryTranslations', data }
+  }
+
   async findUnique(id: number) {
     const categoryTranslation = await this.categoryTranslationRepo.findUnique(id)
     if (!categoryTranslation) throw CategoryTranslationExitsException
