@@ -7,7 +7,7 @@ import { AuditLogModule } from '@/routes/audit-log/audit-log.module'
 import { VoucherModule } from '@/routes/voucher/voucher.module'
 import { BranchModule } from '@/routes/branch/branch.module'
 import { LedgerAccountModule } from '@/routes/ledger-account/ledger-account.module'
-import { Module, OnModuleInit } from '@nestjs/common'
+import { MiddlewareConsumer, Module, NestModule, OnModuleInit } from '@nestjs/common'
 import { AppController } from './app.controller'
 import { AppService } from './app.service'
 import { SharedModule } from '@/shared/shared.module'
@@ -45,6 +45,7 @@ import { OrdersModule } from './routes/orders/orders.module'
 import { DashboardModule } from './routes/dashboard/dashboard.module'
 import { PaymentModule } from './routes/payment/payment.module'
 import { MessageModule } from './routes/messages/message.module'
+import { RequestTimingMiddleware } from '@/shared/middleware/request-timing.middleware'
 import { CacheLoaderService } from '@/cache/services/cacheLoader.service'
 import { BullModule } from '@nestjs/bullmq'
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler'
@@ -132,8 +133,18 @@ import { ReservationModule } from './routes/reservation/reservation.module';
     },
   ],
 })
-export class AppModule implements OnModuleInit {
+export class AppModule implements OnModuleInit, NestModule {
   constructor(private readonly cacheLoader: CacheLoaderService) {}
+
+  /**
+   * Đo request chỉ khi bật `LOG_REQUESTS=true`: tắt mặc định để log dev không bị rác.
+   * Dùng khi cần biết trang nào chậm vì API nào.
+   */
+  configure(consumer: MiddlewareConsumer) {
+    if (process.env.LOG_REQUESTS === 'true') {
+      consumer.apply(RequestTimingMiddleware).forRoutes('*')
+    }
+  }
 
   async onModuleInit() {
     await this.cacheLoader.preloadAll()
