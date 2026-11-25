@@ -5,6 +5,8 @@ import {
   GetRoleWithPermissonResSchema,
   RoleBodyResSchema,
   RoleBodySchema,
+  RolePermissionMatrixResSchema,
+  UpdateRolePermissionsBodySchema,
   updateRoleBodySchema,
 } from '@/routes/role/role.model'
 import { RoleSchema } from '@/shared/models/shared-role.model'
@@ -18,3 +20,6 @@ export class GetRoleParamsDTO extends createZodDto(getRoleParamsSchema) {}
 export class GetRoleWithPermissonResDTO extends createZodDto(GetRoleWithPermissonResSchema) {}
 export class UpdateRoleBodyDTO extends createZodDto(updateRoleBodySchema) {}
 export class RoleTypeDTO extends createZodDto(RoleSchema) {}
+
+export class RolePermissionMatrixResDTO extends createZodDto(RolePermissionMatrixResSchema) {}
+export class UpdateRolePermissionsBodyDTO extends createZodDto(UpdateRolePermissionsBodySchema) {}

@@ -886,6 +886,59 @@ describe('Finance (e2e)', () => {
     expect(report.body.totals.cogs).toBeGreaterThanOrEqual(124_000)
   })
 
+  it('phân quyền: thu hồi 1 quyền của STAFF -> bị 403 ngay, trả lại -> vào được', async () => {
+    const staffRole = await prisma.role.findFirst({ where: { name: 'STAFF' } })
+    const email = `e2e-perm-${Date.now()}@example.com`
+
+    const staffRes = await api()
+      .post('/users')
+      .set(auth())
+      .send({ email, password: '123456', name: 'NV Phân Quyền', roleId: staffRole!.id, status: 'ACTIVE' })
+      .expect(201)
+    const userId = staffRes.body.id as number
+    created.userIds.push(userId)
+
+    const staffToken = (await api().post('/auth/login').send({ email, password: '123456' }).expect(201)).body
+      .accessToken as string
+    const staffAuth = () => ({ Authorization: `Bearer ${staffToken}` })
+
+    // cần một route STAFF đang CÓ quyền để thu hồi
+    const matrix = await api().get(`/role/${staffRole!.id}/permissions`).set(auth()).expect(200)
+    const originalIds: number[] = matrix.body.data.permissions
+      .filter((permission: any) => permission.granted)
+      .map((permission: any) => permission.id)
+    const target = matrix.body.data.permissions.find(
+      (permission: any) => permission.granted && permission.method === 'GET' && permission.path === '/tables',
+    )
+    expect(target).toBeTruthy()
+
+    try {
+      // 1. trước khi thu hồi: STAFF gọi được
+      await api().get('/tables').set(staffAuth()).expect(200)
+
+      // 2. thu hồi quyền GET /tables
+      await api()
+        .put(`/role/${staffRole!.id}/permissions`)
+        .set(auth())
+        .send({ permissionIds: originalIds.filter((id) => id !== target.id) })
+        .expect(200)
+      await api().get('/tables').set(staffAuth()).expect(403)
+
+      // 3. ADMIN không được tự bỏ quyền của chính mình (khoá role ADMIN)
+      const adminRole = await prisma.role.findFirst({ where: { name: 'ADMIN' } })
+      await api()
+        .put(`/role/${adminRole!.id}/permissions`)
+        .set(auth())
+        .send({ permissionIds: [] })
+        .expect(403) // CannotUpdateAdminRoleException là ForbiddenException
+    } finally {
+      // trả lại nguyên trạng, kể cả khi assert ở trên fail (không để lại quyền bị cắt)
+      await api().put(`/role/${staffRole!.id}/permissions`).set(auth()).send({ permissionIds: originalIds })
+    }
+
+    await api().get('/tables').set(staffAuth()).expect(200)
+  })
+
   it('chi nhánh: tạo -> sửa -> login nhân viên trả đúng chi nhánh đang hoạt động', async () => {
     const code = `E2E${Date.now().toString().slice(-6)}`
     const createdRes = await api()

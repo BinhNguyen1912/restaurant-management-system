@@ -1,4 +1,4 @@
-import { HttpException, Inject, Injectable, UnauthorizedException } from '@nestjs/common'
+import { BadRequestException, HttpException, Inject, Injectable, UnauthorizedException } from '@nestjs/common'
 import { RoleRepository } from './role.repo'
 import { GetRoleQueryType, RoleBodyType, UpdateRoleBodyType } from './role.model'
 import {
@@ -74,6 +74,40 @@ export class RoleService {
       throw error
     }
   }
+  /**
+   * Ma trận quyền của 1 role.
+   *
+   * ADMIN bị **khoá**: quyền của ADMIN là "toàn bộ route" theo thiết kế (xem create-permissions).
+   * Cho sửa sẽ có ngày tự bỏ quyền của chính mình rồi không vào lại được màn hình này để sửa tiếp.
+   */
+  async getPermissionMatrix(roleId: number) {
+    const matrix = await this.roleRepository.permissionMatrix(roleId)
+    if (!matrix) throw RoleNotFoundException
+    return {
+      message: 'Success.RolePermissions',
+      data: { role: { ...matrix.role, isLocked: matrix.role.name === roleName.ADMIN }, permissions: matrix.permissions },
+    }
+  }
+
+  async updatePermissions(roleId: number, permissionIds: number[]) {
+    const role = await this.sharedRoleRepo.findRoleById({ id: roleId, deletedAt: null })
+    if (!role) throw RoleNotFoundException
+    if (role.name === roleName.ADMIN) throw CannotUpdateAdminRoleException
+
+    const unique = [...new Set(permissionIds)]
+    const existing = await this.roleRepository.permissionMatrix(roleId)
+    if (!existing) throw RoleNotFoundException
+    const known = new Set(existing.permissions.map((permission) => permission.id))
+    const unknown = unique.filter((id) => !known.has(id))
+    // id lạ = client gửi sai; nhận vào là âm thầm gán quyền sai
+    if (unknown.length > 0) throw new BadRequestException('Error.PermissionNotFound')
+
+    const result = await this.roleRepository.setPermissions(roleId, unique)
+    // cache role 1 giờ: không xoá thì người dùng còn dùng quyền cũ rất lâu
+    await this.cacheService.del(CACHE_KEYS.ROLE(roleId))
+    return { message: 'Success.RolePermissionsUpdated', data: result }
+  }
+
   async delete(id: number) {
     try {
       const role = await this.sharedRoleRepo.findRoleById({ id, deletedAt: null })
