@@ -17,8 +17,10 @@ import {
   GetRoleWithPermissonResDTO,
   RoleBodyDTO,
   RoleBodyResDTO,
+  RolePermissionMatrixResDTO,
   RoleTypeDTO,
   UpdateRoleBodyDTO,
+  UpdateRolePermissionsBodyDTO,
 } from '@/routes/role/role.dto'
 import { ActiveUser } from '@/shared/decorators/active-user.decorator'
 import { MessageResDto } from '@/shared/dtos/respone.dto'
@@ -46,6 +48,19 @@ export class RoleController {
   async getRoleById(@Param() params: GetRoleParamsDTO) {
     const result = await this.roleService.findById(params.id)
     return result
+  }
+
+  /** Ma trận quyền (mọi route + đã cấp hay chưa) — ADMIN sửa được màn hình này */
+  @Get(':id/permissions')
+  @ZodSerializerDto(RolePermissionMatrixResDTO)
+  async getPermissions(@Param() params: GetRoleParamsDTO) {
+    return await this.roleService.getPermissionMatrix(params.id)
+  }
+
+  /** Ghi đè toàn bộ quyền của role; ADMIN bị khoá (luôn full quyền) */
+  @Put(':id/permissions')
+  async updatePermissions(@Param() params: GetRoleParamsDTO, @Body() body: UpdateRolePermissionsBodyDTO) {
+    return await this.roleService.updatePermissions(params.id, body.permissionIds)
   }
 
   @Put(':id')

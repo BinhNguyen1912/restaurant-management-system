@@ -28,6 +28,31 @@ export const getRoleQuerySchema = z
     limit: z.coerce.number().int().positive().default(10),
   })
   .strict()
+/**
+ * Ma trận phân quyền: mỗi route (method + path + module) kèm cờ `granted` cho role đang xét.
+ * Trả về **toàn bộ** route chứ không chỉ route đã cấp — màn hình cần biết cái gì đang tắt để bật.
+ */
+export const RolePermissionMatrixResSchema = z.object({
+  message: z.string(),
+  data: z.object({
+    role: z.object({ id: z.number(), name: z.string(), isLocked: z.boolean() }),
+    permissions: z.array(
+      z.object({
+        id: z.number(),
+        method: z.string(),
+        path: z.string(),
+        module: z.string(),
+        granted: z.boolean(),
+      }),
+    ),
+  }),
+})
+
+/** Gửi DANH SÁCH ĐẦY ĐỦ quyền muốn có (không phải diff) — gửi thiếu là mất quyền, tránh hiểu nhầm */
+export const UpdateRolePermissionsBodySchema = z
+  .object({ permissionIds: z.array(z.number().int().positive()) })
+  .strict()
+
 export const getRoleParamsSchema = z
   .object({
     id: z.coerce.number().int().positive(),

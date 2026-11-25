@@ -57,6 +57,35 @@ export class RoleRepository {
     })
   }
 
+  /** Mọi route trong hệ thống + cờ role này có quyền hay không */
+  async permissionMatrix(roleId: number) {
+    const [role, all] = await Promise.all([
+      this.prismaService.role.findUnique({
+        where: { id: roleId, deletedAt: null },
+        select: { id: true, name: true, permissions: { where: { deletedAt: null }, select: { id: true } } },
+      }),
+      this.prismaService.permission.findMany({
+        where: { deletedAt: null },
+        select: { id: true, method: true, path: true, module: true },
+        orderBy: [{ module: 'asc' }, { path: 'asc' }, { method: 'asc' }],
+      }),
+    ])
+    if (!role) return null
+    const granted = new Set(role.permissions.map((permission) => permission.id))
+    return {
+      role: { id: role.id, name: role.name },
+      permissions: all.map((permission) => ({ ...permission, granted: granted.has(permission.id) })),
+    }
+  }
+
+  setPermissions(roleId: number, permissionIds: number[]) {
+    return this.prismaService.role.update({
+      where: { id: roleId },
+      data: { permissions: { set: permissionIds.map((id) => ({ id })) } },
+      select: { id: true, name: true, _count: { select: { permissions: true } } },
+    })
+  }
+
   async update({
     data,
     id,
