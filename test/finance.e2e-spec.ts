@@ -906,7 +906,7 @@ describe('Finance (e2e)', () => {
         discountValue: 10,
         startAt: new Date(Date.now() - 60_000).toISOString(),
         endAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-        usageLimit: 2,
+        usageLimit: 3,
       })
       .expect(201)
     const voucherId = createdVoucher.body.data.id as number
@@ -966,16 +966,20 @@ describe('Finance (e2e)', () => {
     expect(row.usableNow).toBe(true)
     expect(row.usedCount).toBe(0)
 
-    // dùng thật 1 lần -> usedCount = 1
-    await api()
-      .post(`/orders/create-order-for-guest/${guestId}?voucherCode=${code}`)
-      .set(auth())
-      .send([{ skuId: sku!.id, quantity: 1 }])
-      .expect(201)
+    // dùng thật 2 lần -> usedCount = 2 (mỗi đơn phải vào created.* để teardown dọn sạch)
+    for (let i = 0; i < 2; i += 1) {
+      const usedOrder = await api()
+        .post(`/orders/create-order-for-guest/${guestId}?voucherCode=${code}`)
+        .set(auth())
+        .send([{ skuId: sku!.id, quantity: 1 }])
+        .expect(201)
+      created.orderIds.push(usedOrder.body.id)
+      created.paymentIds.push(usedOrder.body.paymentId)
+    }
     const afterUse = await api().get(`/vouchers/${voucherId}`).set(auth()).expect(200)
-    expect(afterUse.body.data.usedCount).toBe(1)
+    expect(afterUse.body.data.usedCount).toBe(2)
 
-    // hạ usageLimit xuống dưới số lượt đã dùng -> 400
+    // hạ usageLimit xuống dưới số lượt đã dùng -> 400 (usageLimit phải là số nguyên, nếu không sẽ 422)
     const lowered = await api()
       .put(`/vouchers/${voucherId}`)
       .set(auth())
@@ -985,9 +989,10 @@ describe('Finance (e2e)', () => {
         discountValue: 10,
         startAt: new Date(Date.now() - 60_000).toISOString(),
         endAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-        usageLimit: 0.5,
+        usageLimit: 1,
       })
-    expect([400, 422]).toContain(lowered.status)
+    expect(lowered.status).toBe(400)
+    expect(String(lowered.body.message)).toContain('2')
 
     // tắt voucher -> khách bị chặn khi áp mã
     await api().patch(`/vouchers/${voucherId}/status`).set(auth()).send({ status: 'INACTIVE' }).expect(200)
