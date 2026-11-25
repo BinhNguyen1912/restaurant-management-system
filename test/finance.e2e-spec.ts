@@ -886,6 +886,34 @@ describe('Finance (e2e)', () => {
     expect(report.body.totals.cogs).toBeGreaterThanOrEqual(124_000)
   })
 
+  it('vai trò đặt sẵn KE_TOAN: đọc được sổ quỹ / báo cáo, không ghi được đơn hay xem nhân viên', async () => {
+    const role = await prisma.role.findFirst({ where: { name: 'KE_TOAN' } })
+    expect(role).toBeTruthy()
+
+    const email = `e2e-kt-${Date.now()}@example.com`
+    const createdUser = await api()
+      .post('/users')
+      .set(auth())
+      .send({ email, password: '123456', name: 'Ke Toan E2E', roleId: role!.id, status: 'ACTIVE' })
+      .expect(201)
+    created.userIds.push(createdUser.body.id)
+
+    const token = (await api().post('/auth/login').send({ email, password: '123456' }).expect(201)).body
+      .accessToken as string
+    const asAccountant = () => ({ Authorization: `Bearer ${token}` })
+
+    // ĐỌC tài chính: phải được
+    await api().get('/ledger/cash-book').set(asAccountant()).expect(200)
+    await api().get('/reports/revenue').set(asAccountant()).expect(200)
+    await api().get('/ledger/entries').set(asAccountant()).expect(200)
+
+    // GHI nghiệp vụ và xem dữ liệu nhân sự: phải bị chặn
+    await api().get('/users').set(asAccountant()).expect(403)
+    await api().post('/tables').set(asAccountant()).send({}).expect(403)
+    // sửa quyền: tuyệt đối không
+    await api().put(`/role/${role!.id}/permissions`).set(asAccountant()).send({ permissionIds: [] }).expect(403)
+  })
+
   it('phân quyền: thu hồi 1 quyền của STAFF -> bị 403 ngay, trả lại -> vào được', async () => {
     const staffRole = await prisma.role.findFirst({ where: { name: 'STAFF' } })
     const email = `e2e-perm-${Date.now()}@example.com`
