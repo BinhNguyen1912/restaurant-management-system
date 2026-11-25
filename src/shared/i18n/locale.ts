@@ -10,18 +10,19 @@ export type Locale = (typeof SUPPORTED_LOCALES)[number]
 
 export const DEFAULT_LOCALE: Locale = 'vi'
 
-/** `lang=all` = không lọc, trả mọi bản dịch (dùng cho form quản trị cần sửa nhiều ngôn ngữ) */
-export const ALL_LANGUAGES = 'all'
-export type LanguageSelector = Locale | typeof ALL_LANGUAGES
 
 /** 'en-US' | 'EN' | 'en_US' | ['en', 'vi'] -> 'en'; rác -> null */
 export function normalizeLocale(raw: unknown): Locale | null {
   const value = Array.isArray(raw) ? raw[0] : raw
   if (typeof value !== 'string') return null
-  // Accept-Language có thể là "en-US,en;q=0.9" -> lấy thẻ đầu tiên
-  const primary = value.split(',')[0]?.trim().toLowerCase().replace('_', '-')
+  // Accept-Language có thể là "en-US,en;q=0.9" -> lấy thẻ đầu tiên, bỏ ";q=..."
+  const primary = value
+    .split(',')[0]
+    ?.split(';')[0]
+    ?.trim()
+    .toLowerCase()
+    .replace('_', '-')
   if (!primary) return null
-  if (primary === ALL_LANGUAGES) return null
   const base = primary.split('-')[0]
   return (SUPPORTED_LOCALES as readonly string[]).includes(base) ? (base as Locale) : null
 }
@@ -38,12 +39,6 @@ export function resolveLocale(sources: {
     normalizeLocale(sources.acceptLanguage) ??
     DEFAULT_LOCALE
   )
-}
-
-/** chuỗi `lang=all` yêu cầu trả mọi bản dịch */
-export function isAllLanguages(raw: unknown): boolean {
-  const value = Array.isArray(raw) ? raw[0] : raw
-  return typeof value === 'string' && value.trim().toLowerCase() === ALL_LANGUAGES
 }
 
 type Translation = { languageId: string | null; name?: string | null; description?: string | null }

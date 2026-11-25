@@ -102,7 +102,6 @@ export class IngredientService {
   }
   async getAll(props: { query: IngredientQueryType }) {
     try {
-      //   const languageId = I18nContext.current()?.lang
       return await this.ingredientRepo.findAll(props.query)
     } catch (error) {
       if (isNotFoundPrisma(error)) {

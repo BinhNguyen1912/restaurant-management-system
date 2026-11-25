@@ -1,4 +1,4 @@
-import { DEFAULT_LOCALE, isAllLanguages, normalizeLocale, pickTranslation, resolveLocale } from '@/shared/i18n/locale'
+import { DEFAULT_LOCALE, normalizeLocale, pickTranslation, resolveLocale } from '@/shared/i18n/locale'
 import { localizeCategory, localizeProduct } from '@/shared/i18n/localize'
 
 describe('locale', () => {
@@ -21,9 +21,11 @@ describe('locale', () => {
     expect(resolveLocale({ acceptLanguage: 'en-GB,en;q=0.8' })).toBe('en')
     expect(resolveLocale({})).toBe(DEFAULT_LOCALE)
     expect(resolveLocale({ query: 'fr', header: 'fr' })).toBe(DEFAULT_LOCALE)
-    expect(isAllLanguages('all')).toBe(true)
-    expect(isAllLanguages('ALL')).toBe(true)
-    expect(isAllLanguages('en')).toBe(false)
+    // ô nhiễm tham số: object/number/rỗng đều phải rơi về mặc định, không nổ
+    expect(normalizeLocale({ lang: 'en' })).toBeNull()
+    expect(normalizeLocale(123)).toBeNull()
+    expect(normalizeLocale('   ')).toBeNull()
+    expect(normalizeLocale('en;q=0.9')).toBe('en')
   })
 
   it('chọn bản dịch: đúng ngôn ngữ -> mặc định (fallback) -> bản đầu tiên', () => {
@@ -68,11 +70,19 @@ describe('locale', () => {
     expect(en.productTranslations).toHaveLength(1)
     expect(en.productTranslations[0].languageId).toBe('en')
     expect(en.categories?.[0].name).toBe('Main dishes')
-    expect(en.translationFallback).toBe(false)
+    // chỉ trả bản dịch của ngôn ngữ đang xét (không lộ bản dịch tiếng Việt cho khách EN)
+    expect(en.categories?.[0].categoryTranslations).toHaveLength(1)
 
     const viOnly = localizeProduct({ id: 2, name: 'Cơm', productTranslations: [{ languageId: 'vi', name: 'Cơm' }] }, 'en')
     expect(viOnly.name).toBe('Cơm')
-    expect(viOnly.translationFallback).toBe(true)
+    // chưa có bản dịch EN -> rơi về bản dịch tiếng Việt (đúng fallback, không phải rỗng)
+    expect(viOnly.productTranslations).toHaveLength(1)
+    expect(viOnly.productTranslations[0].languageId).toBe('vi')
+
+    // vi chỉ có bản dịch en -> không được trả bản dịch en cho khách vi
+    const viWithoutVi = localizeProduct({ id: 3, name: 'Cơm', productTranslations: [{ languageId: 'en', name: 'Rice' }] }, 'vi')
+    expect(viWithoutVi.name).toBe('Cơm')
+    expect(viWithoutVi.productTranslations).toHaveLength(0)
   })
 
   it('localizeCategory ghi đè tên theo ngôn ngữ, thiếu thì fallback', () => {
@@ -87,7 +97,7 @@ describe('locale', () => {
     expect(localizeCategory(category, 'en').name).toBe('Starters')
     expect(localizeCategory({ id: 4, name: 'Tráng miệng', categoryTranslations: [] }, 'en')).toMatchObject({
       name: 'Tráng miệng',
-      translationFallback: true,
+      categoryTranslations: [],
     })
   })
 })

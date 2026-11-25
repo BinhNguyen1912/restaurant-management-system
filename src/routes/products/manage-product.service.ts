@@ -8,9 +8,9 @@ import {
   UpdateProductBodyType,
 } from './product.model'
 import { ProductExitsException, ProductForeignKeyErrorException, ProductNotFoundException } from './product.error'
-import { Locale } from '@/shared/i18n/locale'
 import { roleName } from '@/shared/constants/role.constant'
 import { DEFAULT_PRODUCT_LANGUAGE } from '@/shared/constants/product.constant'
+import { GetAllLanguages } from '@/shared/constants/others.constant'
 import { isForeignKeyPrisma, isNotFoundPrisma, isUniqueConstraintPrisma } from '@/shared/helper'
 import { AuditLogService } from '@/shared/service/audit-log.service'
 import { PrismaService } from '@/shared/service/prisma.service'
@@ -37,9 +37,14 @@ export class ManageProductService {
     }
     return true
   }
-  async create({ createdById, data, locale }: { data: CreateProductBodyType; createdById: number; locale: Locale }) {
+  async create({ createdById, data }: { data: CreateProductBodyType; createdById: number }) {
     try {
-      const languageId = locale || DEFAULT_PRODUCT_LANGUAGE
+      /**
+       * Bản dịch sinh từ `name`/`description` của body LUÔN ghi vào ngôn ngữ gốc (vi).
+       * Trước đây lấy theo locale của request -> admin đang ở EN mà lưu form (form đọc cột gốc
+       * tiếng Việt) sẽ ghi đè bản dịch tiếng Anh bằng tiếng Việt.
+       */
+      const languageId = DEFAULT_PRODUCT_LANGUAGE
 
       if (!data.variants || data.variants.length === 0) {
         // Không có variant -> SKU mặc định (service là nguồn quyết định, schema chỉ kiểm tra hình dạng)
@@ -63,9 +68,10 @@ export class ManageProductService {
       throw error
     }
   }
-  async findById(props: { productId: number; userIdRequest: number; roleNameRequest: string; locale?: Locale }) {
+  async findById(props: { productId: number; userIdRequest: number; roleNameRequest: string }) {
     {
-      const languageId = props.locale || DEFAULT_PRODUCT_LANGUAGE
+      // quản trị cần thấy MỌI bản dịch để sửa, không lọc theo ngôn ngữ đang xem
+      const languageId = GetAllLanguages
       const product = await this.productRepo.getDetail({
         languageId,
         productId: props.productId,
@@ -85,13 +91,11 @@ export class ManageProductService {
     productId,
     roleNameRequest,
     updatedById,
-    locale,
   }: {
     productId: number
     roleNameRequest: string
     data: UpdateProductBodyType
     updatedById: number
-    locale: Locale
   }) {
     const product = await this.productRepo.findById(productId)
     if (!product) throw ProductNotFoundException
@@ -101,7 +105,8 @@ export class ManageProductService {
       roleNameRequest,
     })
     try {
-      const languageId = locale || DEFAULT_PRODUCT_LANGUAGE
+      // như create: name/description của body là nội dung gốc tiếng Việt
+      const languageId = DEFAULT_PRODUCT_LANGUAGE
 
       // Giá bán trước khi sửa — để audit biết đổi từ bao nhiêu sang bao nhiêu (ticket #10)
       const beforeSkus = await this.prismaService.sKU.findMany({
@@ -190,13 +195,13 @@ export class ManageProductService {
     }
   }
 
-  async list(props: { query: GetManageProductQueryType; userIdRequest: number; roleNameRequest: string; locale: Locale }) {
+  async list(props: { query: GetManageProductQueryType; userIdRequest: number; roleNameRequest: string }) {
     this.validatePrivilege({
       userIdRquest: props.userIdRequest,
       createdById: props.query.createdById,
       roleNameRequest: props.roleNameRequest,
     })
-    const languageId = props.locale
+    const languageId = GetAllLanguages
     try {
       return await this.productRepo.list({
         languageId,
