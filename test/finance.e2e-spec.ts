@@ -928,6 +928,38 @@ describe('Finance (e2e)', () => {
     const login = await api().post('/auth/login').send({ email, password: '123456' }).expect(201)
     expect(login.body.user.branchId).toBe(branchId)
     expect(login.body.user.branch).toEqual(expect.objectContaining({ id: branchId, name: 'Chi nhánh E2E (sửa)' }))
+
+    // BỎ GÁN chi nhánh (branchId = null) phải lưu thật vào DB — trước đây service bóc danh sách
+    // trường cố định nên nuốt mất branchId: API trả 200 mà chi nhánh vẫn còn.
+    const userId = created.userIds[created.userIds.length - 1]
+    await api()
+      .put(`/users/${userId}`)
+      .set(auth())
+      .send({
+        email,
+        name: 'NV Chi Nhánh',
+        branchId: null,
+        roleId: staffRole!.id,
+        status: 'ACTIVE',
+        changePassword: false,
+      })
+      .expect(200)
+    expect((await prisma.user.findUnique({ where: { id: userId } }))?.branchId).toBeNull()
+
+    // gán lại cũng phải lưu được (chiều ngược lại của cùng một lỗi)
+    await api()
+      .put(`/users/${userId}`)
+      .set(auth())
+      .send({
+        email,
+        name: 'NV Chi Nhánh',
+        branchId,
+        roleId: staffRole!.id,
+        status: 'ACTIVE',
+        changePassword: false,
+      })
+      .expect(200)
+    expect((await prisma.user.findUnique({ where: { id: userId } }))?.branchId).toBe(branchId)
   })
 
   it('tổng quan: đủ 4 ô tiền cho kỳ, có kỳ so sánh và % (null khi kỳ trước bằng 0)', async () => {
