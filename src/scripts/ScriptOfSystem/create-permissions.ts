@@ -63,6 +63,27 @@ const StaffPolicy: RolePolicy = {
   ROLE: ['GET'],
 }
 
+// Ke toan: CHI DOC du lieu tai chinh. Khong tao/sua/xoa but toan, khong dung toi van hanh
+// (don hang, ban, nhan vien) — ke toan sai sổ là chuyện khác với ke toan thu tien.
+const AccountantPolicy: RolePolicy = {
+  AUTH: ['POST'],
+  // doi mat khau cua chinh minh
+  PROFILE: ['GET', 'PUT'],
+  // so cai + so quy + kiem tra can doi + doi soat deu nam duoi /ledger (GET)
+  LEDGER: ['GET'],
+  REPORTS: ['GET'],
+  RECONCILIATION: ['GET'],
+  // dashboard doc so lieu tong hop (POST /dashboard/indicator, GET /dashboard/overview)
+  DASHBOARD: ['GET', 'POST'],
+  // danh muc tai khoan ke toan: chi doc de doi chieu so
+  'LEDGER-ACCOUNTS': ['GET'],
+  // noi dung menu de biet mon nao ban chay (chi doc)
+  PRODUCT: ['GET'],
+  CATEGORY: ['GET'],
+  LANGUAGES: ['GET'],
+  ROLE: ['GET'],
+}
+
 // Khach da co tai khoan (User that trong bang User): tu phuc vu.
 // KHONG cap ORDERS: /orders/lists tra toan bo don cua quan ly, USER khong co UI dung.
 const ClientPolicy: RolePolicy = {
@@ -161,6 +182,7 @@ async function bootstrap() {
     ...Object.keys(StaffPolicy),
     ...Object.keys(ClientPolicy),
     ...Object.keys(GuestPolicy),
+    ...Object.keys(AccountantPolicy),
     ...Object.values(ModulePathAllowlist).flatMap((m) => Object.keys(m)),
   ])
   const unknownModules = [...declaredModules].filter((m) => !modulesInDB.has(m))
@@ -266,6 +288,21 @@ async function bootstrap() {
       })
   }
 
+  /**
+   * Vai tro dat san: tao neu chua co (DB moi), roi gán quyền theo policy.
+   * KHÔNG phải role hệ thống — admin vẫn sửa/xoá được trên màn hình Phân quyền; chạy lại script
+   * sẽ gán lại theo policy này (script là nguồn sự thật cho quyền mặc định).
+   */
+  const ensureRole = async (name: string, description: string) => {
+    const existing = await prisma.role.findFirst({ where: { name } })
+    if (existing) return existing
+    console.log(`Tao vai tro dat san: ${name}`)
+    return prisma.role.create({ data: { name, description, isActive: true } })
+  }
+
+  await ensureRole('KE_TOAN', 'Kế toán — chỉ đọc sổ cái, sổ quỹ, báo cáo và đối soát')
+
+  const AccountantPermissionIds = pickByPolicy(AccountantPolicy, 'KE_TOAN')
   const StaffPermissionIds = pickByPolicy(StaffPolicy, 'STAFF')
   const GuestPermissionIds = pickByPolicy(GuestPolicy, 'GUEST')
   const ClientPermissionIds = pickByPolicy(ClientPolicy, 'USER')
@@ -275,7 +312,12 @@ async function bootstrap() {
     updateRole(StaffPermissionIds, roleName.STAFF),
     updateRole(ClientPermissionIds, roleName.USER),
     updateRole(GuestPermissionIds, roleName.GUEST),
+    updateRole(AccountantPermissionIds, 'KE_TOAN'),
   ])
+
+  // cache role 1 gio: quen xoa thi nguoi dung van dung quyen cu
+  const allRoles = await prisma.role.findMany({ where: { deletedAt: null }, select: { id: true, name: true } })
+  console.log('Da cap quyen cho:', allRoles.map((role) => role.name).join(', '))
 
   //Sau đó thêm các quyền này vào Admin
   // const Role_admin = await prisma.role.findFirst({

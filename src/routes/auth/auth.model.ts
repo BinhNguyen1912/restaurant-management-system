@@ -34,7 +34,11 @@ export const registerResSchema = z.object({
     email: z.email().trim().min(5).max(64),
     name: z.string().min(2).max(32),
     avatar: z.string().url().nullable().optional(),
-    roleName: z.enum([roleName.ADMIN, roleName.GUEST, roleName.STAFF, roleName.USER]),
+    /**
+     * KHÔNG chốt cứng 4 role hệ thống: hệ thống cho tạo role mới (vd KE_TOAN). Chốt cứng thì
+     * serializer ném lỗi và người dùng role mới **không đăng nhập được** (500), dù quyền đã cấp.
+     */
+    roleName: z.string().min(1),
     /** chi nhánh nhân viên thuộc về (null = chưa gán) */
     branchId: z.number().nullable().optional(),
     branch: z
