@@ -808,7 +808,7 @@ export class SharedOrdersRepo {
     const cancelled = status === OrderStatus.CANCELLED
     // Huỷ đơn / hoàn tiền mà không có lý do thì không giải trình được gì (ticket #10)
     if (cancelled && !reason?.trim()) {
-      throw new BadRequestException('Huỷ đơn phải ghi lý do (reason)')
+      throw new BadRequestException('Error.CancelReasonRequired')
     }
 
     try {

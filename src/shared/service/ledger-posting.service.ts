@@ -207,7 +207,7 @@ export class LedgerPostingService {
         where: { idempotencyKey: input.idempotencyKey },
         select: { id: true, requestHash: true, status: true },
       })
-      if (!winner) throw new ConflictException('Không giữ được eventKey cho bút toán')
+      if (!winner) throw new ConflictException('Error.LedgerEventKeyNotHeld')
       return this.replay(winner, requestHash)
     }
 
@@ -215,7 +215,7 @@ export class LedgerPostingService {
       where: { idempotencyKey: input.idempotencyKey },
       select: { id: true, requestHash: true, status: true },
     })
-    if (!entry) throw new ConflictException('Không tìm thấy bút toán vừa tạo')
+    if (!entry) throw new ConflictException('Error.LedgerEntryNotCreated')
 
     await client.ledgerLine.createMany({
       data: input.lines.map((line) => ({
@@ -233,7 +233,7 @@ export class LedgerPostingService {
       where: { id: entry.id, status: 'DRAFT' },
       data: { status: 'POSTED', postedAt: new Date() },
     })
-    if (posted.count !== 1) throw new ConflictException('Bút toán đã bị thay đổi trong lúc ghi')
+    if (posted.count !== 1) throw new ConflictException('Error.LedgerEntryChangedWhilePosting')
 
     return { id: entry.id, created: true }
   }
@@ -263,7 +263,7 @@ export class LedgerPostingService {
       (input.occurredAt && Number.isNaN(input.occurredAt.getTime())) ||
       input.lines.length < 2
     ) {
-      throw new BadRequestException('Bút toán không hợp lệ: thiếu eventKey/chi nhánh/chứng từ hoặc ít hơn 2 dòng')
+      throw new BadRequestException('Error.InvalidLedgerEntry')
     }
 
     // Bất biến Σ Nợ = Σ Có + tiền > 0 (ném lỗi trước khi chạm DB)

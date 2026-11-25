@@ -61,7 +61,7 @@ export class GuestService {
   async getBranchTaxSettings(guestId: number) {
     const guest = await this.guestRepo.findTaxSettingsByGuest(guestId)
     if (!guest?.tableNode) {
-      throw new BadRequestException('Khách chưa gắn với bàn nào nên không xác định được chi nhánh')
+      throw new BadRequestException('Error.GuestHasNoTable')
     }
     const { branch } = guest.tableNode
     return {
@@ -117,11 +117,11 @@ export class GuestService {
       const { tableNode } = data
       const guest = await this.guestRepo.findById(guestId)
       if (!guest) {
-        throw new HttpException('Không tìm thấy thông tin khách hàng', HttpStatus.NOT_FOUND)
+        throw new HttpException('Error.GuestNotFound', HttpStatus.NOT_FOUND)
       }
 
       if (!guest.tableNodeId) {
-        throw new HttpException('Khách hàng chưa được phân bàn', HttpStatus.BAD_REQUEST)
+        throw new HttpException('Error.GuestNotAssignedTable', HttpStatus.BAD_REQUEST)
       }
 
       this.appGateway.server.to(ManagerRoom).emit(WS_EVENTS.CALL_STAFF, {
@@ -146,7 +146,7 @@ export class GuestService {
       if (error instanceof HttpException) {
         throw error
       }
-      throw new HttpException('Có lỗi xảy ra khi gửi yêu cầu hỗ trợ', HttpStatus.INTERNAL_SERVER_ERROR)
+      throw new HttpException('Error.SupportRequestFailed', HttpStatus.INTERNAL_SERVER_ERROR)
     }
   }
 }

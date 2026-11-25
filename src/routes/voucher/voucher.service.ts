@@ -69,7 +69,7 @@ export class VoucherService {
     try {
       return await action()
     } catch (error) {
-      if (isUniqueConstraintPrisma(error)) throw new ConflictException('Mã đã tồn tại')
+      if (isUniqueConstraintPrisma(error)) throw new ConflictException('Error.VoucherCodeAlreadyExists')
       throw error
     }
   }

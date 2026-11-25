@@ -253,7 +253,7 @@ export class OrdersRepo {
         data: { status: OrderStatus.PAID, updatedById },
       })
       if (updatedOrders.count !== ordersIds.length) {
-        throw new BadRequestException('Trạng thái đơn đã thay đổi trong lúc thu tiền. Vui lòng thử lại.')
+        throw new BadRequestException('Error.OrderStatusChangedWhilePaying')
       }
       // Chi chuyen tu PENDING -> SUCCESS, khong keo mot payment REFUNDED ve SUCCESS.
       // Phai kiem so dong: neu payment da FAILED (khach bo VNPay roi tra tien mat) thi update
@@ -275,7 +275,7 @@ export class OrdersRepo {
 
       if (updatedPayments.count !== paymentsIds.length) {
         throw new BadRequestException(
-          'Có phiếu thanh toán không còn ở trạng thái chờ thu (có thể đã thất bại/hủy). Vui lòng kiểm tra lại đơn trước khi thu tiền.',
+          'Error.PaymentNotPending',
         )
       }
 
