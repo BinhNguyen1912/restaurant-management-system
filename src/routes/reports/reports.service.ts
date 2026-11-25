@@ -125,6 +125,83 @@ export class ReportsService {
     }
   }
 
+  /**
+   * Tổng quan Dashboard: 4 ô tiền của kỳ + so sánh doanh thu thuần với:
+   *  - **kỳ trước** có cùng độ dài (hôm nay -> hôm qua; 7 ngày -> 7 ngày trước đó),
+   *  - **cùng kỳ tháng trước** (cùng ngày, lùi 1 tháng).
+   *
+   * Tất cả đọc từ projection `DailyBranchSummary` như `revenue()`, nên số khớp báo cáo doanh thu
+   * và sổ cái; không cộng lại từ Order. Một lần `ensureProjection` cho khoảng rộng nhất (gồm cả
+   * kỳ so sánh) để không phải tính projection 3 lần.
+   */
+  async overview(query: ReportRangeType, actor?: { userId?: number | null; roleName?: string | null }) {
+    const branchId = await this.scopeBranch(query, actor)
+    const { from, to } = resolveRange(query.fromDate, query.toDate)
+
+    const dayMs = 24 * 60 * 60 * 1000
+    const lengthDays = Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / dayMs) + 1
+    const shift = (date: string, days: number) => new Date(Date.parse(`${date}T00:00:00Z`) + days * dayMs).toISOString().slice(0, 10)
+
+    // kỳ trước: lùi đúng bằng độ dài kỳ này
+    const previousFrom = shift(from, -lengthDays)
+    const previousTo = shift(from, -1)
+    // cùng kỳ tháng trước: cùng ngày, lùi 1 tháng (giữ đúng độ dài)
+    const lastMonthFrom = shiftMonth(from, -1)
+    const lastMonthTo = shiftMonth(to, -1)
+
+    const widestFrom = [from, previousFrom, lastMonthFrom].sort()[0]
+    await this.ensureProjection({ fromDate: widestFrom, toDate: to }, actor)
+
+    const load = async (rangeFrom: string, rangeTo: string) => {
+      const rows = await this.repo.summaries(
+        new Date(`${rangeFrom}T00:00:00.000Z`),
+        new Date(`${rangeTo}T00:00:00.000Z`),
+        branchId,
+      )
+      const total = rows.reduce(
+        (acc, row) => ({
+          gross: acc.gross + Number(row.gross),
+          tax: acc.tax + Number(row.tax),
+          net: acc.net + Number(row.net),
+          grandTotal: acc.grandTotal + Number(row.grandTotal),
+          refund: acc.refund + Number(row.refund),
+          orderCount: acc.orderCount + row.orderCount,
+        }),
+        { gross: 0, tax: 0, net: 0, grandTotal: 0, refund: 0, orderCount: 0 },
+      )
+      return { fromDate: rangeFrom, toDate: rangeTo, ...total }
+    }
+
+    const [current, previous, lastMonth] = await Promise.all([
+      load(from, to),
+      load(previousFrom, previousTo),
+      load(lastMonthFrom, lastMonthTo),
+    ])
+
+    /** % thay đổi; null khi kỳ so sánh bằng 0 — thà "chưa có số" còn hơn hiện -100% giả */
+    const change = (now: number, before: number) =>
+      before === 0 ? null : Math.round(((now - before) / before) * 10000) / 100
+
+    return {
+      message: 'Success.DashboardOverview',
+      data: {
+        fromDate: from,
+        toDate: to,
+        branchId,
+        gross: current.gross,
+        tax: current.tax,
+        grandTotal: current.grandTotal,
+        net: current.net,
+        refund: current.refund,
+        orderCount: current.orderCount,
+        previous,
+        lastMonth,
+        changeVsPrevious: change(current.net, previous.net),
+        changeVsLastMonth: change(current.net, lastMonth.net),
+      },
+    }
+  }
+
   async revenueByItem(query: ReportRangeType, actor?: { userId?: number | null; roleName?: string | null }) {
     const branchId = await this.scopeBranch(query, actor)
     const { from, to, gte, lte } = resolveRange(query.fromDate, query.toDate)
@@ -178,4 +255,16 @@ export class ReportsService {
       this.logger.log(`cron recompute branch=${branch.id}: ${written} ô`)
     }
   }
+}
+
+/**
+ * Lùi `months` tháng nhưng giữ ngày hợp lệ: 31/03 lùi 1 tháng -> 28/02 (không tràn sang 03/03
+ * như `Date.setMonth`, vì tràn tháng sẽ làm kỳ so sánh lệch hẳn).
+ */
+function shiftMonth(date: string, months: number): string {
+  const [year, month, day] = date.split('-').map(Number)
+  const target = new Date(Date.UTC(year, month - 1 + months, 1))
+  const lastDay = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate()
+  target.setUTCDate(Math.min(day, lastDay))
+  return target.toISOString().slice(0, 10)
 }

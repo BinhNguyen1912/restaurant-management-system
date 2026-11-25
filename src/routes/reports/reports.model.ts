@@ -68,6 +68,40 @@ export const RevenueReportResSchema = z.object({
   ),
 })
 
+/**
+ * Tổng quan cho Dashboard: 4 ô tiền của kỳ + so sánh "doanh thu thuần" với kỳ trước và cùng kỳ
+ * tháng trước. Mọi số lấy từ projection `DailyBranchSummary` (nguồn: sổ cái) như báo cáo doanh thu.
+ */
+export const OverviewPeriodSchema = z.object({
+  fromDate: z.string(),
+  toDate: z.string(),
+  orderCount: z.number(),
+  net: moneyOutputSchema,
+})
+
+export const DashboardOverviewResSchema = z.object({
+  message: z.string(),
+  data: z.object({
+    fromDate: z.string(),
+    toDate: z.string(),
+    branchId: z.number().nullable(),
+    /** tiền món trước giảm giá */
+    gross: moneyOutputSchema,
+    tax: moneyOutputSchema,
+    /** khách thực trả = net + tip + tax */
+    grandTotal: moneyOutputSchema,
+    /** doanh thu thuần (không gồm thuế, không gồm tip) */
+    net: moneyOutputSchema,
+    refund: moneyOutputSchema,
+    orderCount: z.number(),
+    previous: OverviewPeriodSchema,
+    lastMonth: OverviewPeriodSchema,
+    /** % so với kỳ trước / cùng kỳ tháng trước; null khi kỳ trước bằng 0 (không chia cho 0) */
+    changeVsPrevious: z.number().nullable(),
+    changeVsLastMonth: z.number().nullable(),
+  }),
+})
+
 export const RevenueByItemResSchema = z.object({
   message: z.string(),
   fromDate: z.string(),

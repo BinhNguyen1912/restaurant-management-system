@@ -16,6 +16,20 @@ export class DashboardIndicatorService {
     private readonly reportsService: ReportsService,
   ) {}
 
+  /**
+   * Tổng quan cho Dashboard. Người dùng thấy 4 ô tiền + so sánh, nên chỉ cần 1 request thay vì
+   * FE tự gọi báo cáo 3 lần (kỳ này, kỳ trước, cùng kỳ tháng trước).
+   */
+  async getOverview(
+    query: { fromDate?: string; toDate?: string },
+    actor?: { userId?: number; roleName?: string },
+  ) {
+    return await this.reportsService.overview(query, {
+      userId: actor?.userId ?? null,
+      roleName: actor?.roleName ?? null,
+    })
+  }
+
   async getDashboardIndicator(
     { fromDate, toDate }: DashboardIndicatorQueryType,
     actor?: { userId?: number; roleName?: string },

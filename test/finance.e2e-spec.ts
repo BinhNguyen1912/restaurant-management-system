@@ -885,6 +885,37 @@ describe('Finance (e2e)', () => {
     expect(report.body.totals.cogs).toBeGreaterThanOrEqual(124_000)
   })
 
+  it('tổng quan: đủ 4 ô tiền cho kỳ, có kỳ so sánh và % (null khi kỳ trước bằng 0)', async () => {
+    const res = await api().get('/dashboard/overview').set(auth()).expect(200)
+    const data = res.body.data
+
+    // 4 ô tiền người dùng nhìn thấy
+    for (const key of ['gross', 'tax', 'grandTotal', 'net', 'refund']) {
+      expect(typeof data[key]).toBe('number')
+    }
+    expect(typeof data.orderCount).toBe('number')
+    expect(data.fromDate).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+
+    // kỳ so sánh phải có thật, và không được trùng kỳ hiện tại
+    expect(data.previous.toDate < data.fromDate).toBe(true)
+    expect(data.lastMonth.toDate).toBeTruthy()
+    // % chỉ là null khi mẫu số 0; nếu có thì phải là số hữu hạn
+    for (const key of ['changeVsPrevious', 'changeVsLastMonth']) {
+      if (data[key] !== null) expect(Number.isFinite(data[key])).toBe(true)
+    }
+    if (data.previous.net === 0) expect(data.changeVsPrevious).toBeNull()
+  })
+
+  it('tổng quan: kỳ 1 ngày so với hôm qua (kỳ trước = 1 ngày liền trước)', async () => {
+    const res = await api().get('/dashboard/overview?fromDate=2026-03-10&toDate=2026-03-10').set(auth()).expect(200)
+    const data = res.body.data
+    expect(data.previous.fromDate).toBe('2026-03-09')
+    expect(data.previous.toDate).toBe('2026-03-09')
+    // cùng kỳ tháng trước: cùng ngày, lùi 1 tháng
+    expect(data.lastMonth.fromDate).toBe('2026-02-10')
+    expect(data.lastMonth.toDate).toBe('2026-02-10')
+  })
+
   it('sổ quỹ: đầu kỳ + thu - chi = tồn, có Tiền mặt và Ngân hàng, có dòng tổng', async () => {
     const res = await api().get('/ledger/cash-book').set(auth()).expect(200)
 
