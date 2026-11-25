@@ -13,6 +13,8 @@ export const ingredientBodySchema = IngredientSchema.pick({
   .extend({
     enableLowStockWarning: z.boolean().default(false),
     minStock: z.number().positive().optional(),
+    /** giá nhập / 1 đơn vị (đồng) — dùng để tính COGS; bỏ trống = 0 (chưa khai giá) */
+    unitCost: z.coerce.number().min(0).optional(),
   })
   .superRefine((data, ctx) => {
     // Nếu enableLowStockWarning = true thì minStock là bắt buộc
@@ -67,6 +69,8 @@ export const updateIngredientBodySchema = IngredientSchema.pick({
   .extend({
     enableLowStockWarning: z.boolean().optional(),
     minStock: z.number().positive().optional(),
+    /** giá nhập / 1 đơn vị — sửa được để cập nhật giá vốn */
+    unitCost: z.coerce.number().min(0).optional(),
   })
   .superRefine((data, ctx) => {
     // Nếu enableLowStockWarning = true thì minStock là bắt buộc

@@ -11,6 +11,7 @@ import {
 } from '@/shared/constants/order.constant'
 import { isSameAmount } from '@/shared/service/payment-hardening'
 import { LedgerPostingService } from '@/shared/service/ledger-posting.service'
+import { CogsService } from '@/shared/service/cogs.service'
 import { buildOrderLedgerLines } from '@/shared/service/order-ledger-lines'
 import { WS_EVENTS } from '@/shared/constants/others.constant'
 import { PrismaService } from '@/shared/service/prisma.service'
@@ -24,6 +25,7 @@ export class OrdersRepo {
     private readonly prismaService: PrismaService,
     private readonly ledgerPosting: LedgerPostingService,
     private readonly appGateway: AppGateway,
+    private readonly cogsService: CogsService,
   ) {}
 
   async list(query: OrderQueryType & { branchId?: number }): Promise<OrdersListResType> {
@@ -311,6 +313,10 @@ export class OrdersRepo {
 
         // Đơn của reservation: chuyển phần cọc đã nhận sang doanh thu (Nợ DEPOSIT_LIABILITY / Có REVENUE_FOOD).
         // Không có bước này thì tiền cọc nằm mãi ở nợ phải trả và doanh thu thiếu đúng phần đó.
+        // Giá vốn đơn này (Nợ COGS / Có INVENTORY) — cùng transaction với thu tiền.
+        // Bỏ qua nếu món không có recipe / nguyên liệu chưa khai giá: không bao giờ bịa giá vốn.
+        await this.cogsService.postOrderCogs({ orderId: order.id, branchId: order.branchId }, tx)
+
         if (order.reservationId) {
           await this.ledgerPosting.settleReservationDeposit(
             { reservationId: order.reservationId, grandTotal: order.grandTotal, branchId: order.branchId, orderId: order.id },
