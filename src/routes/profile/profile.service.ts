@@ -17,7 +17,11 @@ export class ProfileService {
     const user = await this.sharedUserRepo.findUserIncludeRolePermissions({ id: userId })
 
     if (!user) throw UserNotFoundException
-    return user
+
+    // Kèm chi nhánh: header cần biết người dùng đang thao tác trên chi nhánh nào, và phải giữ
+    // được sau khi F5 (không chỉ ngay sau khi login).
+    const branch = await this.sharedUserRepo.findBranchOfUser(userId)
+    return { ...user, branch: branch ?? null }
   }
 
   async updateProfile({ data, userId }: { userId: number; data: Partial<UpdateMeBodyType> }) {

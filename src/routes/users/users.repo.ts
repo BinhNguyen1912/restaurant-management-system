@@ -19,6 +19,7 @@ export class UsersRepository {
         skip,
         take,
         include: {
+          branch: { select: { id: true, code: true, name: true } },
           role: {
             select: {
               name: true,
