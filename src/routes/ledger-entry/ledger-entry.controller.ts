@@ -2,6 +2,8 @@ import { Body, Controller, Get, Post, Query } from '@nestjs/common'
 import { ZodSerializerDto } from 'nestjs-zod'
 import { LedgerEntryService } from '@/routes/ledger-entry/ledger-entry.service'
 import {
+  CashBookQueryDTO,
+  CashBookResDTO,
   LedgerEntryListResDTO,
   LedgerEntryQueryDTO,
   LedgerIntegrityResDTO,
@@ -19,6 +21,13 @@ export class LedgerEntryController {
   @ZodSerializerDto(LedgerEntryListResDTO)
   async list(@Query() query: LedgerEntryQueryDTO) {
     return await this.ledgerEntryService.list(query)
+  }
+
+  /** Sổ quỹ: Tiền mặt / Ngân hàng / Tổng quỹ theo kỳ (đầu kỳ, thu, chi, tồn) */
+  @Get('cash-book')
+  @ZodSerializerDto(CashBookResDTO)
+  async cashBook(@Query() query: CashBookQueryDTO) {
+    return await this.ledgerEntryService.cashBook(query)
   }
 
   /** Đối soát Payment ↔ sổ cái theo phương thức (CASH, VNPAY) */
