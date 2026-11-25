@@ -11,6 +11,8 @@ import { AppGateway } from '@/webSockets/app.gateway'
 interface InventoryJobData {
   orderId: number
   updatedIngredients: { ingredientId: number; newStock: number }[]
+  /** số lượng đã trừ trên Redis — hoàn tác phải dùng đúng số này (ticket #17) */
+  deducted?: { ingredientId: number; quantity: number }[]
   lowStockItems?: { ingredientId: number; newStock: number; minStock: number }[]
 }
 
@@ -27,7 +29,7 @@ export class InventoryProcessor extends WorkerHost {
   }
 
   async process(job: Job<InventoryJobData, any, string>): Promise<any> {
-    const { orderId, updatedIngredients, lowStockItems } = job.data
+    const { orderId, updatedIngredients, deducted = [], lowStockItems } = job.data
 
     this.logger.log(`Bắt đầu xử lý job đồng bộ tồn kho cho đơn hàng: ${orderId}`)
 
@@ -87,10 +89,19 @@ export class InventoryProcessor extends WorkerHost {
     } catch (error) {
       this.logger.error(`Lỗi cập nhật DB. Hoàn tác stock trên Redis: ${error.message}`)
 
-      // Hoàn tác stock trên Redis
+      // Chỉ hoàn tác ở LẦN THỬ CUỐI. BullMQ retry job này nhiều lần; hoàn tác mỗi lần sẽ cộng
+      // tồn kho lên gấp bội (bug cũ).
+      const attempts = job.opts.attempts ?? 1
+      const isLastAttempt = job.attemptsMade + 1 >= attempts
       const revertScript = this.redisService.luaScripts.get(revert_stock.split('.')[0])
-      if (revertScript) {
-        await this.redisService.runLuaScript<{ success: boolean; updated: any[] }>(revertScript, updatedIngredients)
+
+      if (!isLastAttempt) {
+        this.logger.warn(`Sẽ thử lại (lần ${job.attemptsMade + 1}/${attempts}) — chưa hoàn tác tồn kho`)
+      } else if (revertScript && deducted.length) {
+        await this.redisService.runLuaScript<{ success: boolean; updated: any[] }>(revertScript, deducted)
+        this.logger.warn(`Đã hoàn tác ${deducted.length} nguyên liệu trên Redis cho đơn #${orderId}`)
+      } else {
+        this.logger.error(`Không hoàn tác được tồn kho đơn #${orderId}: thiếu danh sách đã trừ`)
       }
 
       // try {
