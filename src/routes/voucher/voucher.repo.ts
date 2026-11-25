@@ -72,7 +72,8 @@ export class VoucherRepo {
       data: {
         ...rest,
         code: code.trim().toUpperCase(),
-        usageLimit: rest.usageLimit ?? null,
+        // chỉ ghi usageLimit khi client thực sự gửi lên, tránh PUT thiếu field làm mất giới hạn lượt
+        ...('usageLimit' in rest ? { usageLimit: rest.usageLimit ?? null } : {}),
         updatedById,
       },
       include: { _count: { select: { voucherSnapshots: true } } },
