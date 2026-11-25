@@ -106,6 +106,7 @@ export class ProductRepository {
         include: {
           skus: true,
           productTranslations: {
+            orderBy: { languageId: 'desc' },
             where: languageId == GetAllLanguages ? { deletedAt: null } : { deletedAt: null, languageId },
           },
           categories: {
@@ -151,6 +152,8 @@ export class ProductRepository {
       },
       include: {
         productTranslations: {
+          // thứ tự xác định: 'vi' đứng trước, vì form quản trị điền ô mô tả từ [0]
+          orderBy: { languageId: 'desc' },
           where: languageId == GetAllLanguages ? { deletedAt: null } : { deletedAt: null, languageId },
         },
         skus: {
@@ -226,6 +229,8 @@ export class ProductRepository {
       },
       include: {
         productTranslations: {
+          // thứ tự xác định: 'vi' đứng trước, vì form quản trị điền ô mô tả từ [0]
+          orderBy: { languageId: 'desc' },
           where: languageId == GetAllLanguages ? { deletedAt: null } : { deletedAt: null, languageId },
         },
         skus: {
