@@ -885,6 +885,27 @@ describe('Finance (e2e)', () => {
     expect(report.body.totals.cogs).toBeGreaterThanOrEqual(124_000)
   })
 
+  it('sổ quỹ: đầu kỳ + thu - chi = tồn, có Tiền mặt và Ngân hàng, có dòng tổng', async () => {
+    const res = await api().get('/ledger/cash-book').set(auth()).expect(200)
+
+    expect(res.body.data.accounts.map((item: any) => item.code)).toEqual(['CASH', 'BANK'])
+    for (const account of res.body.data.accounts) {
+      expect(account.closing).toBe(account.opening + account.inflow - account.outflow)
+    }
+    const sum = res.body.data.accounts.reduce(
+      (acc: any, account: any) => ({
+        opening: acc.opening + account.opening,
+        inflow: acc.inflow + account.inflow,
+        outflow: acc.outflow + account.outflow,
+        closing: acc.closing + account.closing,
+      }),
+      { opening: 0, inflow: 0, outflow: 0, closing: 0 },
+    )
+    // dòng "Tổng quỹ" phải bằng tổng hai quỹ, không tính lại ra số khác
+    expect(res.body.data.total).toEqual(sum)
+    expect(res.body.data.fromDate).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+  })
+
   it('danh mục: API liệt kê bản dịch của 1 danh mục (cho màn hình quản trị)', async () => {
     const category = await prisma.category.findFirst({
       where: { deletedAt: null },

@@ -153,3 +153,42 @@ export type LedgerEntryType = z.infer<typeof LedgerEntrySchema>
 export type LedgerEntryQueryType = z.infer<typeof LedgerEntryQuerySchema>
 export type LedgerEntryListResType = z.infer<typeof LedgerEntryListResSchema>
 export type LedgerIntegrityResType = z.infer<typeof LedgerIntegrityResSchema>
+
+/**
+ * Sổ quỹ: tiền mặt tại quầy (CASH) và tiền gửi ngân hàng (BANK).
+ *
+ * Kế toán nhìn "sổ cái" (Nợ/Có mọi tài khoản); quản lý nhà hàng nhìn "sổ quỹ": kỳ này có bao nhiêu
+ * tiền, thu vào/chi ra bao nhiêu, còn lại bao nhiêu. Quỹ là tài khoản ASSET nên:
+ *   đầu kỳ  = Σ Nợ − Σ Có của mọi bút toán POSTED TRƯỚC kỳ
+ *   tổng thu = Σ Nợ trong kỳ (tiền vào), tổng chi = Σ Có trong kỳ (tiền ra)
+ *   tồn quỹ  = đầu kỳ + thu − chi
+ */
+export const CashBookQuerySchema = z.object({
+  fromDate: z.string().optional(),
+  toDate: z.string().optional(),
+  branchId: z.coerce.number().int().positive().optional(),
+})
+
+export const CashBookAccountSchema = z.object({
+  code: z.string(),
+  name: z.string(),
+  opening: moneyOutputSchema,
+  inflow: moneyOutputSchema,
+  outflow: moneyOutputSchema,
+  closing: moneyOutputSchema,
+})
+
+/** Bọc trong `data` theo đúng quy ước response của project (`{ message, data }`) */
+export const CashBookResSchema = z.object({
+  message: z.string(),
+  data: z.object({
+    fromDate: z.string(),
+    toDate: z.string(),
+    branchId: z.number().nullable(),
+    accounts: z.array(CashBookAccountSchema),
+    total: CashBookAccountSchema.omit({ code: true, name: true }),
+  }),
+})
+
+export type CashBookQueryType = z.infer<typeof CashBookQuerySchema>
+export type CashBookAccountType = z.infer<typeof CashBookAccountSchema>

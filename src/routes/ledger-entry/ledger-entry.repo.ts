@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client'
 import { Injectable } from '@nestjs/common'
 import { PrismaService } from '@/shared/service/prisma.service'
-import { LedgerEntryQueryType } from '@/routes/ledger-entry/ledger-entry.model'
+import { CashBookQueryType, LedgerEntryQueryType } from '@/routes/ledger-entry/ledger-entry.model'
 import { summarizeLines } from '@/routes/ledger-entry/ledger-entry-balance'
 
 /**
@@ -137,6 +137,73 @@ export class LedgerEntryRepo {
       draftEntries,
       lineCount,
     }
+  }
+
+  /** Hai tài khoản quỹ mà sổ quỹ theo dõi; thứ tự cố định để FE không phải sắp xếp */
+  private static readonly CASH_BOOK_CODES = ['CASH', 'BANK']
+
+  /**
+   * Số dư quỹ theo kỳ: đầu kỳ (trước fromDate), thu/chi trong kỳ, tồn cuối kỳ.
+   * Chỉ tính bút toán `POSTED` — DRAFT treo không phải tiền thật.
+   */
+  async cashBook({ fromDate, toDate, branchId }: CashBookQueryType) {
+    const accounts = await this.prismaService.ledgerAccount.findMany({
+      where: { code: { in: LedgerEntryRepo.CASH_BOOK_CODES } },
+      select: { id: true, code: true, name: true },
+    })
+    const accountIds = accounts.map((account) => account.id)
+
+    const branchFilter = branchId ? { branchId } : {}
+    const inRange = {
+      accountId: { in: accountIds },
+      entry: {
+        status: 'POSTED' as const,
+        ...branchFilter,
+        occurredAt: { gte: new Date(`${fromDate}T00:00:00`), lte: new Date(`${toDate}T23:59:59.999`) },
+      },
+    }
+    const before = {
+      accountId: { in: accountIds },
+      entry: { status: 'POSTED' as const, ...branchFilter, occurredAt: { lt: new Date(`${fromDate}T00:00:00`) } },
+    }
+
+    const [period, opening] = await Promise.all([
+      this.prismaService.ledgerLine.groupBy({
+        by: ['accountId', 'direction'],
+        where: inRange,
+        _sum: { amount: true },
+      }),
+      this.prismaService.ledgerLine.groupBy({
+        by: ['accountId', 'direction'],
+        where: before,
+        _sum: { amount: true },
+      }),
+    ])
+
+    const sum = (
+      rows: { accountId: number; direction: string; _sum: { amount: Prisma.Decimal | null } }[],
+      accountId: number,
+      direction: 'DEBIT' | 'CREDIT',
+    ) => Number(rows.find((row) => row.accountId === accountId && row.direction === direction)?._sum.amount ?? 0)
+
+    return accounts
+      .map((account) => {
+        const debitBefore = sum(opening, account.id, 'DEBIT')
+        const creditBefore = sum(opening, account.id, 'CREDIT')
+        const inflow = sum(period, account.id, 'DEBIT')
+        const outflow = sum(period, account.id, 'CREDIT')
+        const openingBalance = debitBefore - creditBefore
+        return {
+          code: account.code,
+          name: account.name,
+          opening: openingBalance,
+          inflow,
+          outflow,
+          closing: openingBalance + inflow - outflow,
+        }
+      })
+      // thứ tự CASH rồi BANK, không phụ thuộc DB trả về
+      .sort((a, b) => LedgerEntryRepo.CASH_BOOK_CODES.indexOf(a.code) - LedgerEntryRepo.CASH_BOOK_CODES.indexOf(b.code))
   }
 }
 
@@ -297,3 +364,4 @@ export class LedgerReconciliationRepo {
     }
   }
 }
+

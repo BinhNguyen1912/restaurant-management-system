@@ -3,6 +3,7 @@ import { BadRequestException } from '@nestjs/common'
 import { Prisma } from '@prisma/client'
 import { LedgerEntryRepo, LedgerReconciliationRepo } from '@/routes/ledger-entry/ledger-entry.repo'
 import {
+  CashBookQueryType,
   LedgerEntryQueryType,
   LedgerReconciliationQueryType,
   SettleVnpayClearingType,
@@ -32,6 +33,32 @@ export class LedgerEntryService {
 
   async list(query: LedgerEntryQueryType) {
     return toMoneyNumbers(await this.repo.list(query))
+  }
+
+  /**
+   * Sổ quỹ: mỗi tài khoản quỹ 4 con số (đầu kỳ / thu / chi / tồn) + dòng tổng.
+   * Không truyền kỳ thì lấy tháng hiện tại — đúng câu hỏi "tháng này quỹ còn bao nhiêu".
+   */
+  async cashBook(query: CashBookQueryType) {
+    const today = new Date()
+    const fromDate = query.fromDate ?? new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10)
+    const toDate = query.toDate ?? today.toISOString().slice(0, 10)
+
+    const accounts = await this.repo.cashBook({ ...query, fromDate, toDate })
+    const total = accounts.reduce(
+      (acc, account) => ({
+        opening: acc.opening + account.opening,
+        inflow: acc.inflow + account.inflow,
+        outflow: acc.outflow + account.outflow,
+        closing: acc.closing + account.closing,
+      }),
+      { opening: 0, inflow: 0, outflow: 0, closing: 0 },
+    )
+
+    return toMoneyNumbers({
+      message: 'Success.CashBook',
+      data: { fromDate, toDate, branchId: query.branchId ?? null, accounts, total },
+    })
   }
 
   async integrity() {
