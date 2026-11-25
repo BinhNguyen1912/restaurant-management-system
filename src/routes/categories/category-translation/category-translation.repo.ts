@@ -22,6 +22,14 @@ export class CategoryTranslationRepo {
     return this.prismaService.categoryTranslation.findUnique({ where: { id } })
   }
 
+  /** mọi bản dịch còn hiệu lực của 1 danh mục (màn hình quản trị cần id để sửa) */
+  findByCategory(categoryId: number): Promise<CategoryTranslation[]> {
+    return this.prismaService.categoryTranslation.findMany({
+      where: { categoryId, deletedAt: null },
+      orderBy: { languageId: 'desc' }, // 'vi' trước để form mặc định đúng bản gốc
+    })
+  }
+
   update({
     data,
     id,

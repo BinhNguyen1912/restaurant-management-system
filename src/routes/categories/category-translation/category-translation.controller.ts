@@ -1,9 +1,11 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common'
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common'
 import { CategoryTranslationService } from './category-translation.service'
 import { ZodSerializerDto } from 'nestjs-zod'
 import {
   CategoryTranslationBodyDTO,
+  CategoryTranslationListResDTO,
   CategoryTranslationResDTO,
+  GetCategoryTranslationsQueryDTO,
   GetCategoryTranslationParamDTO,
   UpdateCategoryTranslationBodyDTO,
 } from './category-translation.dto'
@@ -18,6 +20,13 @@ export class CategoryTranslationController {
   @ZodSerializerDto(CategoryTranslationResDTO)
   async create(@Body() body: CategoryTranslationBodyDTO, @ActiveUser('userId') userId: number) {
     return await this.categoryTranslationService.create({ body, createdById: userId })
+  }
+
+  /** Phải khai báo TRƯỚC route ':id' để không bị nuốt bởi param */
+  @Get()
+  @ZodSerializerDto(CategoryTranslationListResDTO)
+  async list(@Query() query: GetCategoryTranslationsQueryDTO) {
+    return await this.categoryTranslationService.listByCategory(query.categoryId)
   }
 
   @Get(':categoryTranslationId')

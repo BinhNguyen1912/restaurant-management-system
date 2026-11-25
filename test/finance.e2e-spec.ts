@@ -885,6 +885,23 @@ describe('Finance (e2e)', () => {
     expect(report.body.totals.cogs).toBeGreaterThanOrEqual(124_000)
   })
 
+  it('danh mục: API liệt kê bản dịch của 1 danh mục (cho màn hình quản trị)', async () => {
+    const category = await prisma.category.findFirst({
+      where: { deletedAt: null },
+      select: { id: true, categoryTranslations: { select: { id: true, languageId: true } } },
+    })
+    expect(category).toBeTruthy()
+
+    const list = await api().get(`/category-translation?categoryId=${category!.id}`).set(auth()).expect(200)
+    expect(Array.isArray(list.body.data)).toBe(true)
+    expect(list.body.data.every((item: any) => item.categoryId === category!.id)).toBe(true)
+    // bản dịch tiếng Việt (nếu có) phải đứng đầu để form mặc định đúng bản gốc
+    if (list.body.data.length > 1) {
+      expect(list.body.data[0].languageId).toBe('vi')
+    }
+    expect(list.body.data.length).toBeGreaterThanOrEqual(category!.categoryTranslations.length)
+  })
+
   it('đa ngôn ngữ: en trả en, vi trả vi, thiếu bản dịch thì rơi về vi', async () => {
     // Sản phẩm có sẵn bản dịch tiếng Việt -> thêm bản dịch tiếng Anh để chứng minh chọn đúng ngôn ngữ
     const product = await prisma.product.findFirst({
