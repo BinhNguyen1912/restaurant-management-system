@@ -10,6 +10,8 @@ import {
   GetProductsResDTO,
 } from '@/routes/products/product.dtos'
 import { SkipThrottle } from '@nestjs/throttler'
+import { LocaleParam } from '@/shared/decorators/locale.decorator'
+import { Locale } from '@/shared/i18n/locale'
 
 @SkipThrottle()
 @Controller('product')
@@ -19,14 +21,14 @@ export class ProductController {
 
   @Get('/detail/:productId')
   @ZodSerializerDto(GetProductDetailResDTO)
-  async findById(@Param() param: GetProductParamDTO) {
-    return this.productService.getDetail({ productId: param.productId })
+  async findById(@Param() param: GetProductParamDTO, @LocaleParam() locale: Locale) {
+    return this.productService.getDetail({ productId: param.productId, locale })
   }
 
   @Get()
   @ZodSerializerDto(GetProductsResDTO)
-  async getList(@Query() query: GetProductQueryDTO) {
-    const list = await this.productService.list({ query })
+  async getList(@Query() query: GetProductQueryDTO, @LocaleParam() locale: Locale) {
+    const list = await this.productService.list({ query, locale })
     return list
   }
 }

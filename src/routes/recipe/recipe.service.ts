@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common'
 
-import { I18nContext } from 'nestjs-i18n'
 import { isForeignKeyPrisma, isNotFoundPrisma, isUniqueConstraintPrisma } from '@/shared/helper'
 import {
   CreateIngredientBodyType,
@@ -48,7 +47,6 @@ export class RecipeService {
     }
   }
   async findUnique(id: number) {
-    // const languageId = I18nContext.current()?.lang
     const ingredient = await this.sharedSkuRecipeIngredientRepo.findUniqueRecipeIngredient(id)
 
     if (!ingredient) throw IngredientNotFoundException
@@ -104,7 +102,6 @@ export class RecipeService {
   }
   async getAll(query: PagitionQueryType) {
     try {
-      //   const languageId = I18nContext.current()?.lang
       return await this.recipeRepo.findAll(query)
     } catch (error) {
       if (isNotFoundPrisma(error)) {

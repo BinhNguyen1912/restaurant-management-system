@@ -1,6 +1,5 @@
 import { BadRequestException, HttpException, HttpStatus, Injectable } from '@nestjs/common'
 
-import { I18nContext } from 'nestjs-i18n'
 import { CategoryRepo } from '@/routes/categories/category.repo'
 import { isForeignKeyPrisma, isNotFoundPrisma, isUniqueConstraintPrisma } from '@/shared/helper'
 import { GuestRepo } from '@/routes/guest/guest.repo'
