@@ -1,8 +1,8 @@
-import { Injectable } from '@nestjs/common'
+import { Injectable, Logger } from '@nestjs/common'
 import { PostPaymentHandler } from '../service/vnpay.service'
 import { PrismaService } from '@/shared/service/prisma.service'
 import { OrderType } from '../models/shared-order.model'
-import { ReservationStatus } from '@prisma/client'
+import { Prisma, ReservationStatus } from '@prisma/client'
 import { OrderStatus } from '../constants/order.constant'
 import { ReservationType } from '../models/shared-reservation.model'
 import { EmailService } from '../service/email.service'
@@ -10,6 +10,8 @@ import { TableStatus } from '../constants/table.constant'
 
 @Injectable()
 export class ReservationPaymentHandler implements PostPaymentHandler {
+  private readonly logger = new Logger(ReservationPaymentHandler.name)
+
   constructor(
     private readonly prismaService: PrismaService,
     private readonly emailService: EmailService,
@@ -26,7 +28,8 @@ export class ReservationPaymentHandler implements PostPaymentHandler {
     vnpTxnRef: string
     vnpBankCode?: string
     amount: number
-    tx: any
+    /** Transaction client thật: `any` sẽ che mất tên trường sai (xem handler-typing.spec.ts) */
+    tx: Prisma.TransactionClient
   }): Promise<void> {
     const reservationId = orders[0]?.reservationId
     const user = orders[0]?.user || orders[0]?.guest
@@ -59,18 +62,24 @@ export class ReservationPaymentHandler implements PostPaymentHandler {
   }: {
     orders: OrderType[]
     vnpTxnRef: string
-    tx: any // Prisma Transaction Client
+    /** Transaction client thật để TypeScript bắt được tên trường sai (xem OrderPayment.handler) */
+    tx: Prisma.TransactionClient
   }) {
     // 1. Logic nghiệp vụ: Hủy Lịch hẹn (Reservation)
     const reservationId = orders[0]?.reservationId
     if (reservationId) {
+      /**
+       * `Reservation` KHÔNG có cột `cancelReason` — trước đây chỗ này ghi vào đó nên mọi lần
+       * thanh toán cọc VNPAY thất bại đều ném lỗi ngay tại đây (`tx` khai báo `any` nên
+       * TypeScript không bắt được). Chỉ đổi trạng thái; lý do ghi ra log để còn tra.
+       */
       await tx.reservation.update({
         where: { id: reservationId },
-        data: {
-          status: ReservationStatus.CANCELLED,
-          cancelReason: 'Payment deposit failed via VNPAY return.',
-        },
+        data: { status: ReservationStatus.CANCELLED },
       })
+      this.logger.warn(
+        `Reservation #${reservationId} cancelled: VNPAY deposit payment failed (txn ${vnpTxnRef}).`,
+      )
     }
 
     // 2. Logic nghiệp vụ: Hủy Order

@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common'
+import { Prisma } from '@prisma/client'
 import { PostPaymentHandler } from '../service/vnpay.service'
 import { PrismaService } from '@/shared/service/prisma.service'
 import { OrderType } from '../models/shared-order.model'
@@ -21,7 +22,8 @@ export class OrderGuestPaymentPaymentHandler implements PostPaymentHandler {
     vnpTxnRef: string
     vnpBankCode?: string
     amount: number
-    tx: any // Prisma Transaction Client
+    /** Transaction client thật (không phải `any`) để TypeScript bắt được tên trường sai */
+    tx: Prisma.TransactionClient
   }): Promise<void> {
     console.log('--- AT_TABLE: Starting specific business logic (Success) ---')
 
@@ -40,18 +42,23 @@ export class OrderGuestPaymentPaymentHandler implements PostPaymentHandler {
       console.log(`Table ${tableNodeId} status updated to CLEANING after payment.`)
     }
 
-    // 2. Logic nghiệp vụ: Đóng/Archive Guest (Tùy chọn)
-    // Nếu đây là lần thanh toán cuối cùng, có thể đóng Guest
+    /**
+     * 2. Kết thúc phiên của khách.
+     *
+     * Trước đây chỗ này ghi `isClosed: true` — **trường không tồn tại** trong model `Guest`, nên
+     * đường thanh toán VNPay cho đơn tại bàn sẽ ném lỗi ngay sau khi đã giải phóng bàn (bàn trống
+     * nhưng transaction coi như thất bại). TypeScript không bắt được vì `tx` khai báo `any`.
+     *
+     * Cách đúng với schema hiện có: **vô hiệu hoá phiên** bằng cách xoá refresh token. Khách vào
+     * lại phải quét QR (và bàn phải được nhân viên mở lại).
+     */
     const guestId = orders[0]?.guestId
     if (guestId) {
-      await tx.guest.update({
+      await tx.guest.updateMany({
         where: { id: guestId },
-        data: {
-          isClosed: true,
-          // Có thể thêm log/metadata về thời gian thanh toán cuối
-        },
+        data: { refreshToken: null, refreshTokenExpiresAt: null },
       })
-      console.log(`Guest ${guestId} session closed after payment.`)
+      console.log(`Guest ${guestId} session invalidated after payment.`)
     }
 
     // Ghi chú: Cập nhật Payment/Order Status CHUNG đã được VnPayService xử lý
@@ -65,7 +72,8 @@ export class OrderGuestPaymentPaymentHandler implements PostPaymentHandler {
   }: {
     orders: OrderType[]
     vnpTxnRef: string
-    tx: any // Prisma Transaction Client
+    /** Transaction client thật (không phải `any`) để TypeScript bắt được tên trường sai */
+    tx: Prisma.TransactionClient
   }) {
     console.log('--- AT_TABLE: Starting specific business logic (Failure) ---')
     // Thanh toán tại bàn thất bại, Order status vẫn giữ nguyên (PAID/COMPLETED/PENDING)
