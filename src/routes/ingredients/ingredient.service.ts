@@ -3,9 +3,11 @@ import { BadRequestException, Injectable } from '@nestjs/common'
 import { isForeignKeyPrisma, isNotFoundPrisma, isUniqueConstraintPrisma } from '@/shared/helper'
 import {
   CreateIngredientBodyType,
+  CreateStockReceiptType,
   IngredientQueryType,
   UpdateIngredientBodyType,
 } from '@/routes/ingredients/ingredient.model'
+import { AuditLogService } from '@/shared/service/audit-log.service'
 import { IngredientRepo } from '@/routes/ingredients/ingredient.repo'
 import {
   IngredientAlreadyExitsException,
@@ -25,6 +27,7 @@ export class IngredientService {
     private readonly ingredientRepo: IngredientRepo,
     private readonly cacheService: CacheService,
     private readonly redisService: RedisService,
+    private readonly auditLog: AuditLogService,
   ) {}
 
   async create({ body, createdById }: { body: CreateIngredientBodyType; createdById: number }) {
@@ -49,6 +52,86 @@ export class IngredientService {
       throw error
     }
   }
+  /**
+   * Nhập hàng: cộng tồn kho + đồng bộ Redis + ghi nhật ký.
+   *
+   * Redis phải cập nhật ngay: trừ kho khi bán đọc từ Redis, nên nếu chỉ ghi DB thì lần bán tiếp
+   * theo sẽ trừ trên số cũ và báo "không đủ tồn" dù vừa nhập hàng.
+   */
+  async createStockReceipt({
+    ingredientId,
+    data,
+    createdById,
+    actor,
+  }: {
+    ingredientId: number
+    data: CreateStockReceiptType
+    createdById: number
+    actor?: { roleName?: string | null }
+  }) {
+    const result = await this.ingredientRepo.createStockReceipt({
+      ingredientId,
+      quantity: data.quantity,
+      unitCost: data.unitCost ?? 0,
+      supplier: data.supplier,
+      note: data.note,
+      images: data.images,
+      createdById,
+    })
+    if (!result) throw IngredientNotFoundException
+
+    const { receipt, ingredient } = result
+    const ingredientKey = CACHE_KEYS.INGREDIENT(ingredient.id)
+    await this.cacheService.del(ingredientKey)
+    await this.redisService.setHash(ingredientKey, {
+      stock: ingredient.stock,
+      minStock: ingredient.minStock || 0,
+      unitId: ingredient.unitId,
+      name: ingredient.name,
+    })
+
+    await this.auditLog.recordSafe({
+      actorId: createdById,
+      actorRole: actor?.roleName ?? null,
+      action: 'STOCK_RECEIVED',
+      entityType: 'INGREDIENT',
+      entityId: ingredient.id,
+      before: { stock: Number(ingredient.stock) - data.quantity },
+      after: {
+        stock: Number(ingredient.stock),
+        quantity: data.quantity,
+        unitCost: Number(ingredient.unitCost),
+        supplier: data.supplier ?? null,
+        images: data.images ?? [],
+      },
+      reason: data.note ?? null,
+    })
+
+    return {
+      message: 'Success.StockReceived',
+      data: {
+        receipt: { ...receipt, createdByName: null },
+        stock: Number(ingredient.stock),
+        unitCost: Number(ingredient.unitCost),
+      },
+    }
+  }
+
+  async listStockReceipts(ingredientId: number) {
+    const ingredient = await this.ingredientRepo.findUnique(ingredientId)
+    if (!ingredient) throw IngredientNotFoundException
+    const receipts = await this.ingredientRepo.listStockReceipts(ingredientId)
+    return {
+      message: 'Success.StockReceipts',
+      data: receipts.map((receipt) => ({
+        ...receipt,
+        unitCost: Number(receipt.unitCost),
+        createdByName: receipt.createdBy?.name ?? null,
+        createdBy: undefined,
+      })),
+    }
+  }
+
   async findUnique(id: number) {
     const ingredient = await this.ingredientRepo.findUnique(id)
     if (!ingredient) throw IngredientNotFoundException

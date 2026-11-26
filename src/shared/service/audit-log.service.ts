@@ -25,8 +25,10 @@ export type AuditActionType =
   | 'ROLE_CREATED'
   | 'ROLE_DELETED'
   | 'USER_ACCESS_CHANGED'
+  // nhập hàng: tồn kho tăng, có ảnh bằng chứng
+  | 'STOCK_RECEIVED'
 
-export type AuditEntityTypeValue = 'ORDER' | 'PRODUCT' | 'SKU' | 'PAYMENT' | 'ROLE' | 'USER'
+export type AuditEntityTypeValue = 'ORDER' | 'PRODUCT' | 'SKU' | 'PAYMENT' | 'ROLE' | 'USER' | 'INGREDIENT'
 
 export type RecordAuditInput = {
   actorId?: number | null
