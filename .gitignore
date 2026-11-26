@@ -42,6 +42,10 @@ lerna-debug.log*
 .env.production.local
 # file env thật trên VPS (chỉ commit .env.production.example)
 .env.production
+# mọi file env khác (.env.container, .env.staging…) — tránh commit nhầm secret
+.env.*
+!.env.example
+!.env.production.example
 .env.local
 
 # temp directory
