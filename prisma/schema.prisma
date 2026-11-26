@@ -240,6 +240,7 @@ model User {
   createdReminders            Reminders[]           @relation("RemindersCreatedBy")
   deletedReminders            Reminders[]           @relation("RemindersDeletedBy")
   updatedReminders            Reminders[]           @relation("RemindersUpdatedBy")
+  openedTableNodes            TableNode[]           @relation("TableNodeOpenedBy")
   createdStockReceipts        StockReceipt[]        @relation("StockReceiptCreatedBy")
   createdReservation          Reservation[]         @relation("ReservationCreateBy")
   deletedReservation          Reservation[]         @relation("ReservationDeleteBy")
@@ -999,6 +1000,11 @@ model TableNode {
   token        String        @unique
   id           Int           @id @default(autoincrement())
   layoutId     Int?
+  /// Nhân viên MỞ BÀN lúc nào — khách chỉ quét QR được khi bàn đang mở.
+  /// Không dùng mỗi `status` vì khách quét QR cũng từng tự set OCCUPIED (lỗ hổng cũ).
+  openedAt     DateTime?
+  openedById   Int?
+  openedBy     User?         @relation("TableNodeOpenedBy", fields: [openedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
   guests       Guest[]
   orders       Order[]
   reservations Reservation[]

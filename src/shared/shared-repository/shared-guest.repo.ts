@@ -31,6 +31,16 @@ export class SharedGuestRepo {
     if (table.status == TableStatus.RESERVED) {
       throw new UnprocessableEntityException('Error.TableReserved')
     }
+    /**
+     * Khách chỉ quét QR được khi NHÂN VIÊN đã mở bàn.
+     *
+     * Trước đây chính khách login tự set OCCUPIED, nên ai có ảnh chụp QR (gửi qua chat, chụp
+     * lúc đi qua) cũng đặt món từ nhà — và chiếm luôn bàn của khách thật. Giờ quyền mở bàn
+     * thuộc về nhân viên (`POST /table-node/:id/open`).
+     */
+    if (!table.openedAt || table.status !== TableStatus.OCCUPIED) {
+      throw new UnprocessableEntityException('Error.TableNotOpened')
+    }
 
     let guest = await this.prismaService.guest.create({
       data: {
@@ -51,10 +61,6 @@ export class SharedGuestRepo {
         roleName: guestRole.roleName,
         userId: guest.id,
         tableNodeId: table.id,
-      }),
-      this.prismaService.tableNode.update({
-        where: { id: tableNodeId },
-        data: { status: TableStatus.OCCUPIED },
       }),
     ])
     const decodeRefreshToken = await this.tokenService.VerifyGuestRefreshToken(refreshToken)

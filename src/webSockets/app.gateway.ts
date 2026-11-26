@@ -11,7 +11,6 @@ import { Server, Socket } from 'socket.io'
 import { WebSocketRepo } from '@/shared/shared-repository/shared-webSocket'
 import { PrismaService } from '@/shared/service/prisma.service'
 import { ReminderLogRepo } from '@/routes/reminders/remindersLog/remindersLog.repo'
-import { TableStatus } from '@/shared/constants/table.constant'
 import { ManagerRoom, WS_EVENTS } from '@/shared/constants/others.constant'
 import envConfig from '@/shared/config'
 
@@ -65,12 +64,11 @@ export class AppGateway implements OnGatewayConnection, OnGatewayDisconnect {
             },
           })
 
+          // KHÔNG đóng bàn khi khách mất kết nối: bàn do nhân viên mở và chỉ đóng khi thanh toán
+          // hoặc nhân viên đóng. Trước đây khách tắt app là bàn về AVAILABLE, nên khách khác
+          // quét QR vào được bàn đang có người ngồi.
           if (activeGuestsOnTable.length === 0) {
-            await this.prismaService.tableNode.update({
-              where: { id: guest.tableNodeId },
-              data: { status: TableStatus.AVAILABLE },
-            })
-            console.log(`Table ${guest.tableNodeId} set to AVAILABLE after guest ${guest.id} disconnected`)
+            console.log(`All guests left table ${guest.tableNodeId}; table stays OCCUPIED until staff closes it`)
           }
         }
       }
