@@ -13,6 +13,10 @@ jobs:
   typecheck-and-unit:
     name: Typecheck + unit test
     runs-on: ubuntu-latest
+    env:
+      # Node đọc TZ MỘT LẦN lúc khởi động; gán trong code không đủ trên mọi phiên bản Node.
+      # Production cũng phải đặt biến này cho container (xem .env.example).
+      TZ: Asia/Ho_Chi_Minh
     steps:
       - uses: actions/checkout@v4
 
