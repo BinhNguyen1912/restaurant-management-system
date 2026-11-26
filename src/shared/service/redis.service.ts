@@ -15,18 +15,32 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     this.redisClient = new Redis(envConfig.REDIS_URL)
   }
 
+  /**
+   * Nạp script Lua từ đĩa.
+   *
+   * Trước đây chỉ tìm `process.cwd()/src/scripts/lua` — chạy dev thì đúng, nhưng **image production
+   * chỉ có `dist/`** nên app chết ngay lúc khởi động: `ENOENT /app/src/scripts/lua/deduct-stock.lua`.
+   * Giờ thử lần lượt: bản trong `dist` (nest-cli copy asset), bản `src` (dev), rồi cwd.
+   * Không tìm thấy thì báo rõ ĐÃ TÌM Ở ĐÂU thay vì ENOENT trần trụi.
+   */
   async onModuleInit() {
     const scripts = [deduct_stock, revert_stock]
-    const scriptDir = path.join(process.cwd(), 'src/scripts', 'lua')
+    const candidates = [
+      path.join(__dirname, '..', '..', 'scripts', 'lua'), // dist/scripts/lua (image production)
+      path.join(process.cwd(), 'dist', 'scripts', 'lua'),
+      path.join(process.cwd(), 'src', 'scripts', 'lua'), // dev
+    ]
+    const scriptDir = candidates.find((dir) => fs.existsSync(dir))
+    if (!scriptDir) {
+      throw new Error(
+        `Không tìm thấy thư mục script Lua. Đã thử: ${candidates.join(' | ')}. ` +
+          'Kiểm tra nest-cli.json có copy asset *.lua vào dist (compilerOptions.assets).',
+      )
+    }
     for (const scriptName of scripts) {
-      try {
-        const scriptPath = path.join(scriptDir, scriptName)
-        const scriptContent = fs.readFileSync(scriptPath, 'utf8')
-        this.luaScripts.set(scriptName.split('.')[0], scriptContent)
-      } catch (error) {
-        console.error(`Failed to load Lua script: ${scriptName}`, error)
-        throw error
-      }
+      const scriptPath = path.join(scriptDir, scriptName)
+      const scriptContent = fs.readFileSync(scriptPath, 'utf8')
+      this.luaScripts.set(scriptName.split('.')[0], scriptContent)
     }
   }
 

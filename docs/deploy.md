@@ -55,6 +55,16 @@ DOMAIN=abc.com docker compose -f deploy/proxy/docker-compose.yml up -d
 ```
 Caddy tự xin cert Let's Encrypt cho `app.abc.com` và `api.abc.com` (cần DNS trỏ về VPS + port 80/443 mở).
 
+## Ba cái bẫy của `docker --env-file` (đã gặp khi build local)
+1. **Không có dấu cách quanh `=`**: `KEY = value` → `invalid env file: variable 'KEY ' contains whitespaces`.
+   File `.env` của máy dev viết kiểu `DATABASE_URL = "..."` sẽ **không dùng được** cho Docker.
+2. **Không bọc nháy**: Docker giữ nguyên dấu `"` (dotenv thì bỏ) → `DATABASE_URL="postgresql://…"`
+   thành URL bắt đầu bằng `"` ⇒ Prisma báo `the URL must start with postgresql://`.
+   Dùng `KEY=value`, không nháy.
+3. **Container không tự đọc file `.env`**: file chỉ được nạp *vào biến môi trường* lúc `docker run/compose`.
+   (Trước đây app còn `process.exit(1)` nếu thiếu file `.env` trong container — đã sửa: giờ app dùng
+   env của process, vẫn kiểm tra thiếu biến nào.)
+
 ## Kiểm tra
 
 ```bash
