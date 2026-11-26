@@ -58,10 +58,13 @@ jobs:
       - name: Prepare database (same steps as deploy)
         run: npm run deploy:prepare
 
-      - name: Seed units + catalog (e2e cần đơn vị/nguyên liệu/món)
+      # `seed:demo` KHÔNG dùng được ở đây: nó tạo đơn + bút toán demo, làm số liệu e2e không xác định.
+      # Fixture tạo đúng phần nền tối thiểu: chi nhánh, khu vực, bàn.
+      - name: Seed e2e fixture (chi nhánh + khu vực + bàn) + đơn vị + catalog
         run: |
           npx ts-node -r tsconfig-paths/register src/scripts/ScriptOfSystem/unit.seed.ts
           npx ts-node -r tsconfig-paths/register src/scripts/ScriptOfSystem/catalog.seed.ts
+          npx ts-node -r tsconfig-paths/register test/fixtures/seed-e2e.ts
 
       - name: E2E
         run: npx jest --config ./test/jest-e2e.json --runInBand --silent
