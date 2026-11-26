@@ -183,8 +183,13 @@ export class IngredientRepo {
       const oldStock = Number(ingredient.stock)
       const oldCost = Number(ingredient.unitCost)
       const newStock = oldStock + quantity
-      const newUnitCost =
-        oldStock > 0 ? (oldStock * oldCost + quantity * unitCost) / newStock : unitCost
+      /**
+       * Bình quân gia quyền, nhưng `oldCost = 0` nghĩa là **CHƯA KHAI GIÁ**, không phải "hàng miễn phí".
+       * Nếu vẫn chia bình quân thì tồn cũ kéo giá vốn xuống sai (4kg giá 0 + 5kg giá 50k -> 27.7k
+       * trong khi thực tế vừa mua 50k). Chỉ bình quân khi đã biết giá cũ.
+       */
+      const hasKnownOldCost = oldStock > 0 && oldCost > 0
+      const newUnitCost = hasKnownOldCost ? (oldStock * oldCost + quantity * unitCost) / newStock : unitCost
 
       const updated = await tx.ingredient.update({
         where: { id: ingredientId },

@@ -91,6 +91,30 @@ describe('Nhập hàng (e2e)', () => {
     expect(Number(row!.unitCost)).toBe(30_000)
   })
 
+  it('giá vốn cũ = 0 (chưa khai) thì lấy giá lần nhập này, không kéo giá xuống', async () => {
+    // 4kg với unitCost 0 không có nghĩa là "hàng miễn phí" — đó là CHƯA KHAI GIÁ.
+    // Bình quân máy móc sẽ ra 27.777đ trong khi thực tế vừa mua 50.000đ -> COGS sai.
+    const ingredient = await createIngredient(4, 0)
+
+    const res = await api()
+      .post(`/ingredients/${ingredient.id}/receipts`)
+      .set(auth())
+      .send({ quantity: 5, unitCost: 50_000 })
+      .expect(201)
+
+    expect(res.body.data.stock).toBe(9)
+    expect(res.body.data.unitCost).toBe(50_000)
+
+    // nhưng khi ĐÃ biết giá cũ thì vẫn bình quân đúng
+    const next = await api()
+      .post(`/ingredients/${ingredient.id}/receipts`)
+      .set(auth())
+      .send({ quantity: 9, unitCost: 100_000 })
+      .expect(201)
+    // (9*50.000 + 9*100.000) / 18 = 75.000
+    expect(next.body.data.unitCost).toBe(75_000)
+  })
+
   it('đồng bộ Redis ngay: trừ kho khi bán đọc từ Redis nên không được để số cũ', async () => {
     const ingredient = await createIngredient(0, 0)
     await redisService.setHash(CACHE_KEYS.INGREDIENT(ingredient.id), {
