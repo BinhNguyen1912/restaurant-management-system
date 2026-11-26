@@ -70,16 +70,32 @@ describe('Finance (e2e)', () => {
     }
   }
 
+  /**
+   * Nạp tồn kho LỚN cho mọi nguyên liệu trong **Redis** — nơi việc trừ kho khi bán thực sự đọc.
+   *
+   * Trước đây hàm này chỉ nâng tồn **nếu hash đã tồn tại** (`hash.stock !== undefined`). Trên máy
+   * dev hash luôn có (do app đã chạy), nên test xanh; trên CI (Redis trắng) hash không có → không
+   * nạp gì → mọi lần tạo đơn trả 400 "không đủ tồn kho" (7 test đỏ, không phải lỗi code).
+   *
+   * Giờ tạo hash nếu thiếu, dùng `stock/minStock/unitId/name` từ DB để hash đúng shape.
+   */
   const topUpIngredientStock = async () => {
     const redis = redisServiceForTests()
-    const ingredients = await prisma.ingredient.findMany({ where: { deletedAt: null }, select: { id: true } })
+    const ingredients = await prisma.ingredient.findMany({
+      where: { deletedAt: null },
+      select: { id: true, stock: true, unitId: true, name: true, minStock: true },
+    })
     for (const ingredient of ingredients) {
       const key = `ingredient:${ingredient.id}`
       const hash = ((await redis.getHash<string>(key)) ?? {}) as Record<string, string>
+      // backup giá trị GỐC để trả lại sau test ({} = hash mới do test tạo -> xoá hẳn)
       if (!stockBackup.has(key)) stockBackup.set(key, hash)
-      if (hash.stock !== undefined) {
-        await redis.setHash(key, { ...hash, stock: 1_000_000 })
-      }
+      await redis.setHash(key, {
+        stock: 1_000_000,
+        minStock: Number(hash.minStock ?? ingredient.minStock ?? 0),
+        unitId: hash.unitId ?? ingredient.unitId,
+        name: hash.name ?? ingredient.name,
+      })
     }
   }
 
