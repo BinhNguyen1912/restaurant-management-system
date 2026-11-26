@@ -132,6 +132,10 @@ export const RecomputeResSchema = z.object({
   written: z.number(),
   /** số ô cũ bị xoá trước khi ghi (dữ liệu đã dọn thì projection cũng sạch) */
   cleared: z.number(),
+  /** chi tiết từng chi nhánh khi ADMIN tính lại cho TẤT CẢ chi nhánh */
+  branches: z
+    .array(z.object({ branchId: z.number(), written: z.number(), cleared: z.number() }))
+    .optional(),
 })
 
 export type ReportRangeType = z.infer<typeof ReportRangeSchema>

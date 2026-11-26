@@ -1,7 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common'
+import { BadRequestException, Injectable, Logger } from '@nestjs/common'
 import { Cron } from '@nestjs/schedule'
 import { AccessTokenPayload } from '@/shared/types/jwt.types'
-import { resolveBranchId } from '@/shared/service/branch.resolver'
+import { resolveBranchScope } from '@/shared/service/branch.resolver'
 import { PrismaService } from '@/shared/service/prisma.service'
 import { ReportsRepo } from '@/routes/reports/reports.repo'
 import { ReportRangeType } from '@/routes/reports/reports.model'
@@ -28,14 +28,46 @@ export class ReportsService {
   ) {}
 
   /** chi nhánh đang xét: query thắng, không có thì lấy theo tài khoản đăng nhập */
+  /**
+   * Phạm vi chi nhánh của báo cáo.
+   *
+   * ADMIN là cấp tổng: không truyền `branchId` thì thấy **TỔNG mọi chi nhánh** — trước đây rơi về
+   * "chi nhánh active đầu tiên" nên admin chỉ thấy MỘT chi nhánh mà không có dấu hiệu gì.
+   * Truyền `branchId` thì xem riêng chi nhánh đó. Người không phải ADMIN luôn bị ép về chi nhánh mình.
+   */
   private async scopeBranch(query: ReportRangeType, actor?: { userId?: number | null; roleName?: string | null }) {
-    if (query.branchId) return query.branchId
-    return resolveBranchId(this.prismaService, { userId: actor?.userId, roleName: actor?.roleName })
+    return resolveBranchScope(this.prismaService, actor, query.branchId)
   }
 
   /** Tính lại projection cho 1 kỳ (chạy tay được, cron cũng gọi hàm này) */
   async recompute(query: ReportRangeType, actor?: { userId?: number | null; roleName?: string | null }) {
-    const branchId = await this.scopeBranch(query, actor)
+    const scope = await this.scopeBranch(query, actor)
+    // scope undefined (ADMIN không chọn chi nhánh) = tính lại cho MỌI chi nhánh active
+    const branchIds = scope
+      ? [scope]
+      : (await this.prismaService.branch.findMany({ where: { isActive: true }, select: { id: true } })).map(
+          (branch) => branch.id,
+        )
+    if (branchIds.length === 0) throw new BadRequestException('Error.BranchNotConfigured')
+
+    const results: { branchId: number; written: number; cleared: number }[] = []
+    for (const branchId of branchIds) results.push(await this.recomputeBranch(branchId, query))
+
+    const { from, to } = resolveRange(query.fromDate, query.toDate)
+    // Giữ shape cũ (`written`/`cleared`/`branchId`) để client đang đọc `written` không vỡ;
+    // written/cleared giờ là TỔNG các chi nhánh đã tính, chi tiết nằm trong `branches`.
+    return {
+      message: 'Success.Recompute',
+      fromDate: from,
+      toDate: to,
+      branchId: scope ?? null,
+      written: results.reduce((sum, item) => sum + item.written, 0),
+      cleared: results.reduce((sum, item) => sum + item.cleared, 0),
+      branches: results,
+    }
+  }
+
+  private async recomputeBranch(branchId: number, query: ReportRangeType) {
     const { from, to, gte, lte } = resolveRange(query.fromDate, query.toDate)
 
     const rows = await this.repo.ledgerRows(gte, lte, branchId)
@@ -48,14 +80,7 @@ export class ReportsService {
       `recompute ${from}..${to} branch=${branchId}: ${rows.length} dòng sổ cái -> ${written} ô (xoá ${cleared} ô cũ)`,
     )
 
-    return {
-      message: 'Success.Recompute',
-      fromDate: from,
-      toDate: to,
-      branchId,
-      written,
-      cleared,
-    }
+    return { branchId, written, cleared }
   }
 
   async revenue(query: ReportRangeType, actor?: { userId?: number | null; roleName?: string | null }) {
@@ -115,7 +140,7 @@ export class ReportsService {
       message: 'Success.RevenueReport',
       fromDate: from,
       toDate: to,
-      branchId,
+      branchId: branchId ?? null,
       rows,
       totals,
       byMethod: [
@@ -204,7 +229,7 @@ export class ReportsService {
       data: {
         fromDate: from,
         toDate: to,
-        branchId,
+        branchId: branchId ?? null,
         gross: current.gross,
         tax: current.tax,
         discount: current.discount,

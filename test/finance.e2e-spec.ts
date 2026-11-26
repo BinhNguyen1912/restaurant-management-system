@@ -949,6 +949,43 @@ describe('Finance (e2e)', () => {
     }
   })
 
+  it('ADMIN là cấp tổng: báo cáo/tổng quan không chọn chi nhánh thì ra TỔNG mọi chi nhánh', async () => {
+    const branches = await prisma.branch.findMany({ where: { isActive: true }, orderBy: { id: 'asc' } })
+
+    // 1. báo cáo doanh thu: TỔNG phải bằng cộng từng chi nhánh
+    const all = await api().get('/reports/revenue').set(auth()).expect(200)
+    expect(all.body.branchId).toBeNull()
+
+    let sumGrandTotal = 0
+    let sumFromBranches = 0
+    for (const branch of branches) {
+      const one = await api().get(`/reports/revenue?branchId=${branch.id}`).set(auth()).expect(200)
+      expect(one.body.branchId).toBe(branch.id)
+      sumGrandTotal += one.body.totals.grandTotal
+      sumFromBranches += one.body.totals.gross
+    }
+    // đây chính là điều user muốn: admin thấy TỔNG, không phải "chi nhánh đầu tiên"
+    expect(all.body.totals.grandTotal).toBeCloseTo(sumGrandTotal, 2)
+    expect(all.body.totals.gross).toBeCloseTo(sumFromBranches, 2)
+
+    // 2. tổng quan: cùng ngữ nghĩa
+    const overviewAll = await api().get('/dashboard/overview').set(auth()).expect(200)
+    expect(overviewAll.body.data.branchId).toBeNull()
+    const overviewOne = await api().get(`/dashboard/overview?branchId=${branches[0].id}`).set(auth()).expect(200)
+    expect(overviewOne.body.data.branchId).toBe(branches[0].id)
+    expect(overviewAll.body.data.grandTotal).toBeGreaterThanOrEqual(overviewOne.body.data.grandTotal)
+
+    // 3. tính lại projection khi không chọn chi nhánh: chạy cho TẤT CẢ, shape cũ vẫn còn
+    const recompute = await api()
+      .post('/reports/revenue/recompute')
+      .set(auth())
+      .send({ fromDate: all.body.fromDate, toDate: all.body.toDate })
+      .expect(201)
+    expect(recompute.body.branchId).toBeNull()
+    expect(recompute.body.branches.length).toBe(branches.length)
+    expect(typeof recompute.body.written).toBe('number')
+  })
+
   it('nhật ký quyền: đổi quyền của role và đổi chi nhánh của nhân viên đều được ghi lại', async () => {
     const staffRole = await prisma.role.findFirst({ where: { name: 'STAFF' } })
     const branches = await prisma.branch.findMany({ where: { isActive: true }, orderBy: { id: 'asc' }, take: 2 })
