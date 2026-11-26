@@ -69,16 +69,8 @@ jobs:
           npx ts-node -r tsconfig-paths/register src/scripts/ScriptOfSystem/catalog.seed.ts
           npm run seed:demo
 
-      # Cổng chặn = các suite TỰ ĐỦ trên DB mới: chúng tạo dữ liệu của mình rồi dọn.
-      #
-      # `finance.e2e-spec.ts` KHÔNG nằm trong cổng này: nó giả định môi trường đã có thuế/phí chi
-      # nhánh, voucher, sản phẩm + SKU cụ thể và TỒN KHO REDIS đã nạp — tức là trạng thái của máy dev
-      # sau nhiều lần chạy, không phải trạng thái một DB vừa seed. Đưa vào cổng lúc này chỉ tạo ra
-      # một job đỏ vĩnh viễn, che mất lỗi thật.
-      # Việc cần làm: cho finance tự seed dữ liệu nó cần (kể cả tồn kho Redis) rồi mới thêm vào đây.
-      - name: E2E (hermetic suites)
-        run: |
-          npx jest --config ./test/jest-e2e.json --runInBand --silent \
-            test/inventory.e2e-spec.ts \
-            test/stock-receipt.e2e-spec.ts \
-            test/table-open.e2e-spec.ts
+      # Cổng chặn = TẤT CẢ suite. Mỗi suite phải tự tạo dữ liệu nó cần rồi tự dọn — không giả định
+      # trạng thái của máy dev. (finance trước đây chỉ nâng tồn kho Redis khi hash ĐÃ tồn tại, nên
+      # trên CI Redis trắng là 7 test đỏ; đã sửa để nó tự tạo hash.)
+      - name: E2E
+        run: npx jest --config ./test/jest-e2e.json --runInBand --silent

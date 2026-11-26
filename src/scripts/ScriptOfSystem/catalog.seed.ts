@@ -39,6 +39,11 @@ const LANGUAGES: { id: string; name: string }[] = [
  * Ảnh seed = rỗng. Muốn có ảnh demo thì upload qua trang quản lý món (Cloudinary),
  * đừng dùng host ngoài vì next/image chỉ nhận host khai báo trong next.config.mjs.
  */
+/**
+ * KHÔNG bịa URL ảnh demo. Trước đây hàm này trả `''` và sản phẩm lưu `images: ['']` — chuỗi rỗng
+ * làm PUT sản phẩm bị 400 (xem ProductImagesInputSchema), nên sản phẩm seed không sửa được.
+ * Để rỗng hẳn (`[]`), FE hiện placeholder và admin tự upload ảnh thật.
+ */
 const img = (_seed: string) => ''
 
 const CATEGORIES: SeedCategory[] = [
@@ -55,7 +60,7 @@ const PRODUCTS: SeedProduct[] = [
     category: 'Khai vị',
     basePrice: 45000,
     virtualPrice: 55000,
-    images: [img('goi-cuon')],
+    images: [],
   },
   {
     name: 'Phở bò',
@@ -63,7 +68,7 @@ const PRODUCTS: SeedProduct[] = [
     category: 'Món chính',
     basePrice: 55000,
     virtualPrice: 65000,
-    images: [img('pho-bo')],
+    images: [],
     variants: [
       {
         value: 'Size',
@@ -81,7 +86,7 @@ const PRODUCTS: SeedProduct[] = [
     category: 'Món chính',
     basePrice: 50000,
     virtualPrice: 60000,
-    images: [img('bun-cha')],
+    images: [],
   },
   {
     name: 'Cơm tấm sườn bì chả',
@@ -89,7 +94,7 @@ const PRODUCTS: SeedProduct[] = [
     category: 'Món chính',
     basePrice: 55000,
     virtualPrice: 65000,
-    images: [img('com-tam')],
+    images: [],
   },
   {
     name: 'Chè ba màu',
