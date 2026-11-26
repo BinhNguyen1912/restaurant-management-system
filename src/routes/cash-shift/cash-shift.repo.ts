@@ -93,8 +93,14 @@ export class CashShiftRepo {
     }
   }
 
-  addMovement(shiftId: number, branchId: number, data: CreateCashMovementType & { createdById?: number }) {
-    return this.prismaService.cashMovement.create({
+  addMovement(
+    shiftId: number,
+    branchId: number,
+    data: CreateCashMovementType & { createdById?: number },
+    tx?: Prisma.TransactionClient,
+  ) {
+    const client = tx ?? this.prismaService
+    return client.cashMovement.create({
       data: {
         shiftId,
         branchId,

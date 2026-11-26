@@ -1033,6 +1033,60 @@ describe('Finance (e2e)', () => {
     }
   })
 
+  it('thu/chi tay trong ca phải GHI SỔ: sổ quỹ tăng/giảm đúng và có dòng CASH_MOVEMENT', async () => {
+    const open = await api().post('/cash-shifts').set(auth()).send({ openingFloat: 0 }).expect(201)
+    const shiftId = open.body.id as number
+    created.shiftIds.push(shiftId)
+
+    const before = await api().get('/ledger/cash-book').set(auth()).expect(200)
+
+    // thu tay 400k
+    const income = await api()
+      .post(`/cash-shifts/${shiftId}/movements`)
+      .set(auth())
+      .send({ type: 'IN', reason: 'Thu khác vào quỹ', amount: 400_000 })
+      .expect(201)
+    expect(income.body.ledgerEntryId).toBeTruthy()
+
+    // chi tay 150k
+    const expense = await api()
+      .post(`/cash-shifts/${shiftId}/movements`)
+      .set(auth())
+      .send({ type: 'OUT', reason: 'Chi mua đá', amount: 150_000 })
+      .expect(201)
+    expect(expense.body.ledgerEntryId).toBeTruthy()
+
+    const after = await api().get('/ledger/cash-book').set(auth()).expect(200)
+    // trước đây hai khoản này KHÔNG vào sổ -> sổ quỹ đứng yên, lệch với số két thực tế
+    expect(after.body.data.total.inflow - before.body.data.total.inflow).toBe(400_000)
+    expect(after.body.data.total.outflow - before.body.data.total.outflow).toBe(150_000)
+
+    // và phải thấy đúng dòng trong sổ quỹ
+    const lines = await api().get('/ledger/cash-book/lines?limit=100').set(auth()).expect(200)
+    const movementLines = (lines.body.data.lines as any[]).filter((line) => line.refType === 'CASH_MOVEMENT')
+    expect(movementLines.some((line) => line.direction === 'DEBIT' && line.amount === 400_000)).toBe(true)
+    expect(movementLines.some((line) => line.direction === 'CREDIT' && line.amount === 150_000)).toBe(true)
+
+    // cân Nợ = Có của từng bút toán (sổ kép)
+    const entries = await prisma.ledgerEntry.findMany({
+      where: { refType: 'CASH_MOVEMENT', refId: { in: [income.body.id, expense.body.id] } },
+      select: { id: true, lines: { select: { direction: true, amount: true } } },
+    })
+    for (const entry of entries) {
+      const debit = entry.lines.filter((l) => l.direction === 'DEBIT').reduce((sum, l) => sum + Number(l.amount), 0)
+      const credit = entry.lines.filter((l) => l.direction === 'CREDIT').reduce((sum, l) => sum + Number(l.amount), 0)
+      expect(debit).toBe(credit)
+    }
+
+    // đóng ca để test sau không bị 409
+    const detail = await api().get(`/cash-shifts/${shiftId}`).set(auth()).expect(200)
+    await api()
+      .post(`/cash-shifts/${shiftId}/close`)
+      .set(auth())
+      .send({ countedCash: detail.body.liveTotals.expectedCash })
+      .expect(201)
+  })
+
   it('chi tiết ca: có thu/chi trong ca và danh sách khoản thu tiền mặt (giải thích cashIn)', async () => {
     const open = await api().post('/cash-shifts').set(auth()).send({ openingFloat: 100_000 }).expect(201)
     const shiftId = open.body.id as number

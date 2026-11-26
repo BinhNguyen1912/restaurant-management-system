@@ -47,6 +47,8 @@ enum LedgerRefType {
   VNPAY_SETTLEMENT
   /// Giá vốn hàng bán của 1 đơn đã thu tiền (Nợ COGS / Có INVENTORY) — ticket #11
   ORDER_COGS
+  /// Thu/chi tiền mặt tay trong ca (Nợ CASH / Có OTHER_INCOME, hoặc Nợ OTHER_EXPENSE / Có CASH)
+  CASH_MOVEMENT
 }
 
 model LedgerAccount {

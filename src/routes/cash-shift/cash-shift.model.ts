@@ -18,6 +18,8 @@ export const CashMovementSchema = z.object({
   evidenceUrls: z.array(z.string()).default([]),
   createdById: z.number().nullable(),
   createdAt: z.date(),
+  /** Bút toán sổ cái sinh ra từ khoản này — thiếu khai báo là serializer cắt mất */
+  ledgerEntryId: z.number().nullable().optional(),
 })
 
 export const CashShiftSchema = z.object({
