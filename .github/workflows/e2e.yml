@@ -1,0 +1,67 @@
+name: E2E
+
+# E2E cần Postgres + Redis thật và DB đã seed (admin@order.com, đơn vị, danh mục tài khoản).
+# Tách workflow riêng để PR nhỏ không phải chờ; chạy trên PR vào main và chạy tay.
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    name: E2E (Postgres + Redis)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ecommerce
+          TZ: Asia/Ho_Chi_Minh
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d ecommerce"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5433/ecommerce?schema=public
+      REDIS_URL: redis://localhost:6379
+      PORT: 4000
+      # e2e đăng nhập bằng tài khoản này (xem test/*.e2e-spec.ts)
+      ADMIN_EMAIL: admin@order.com
+      ADMIN_NAME: admin
+      ADMIN_PASSWORD: '123456'
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      # config.ts bắt buộc có file .env; biến môi trường của workflow sẽ THẮNG giá trị trong file
+      # (dotenv không override process.env) nên DATABASE_URL/REDIS_URL ở trên vẫn được dùng.
+      - run: cp .env.example .env
+      - run: npx prisma migrate deploy
+      - run: npx prisma generate
+
+      # Seed tối thiểu để e2e có dữ liệu nền: vai trò + admin, danh mục tài khoản, đơn vị, catalog.
+      # `deploy:prepare` = migrate + generate + danh mục tài khoản + role/admin + quyền.
+      # Đúng chuỗi bước phải chạy khi deploy thật, nên CI kiểm tra luôn chuỗi đó.
+      - name: Prepare database (same steps as deploy)
+        run: npm run deploy:prepare
+
+      - name: Seed units + catalog (e2e cần đơn vị/nguyên liệu/món)
+        run: |
+          npx ts-node -r tsconfig-paths/register src/scripts/ScriptOfSystem/unit.seed.ts
+          npx ts-node -r tsconfig-paths/register src/scripts/ScriptOfSystem/catalog.seed.ts
+
+      - name: E2E
+        run: npx jest --config ./test/jest-e2e.json --runInBand --silent

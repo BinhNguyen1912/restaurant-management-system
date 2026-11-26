@@ -1,0 +1,51 @@
+name: CI
+
+# Chạy cho mọi PR vào main và mọi push lên main.
+# Vì sao: trong một phiên làm việc đã có 3 lỗi chỉ test bắt được (branchId undefined -> 500,
+# route mới -> 403, bàn chưa mở vẫn đặt món). Không có CI thì những lỗi đó vào thẳng main.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  typecheck-and-unit:
+    name: Typecheck + unit test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # `src/shared/config.ts` bắt buộc có file .env (không có là process.exit(1)), nên tạo từ
+      # .env.example. Đây chỉ là giá trị giả — unit test không kết nối DB thật.
+      - run: cp .env.example .env
+
+      # Prisma client phải được generate trước khi tsc, nếu không type của prisma không có.
+      - run: npx prisma generate
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        run: npx jest --ci --silent
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: cp .env.example .env
+      - run: npx prisma generate
+      - run: npm run build
