@@ -805,6 +805,13 @@ export class SharedOrdersRepo {
     actorRole?: string | null
   }): Promise<UpdateOrderResType> {
     const { orderId, skuId, quantity, status, reason, discountTotal } = data
+    // Chốt chặn thứ 2: "đã trả tiền" chỉ được đặt qua luồng thanh toán (xem UpdateOrderSchema).
+    // Nếu chỉ dựa vào schema, ai đó nới enum ra là lỗ hổng mở lại mà không ai nhớ vì sao.
+    // (status đã bị schema loại, so sánh qua string để giữ chốt chặn runtime nếu schema bị nới)
+    const nextStatus = String(status)
+    if (nextStatus === OrderStatus.PAID || nextStatus === OrderStatus.COMPLETED) {
+      throw new BadRequestException('Error.OrderStatusChangedOnlyByPayment')
+    }
     const cancelled = status === OrderStatus.CANCELLED
     // Huỷ đơn / hoàn tiền mà không có lý do thì không giải trình được gì (ticket #10)
     if (cancelled && !reason?.trim()) {

@@ -76,15 +76,22 @@ export const OrderResSchema = OrderSchema.extend({
 })
 export const CreateNewOrderSchema = z.array(OrderItemSchema)
 
+/**
+ * Đổi trạng thái đơn qua `PUT /orders/:id` — **KHÔNG** cho đặt PAID/COMPLETED.
+ *
+ * Vì sao: đường này chỉ ghi `order.status`, **không** tạo `Payment`, **không** ghi bút toán sổ cái,
+ * **không** tính giá vốn. Mà báo cáo/ca két/sổ quỹ đều đọc từ sổ cái, nên một đơn bị "đánh dấu đã
+ * trả tiền" ở đây sẽ **biến mất khỏi doanh thu** mà tiền mặt vẫn nằm trong két — lệch sổ không ai
+ * thấy. Trạng thái "đã trả" chỉ được đặt bởi luồng thanh toán (`/orders/pay-*`, VNPay IPN).
+ * STAFF có quyền PUT /orders nên lỗ hổng này reachable bằng một tài khoản nhân viên bình thường.
+ */
 export const UpdateOrderSchema = z.object({
   status: z.enum([
     OrderStatus.PENDING,
     OrderStatus.CONFIRMED,
     OrderStatus.PREPARING,
     OrderStatus.READY,
-    OrderStatus.COMPLETED,
     OrderStatus.CANCELLED,
-    OrderStatus.PAID,
   ]),
   quantity: z.number(),
   skuId: z.number(),

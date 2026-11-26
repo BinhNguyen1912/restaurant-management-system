@@ -31,15 +31,27 @@ docker compose --env-file .env.production up -d postgres redis
 ## Deploy
 
 ```bash
-# 0. BACKUP TRƯỚC KHI DEPLOY — mất dữ liệu hay xảy ra lúc migrate, không phải lúc ổ hỏng
+# 0. BACKUP trước khi deploy (bỏ qua ở lần deploy ĐẦU TIÊN — chưa có DB/container để dump)
 ./deploy/backup/backup-postgres.sh
 
-# build + chạy API
-docker compose --env-file .env.production up -d --build be
+# 1. build image
+docker compose --env-file .env.production build be
 
-# BƯỚC QUAN TRỌNG: migration + seed nền + quyền — chạy MỘT LẦN mỗi lần deploy
+# 2. DB + Redis trước
+docker compose --env-file .env.production up -d postgres redis
+
+# 3. MIGRATION + SEED TRƯỚC KHI START API (thứ tự này quan trọng)
+#    App nạp cache tồn kho từ Postgres ngay trong onModuleInit; DB rỗng thì nó ném P2021,
+#    container thoát và `restart: unless-stopped` lặp vô hạn, Caddy trả 502 suốt thời gian đó.
 docker compose --env-file .env.production run --rm be npm run deploy:prepare:prod
+
+# 4. giờ mới start API
+docker compose --env-file .env.production up -d be
 ```
+
+> **Khôi phục từ backup / chạy `data:vn` trên máy đang chạy**: sau khi ghi DB phải
+> `docker compose restart be` (nạp lại cache từ Postgres) và chạy `npm run reconcile-inventory --fix`
+> để **Redis khớp lại tồn kho** — luồng bán hàng trừ kho trên Redis, không phải Postgres.
 
 `deploy:prepare:prod` = `prisma migrate deploy` → seed danh mục tài khoản → seed role + admin
 (idempotent, **không** đổi mật khẩu admin đã có) → `create-permissions`.
@@ -50,6 +62,15 @@ docker compose --env-file .env.production run --rm be npm run deploy:prepare:pro
 >
 > Nếu quên chạy: API vẫn lên nhưng **route mới trả 403 cho mọi vai trò**. Container sẽ in cảnh báo
 > ngay lúc khởi động: `⚠️ Có N route CHƯA có permission…`.
+
+## ⚠️ Mật khẩu trong bộ dữ liệu mẫu
+`npm run data:vn` tạo tài khoản với mật khẩu **`123456`**, **kể cả admin**. Đó là dữ liệu cho
+máy dev/demo — trước khi mở staging ra Internet phải:
+1. **đổi mật khẩu admin** (UI → Hồ sơ, hoặc `UPDATE "User" SET password=<bcrypt>`),
+2. khoá hoặc đổi mật khẩu 48 tài khoản `@order.com` nếu không dùng thật.
+
+`deploy:prepare:prod` **không** ghi đè mật khẩu admin đã tồn tại (`index.ts`) nên nó cũng không tự
+"cứu" trường hợp này.
 
 ## Proxy + HTTPS
 

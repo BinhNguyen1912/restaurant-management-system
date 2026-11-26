@@ -248,6 +248,12 @@ export class VnPayService {
         where = { guestId: targetId, deletedAt: null }
       } else if (prefixToOrder === prefixToOrderStatus.ONLINE || prefixToOrder === prefixToOrderStatus.RESERVATION) {
         where = { userId: targetId, deletedAt: null }
+      } else {
+        // Prefix lạ => `where` rỗng => câu query bên dưới sẽ chọn **mọi** đơn đang mở. Chữ ký VNPay
+        // đã được xác thực trước đó nên khó xảy ra, nhưng đây là chỗ một lần sơ suất thành lỗ hổng.
+        console.error('Unknown prefix in vnp_TxnRef:', vnp_TxnRef)
+        res.redirect(`${envConfig.FRONTEND_URL}/payment-error?error=unknown_txnref_prefix`)
+        return
       }
 
       // Chot lai so tien phai thu + danh sach don ngay luc tao URL (PaymentIntent).
