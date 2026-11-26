@@ -182,6 +182,29 @@ describe('Finance (e2e)', () => {
     adminUserId = loginUserId
   })
 
+  /**
+   * Tạo đơn cho khách và **ném lỗi kèm body** nếu không phải 2xx.
+   *
+   * Lý do: `.expect(201)` chỉ nói "got 400", không nói vì sao. Trên CI cần biết ngay lỗi nghiệp vụ
+   * nào (thiếu tồn kho, bàn chưa mở, voucher hết hạn…), vì thông điệp đó nằm trong body response.
+   */
+  const createGuestOrder = async (
+    guestId: number,
+    items: { skuId: number; quantity: number }[],
+    query = '',
+  ) => {
+    const response = await api()
+      .post(`/orders/create-order-for-guest/${guestId}${query}`)
+      .set(auth())
+      .send(items)
+    if (response.status !== 201) {
+      throw new Error(
+        `create-order-for-guest trả ${response.status}: ${JSON.stringify(response.body)} | items=${JSON.stringify(items)}`,
+      )
+    }
+    return response
+  }
+
   const attempt = async (label: string, run: () => Promise<unknown>) => {
     try {
       await run()
@@ -376,11 +399,7 @@ describe('Finance (e2e)', () => {
     const sku = await prisma.sKU.findFirst({ where: { product: { deletedAt: null, status: 'ACTIVE' } }, orderBy: { id: 'asc' } })
     expect(sku).toBeTruthy()
 
-    const order = await api()
-      .post(`/orders/create-order-for-guest/${guestId}`)
-      .set(auth())
-      .send([{ skuId: sku!.id, quantity: 2 }])
-      .expect(201)
+    const order = await createGuestOrder(guestId, [{ skuId: sku!.id, quantity: 2 }], '')
 
     const orderId = order.body.id as number
     created.orderIds.push(orderId)
@@ -520,11 +539,7 @@ describe('Finance (e2e)', () => {
     const guestId = guestLogin.body.guest.id as number
     created.guestIds.push(guestId)
     const sku = await prisma.sKU.findFirst({ where: { product: { deletedAt: null, status: 'ACTIVE' } }, orderBy: { id: 'asc' } })
-    const order = await api()
-      .post(`/orders/create-order-for-guest/${guestId}`)
-      .set(auth())
-      .send([{ skuId: sku!.id, quantity: 1 }])
-      .expect(201)
+    const order = await createGuestOrder(guestId, [{ skuId: sku!.id, quantity: 1 }], '')
     created.orderIds.push(order.body.id)
     created.paymentIds.push(order.body.paymentId)
     await api().get(`/orders/pay-orders-by-guest/${guestId}`).set(auth()).expect(200)
@@ -565,11 +580,7 @@ describe('Finance (e2e)', () => {
     const guestId = guestLogin.body.guest.id as number
     created.guestIds.push(guestId)
     const sku = await prisma.sKU.findFirst({ where: { product: { deletedAt: null, status: 'ACTIVE' } }, orderBy: { id: 'asc' } })
-    const order = await api()
-      .post(`/orders/create-order-for-guest/${guestId}`)
-      .set(auth())
-      .send([{ skuId: sku!.id, quantity: 1 }])
-      .expect(201)
+    const order = await createGuestOrder(guestId, [{ skuId: sku!.id, quantity: 1 }], '')
     const orderId = order.body.id as number
     created.orderIds.push(orderId)
     created.paymentIds.push(order.body.paymentId)
@@ -680,11 +691,7 @@ describe('Finance (e2e)', () => {
     created.voucherIds.push(voucher.id)
 
     const quantity = 2
-    const order = await api()
-      .post(`/orders/create-order-for-guest/${guestId}?voucherCode=${code}`)
-      .set(auth())
-      .send([{ skuId: sku!.id, quantity }])
-      .expect(201)
+    const order = await createGuestOrder(guestId, [{ skuId: sku!.id, quantity }], `?voucherCode=${code}`)
     created.orderIds.push(order.body.id)
     created.paymentIds.push(order.body.paymentId)
 
@@ -749,11 +756,7 @@ describe('Finance (e2e)', () => {
     created.guestIds.push(guestId)
 
     const sku = await prisma.sKU.findFirst({ where: { product: { deletedAt: null, status: 'ACTIVE' } }, orderBy: { id: 'asc' } })
-    const order = await api()
-      .post(`/orders/create-order-for-guest/${guestId}`)
-      .set(auth())
-      .send([{ skuId: sku!.id, quantity: 3 }])
-      .expect(201)
+    const order = await createGuestOrder(guestId, [{ skuId: sku!.id, quantity: 3 }], '')
     created.orderIds.push(order.body.id)
     created.paymentIds.push(order.body.paymentId)
 
@@ -789,11 +792,7 @@ describe('Finance (e2e)', () => {
     const guestId = guestLogin.body.guest.id as number
     created.guestIds.push(guestId)
     const sku = await prisma.sKU.findFirst({ where: { product: { deletedAt: null, status: 'ACTIVE' } }, orderBy: { id: 'asc' } })
-    const order = await api()
-      .post(`/orders/create-order-for-guest/${guestId}`)
-      .set(auth())
-      .send([{ skuId: sku!.id, quantity: 1 }])
-      .expect(201)
+    const order = await createGuestOrder(guestId, [{ skuId: sku!.id, quantity: 1 }], '')
     created.orderIds.push(order.body.id)
     created.paymentIds.push(order.body.paymentId)
 
@@ -1885,11 +1884,7 @@ describe('Finance (e2e)', () => {
 
     // dùng thật 2 lần -> usedCount = 2 (mỗi đơn phải vào created.* để teardown dọn sạch)
     for (let i = 0; i < 2; i += 1) {
-      const usedOrder = await api()
-        .post(`/orders/create-order-for-guest/${guestId}?voucherCode=${code}`)
-        .set(auth())
-        .send([{ skuId: sku!.id, quantity: 1 }])
-        .expect(201)
+      const usedOrder = await createGuestOrder(guestId, [{ skuId: sku!.id, quantity: 1 }], `?voucherCode=${code}`)
       created.orderIds.push(usedOrder.body.id)
       created.paymentIds.push(usedOrder.body.paymentId)
     }
