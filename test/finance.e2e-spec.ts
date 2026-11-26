@@ -20,6 +20,8 @@ describe('Finance (e2e)', () => {
   /** id admin, dùng để ghi `openedById` khi test mở bàn */
   let adminUserId: number
   /** trạng thái GỐC của các bàn test đã mở, để trả lại trong afterAll */
+  /** recipe có sẵn của sku dùng trong test COGS — tạm ẩn rồi trả lại */
+  const hiddenRecipeIds: number[] = []
   const originalTableStates = new Map<number, { status: string; openedAt: Date | null; openedById: number | null }>()
   const createdProbeEntries: number[] = []
   const created: { shiftIds: number[]; orderIds: number[]; paymentIds: number[]; guestIds: number[]; areaIds: number[]; branchIds: number[]; userIds: number[] } = {
@@ -302,6 +304,14 @@ describe('Finance (e2e)', () => {
     if (created.reservationIds.length) {
       await attempt('deposit settled entries', () => prisma.ledgerEntry.deleteMany({ where: { refType: 'DEPOSIT_SETTLED', refId: { in: created.reservationIds } } }))
       await attempt('reservations', () => prisma.reservation.deleteMany({ where: { id: { in: created.reservationIds } } }))
+    }
+    if (hiddenRecipeIds.length) {
+      await attempt('restore hidden recipes', () =>
+        prisma.sKURecipeIngredient.updateMany({
+          where: { id: { in: hiddenRecipeIds } },
+          data: { deletedAt: null },
+        }),
+      )
     }
     for (const [tableId, state] of originalTableStates) {
       await attempt(`restore table #${tableId}`, () =>
@@ -926,13 +936,25 @@ describe('Finance (e2e)', () => {
     const guestId = guestLogin.body.guest.id as number
     created.guestIds.push(guestId)
 
-    // 2 món khác nhau, mỗi món 1 recipe riêng
+    // 2 món khác nhau, mỗi món 1 recipe riêng.
+    // Bộ dữ liệu Việt Nam (data:vn) đã gán recipe cho MỌI sku, nên phải TẠM ẨN recipe cũ của 2 sku
+    // này trước khi gắn recipe của test — nếu không, COGS = recipe_test + recipe_thật và số không
+    // còn là 124.000 như test khẳng định.
     const skus = await prisma.sKU.findMany({
       where: { product: { deletedAt: null, status: 'ACTIVE' } },
       orderBy: { id: 'asc' },
       take: 2,
     })
     expect(skus.length).toBe(2)
+    const hiddenRecipes = await prisma.sKURecipeIngredient.findMany({
+      where: { skuId: { in: skus.map((sku) => sku.id) }, deletedAt: null },
+      select: { id: true },
+    })
+    hiddenRecipeIds.push(...hiddenRecipes.map((recipe) => recipe.id))
+    await prisma.sKURecipeIngredient.updateMany({
+      where: { id: { in: hiddenRecipes.map((recipe) => recipe.id) } },
+      data: { deletedAt: new Date() },
+    })
     const unit = await prisma.unit.findFirst({ where: { name: { in: ['kg', 'g'] } }, orderBy: { name: 'asc' } })
     const ingredientA = await prisma.ingredient.create({
       data: { name: `e2e bò ${Date.now()}`, unitId: unit!.name, stock: 10, unitCost: 300_000 },

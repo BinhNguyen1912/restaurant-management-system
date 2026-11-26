@@ -16,7 +16,13 @@ async function bootstrap() {
   })
   // Đóng Prisma/BullMQ/Redis đúng cách khi container nhận SIGTERM (ticket #04)
   app.enableShutdownHooks()
-  app.set('trust proxy', 'loopback')
+  /**
+   * Sau Caddy (hoặc proxy của PaaS), peer TCP là **IP container của proxy**, không phải client.
+   * `'loopback'` khiến Express bỏ qua `X-Forwarded-For` ⇒ mọi request bị coi là cùng 1 IP, nên
+   * throttler 40 req/phút dùng chung cho **tất cả người dùng** (một quán đông là 429 hàng loạt).
+   * `1` = tin đúng 1 lớp proxy phía trước, tức lấy IP thật của client.
+   */
+  app.set('trust proxy', 1)
 
   const reflector = app.get(Reflector)
   app.useGlobalPipes(new CustomZodValidationPipe())
@@ -31,8 +37,13 @@ async function bootstrap() {
     .split(',')
     .map((origin) => origin.trim())
     .filter(Boolean)
+  // Production mà thiếu FRONTEND_URL thì **dừng**, không âm thầm nới thành '*': cấu hình sai một
+  // chữ mà mọi site gọi được API là kiểu lỗi không ai phát hiện.
+  if (process.env.NODE_ENV === 'production' && allowedOrigins.length === 0) {
+    throw new Error('FRONTEND_URL chưa được cấu hình — bắt buộc ở production để whitelist CORS')
+  }
   app.enableCors({
-    origin: process.env.NODE_ENV === 'production' && allowedOrigins.length > 0 ? allowedOrigins : '*',
+    origin: process.env.NODE_ENV === 'production' ? allowedOrigins : true,
     credentials: true,
   })
   app.use(helmet()) //

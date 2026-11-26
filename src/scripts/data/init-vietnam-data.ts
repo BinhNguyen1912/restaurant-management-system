@@ -637,6 +637,13 @@ async function main() {
     dinhLuong: await prisma.sKURecipeIngredient.count({ where: { deletedAt: null } }),
     phieuNhap: await prisma.stockReceipt.count(),
   }
+  console.log(
+    '\n⚠️  Mọi tài khoản trong bộ dữ liệu này dùng mật khẩu "123456" (kể cả admin).\n' +
+      '    Đây là dữ liệu cho máy dev/demo. Trước khi mở staging ra Internet:\n' +
+      '      1. đổi mật khẩu admin (UI → Hồ sơ, hoặc UPDATE "User" SET password=<bcrypt>)\n' +
+      '      2. khoá/đổi mật khẩu 48 tài khoản @order.com nếu không dùng thật',
+  )
+
   console.log('\n=== TỔNG KẾT ===')
   for (const [key, value] of Object.entries(summary)) console.log(`  ${key}: ${value}`)
 }

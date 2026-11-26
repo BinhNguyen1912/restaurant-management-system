@@ -17,6 +17,26 @@ if (fs.existsSync(envFilePath)) {
   config({ path: envFilePath })
 }
 
+/**
+ * Khoá bí mật.
+ *
+ * **Production** (container/staging/VPS): bắt buộc ≥ 32 ký tự và không phải giá trị mẫu trong repo
+ * — copy nguyên `.env.production.example` mà chạy thì ai cũng ký được token ADMIN.
+ * **Dev**: chỉ cần có giá trị. `.env` trên máy dev đang dùng khoá ngắn cho tiện; nếu chặn ở đây thì
+ * cả `npm run dev` lẫn unit test đều chết ngay khi import config (đã xảy ra), mà dev thì không có
+ * ai tấn công.
+ */
+const isProduction = process.env.NODE_ENV === 'production'
+const secretSchema = (name: string) =>
+  isProduction
+    ? z
+        .string()
+        .min(32, `${name} phải dài tối thiểu 32 ký tự`)
+        .refine((value) => !/^(thay_bang|doi_thanh|change_me|xxxx)/i.test(value.trim()), {
+          message: `${name} vẫn là giá trị mẫu trong repo — tạo khoá thật: openssl rand -hex 32`,
+        })
+    : z.string().min(1, `${name} không được để trống`)
+
 const configSchema = z.object({
   PORT: z.string(),
   DATABASE_URL: z.string(),
@@ -26,8 +46,16 @@ const configSchema = z.object({
   ADMIN_ID: z.string(),
   OTP_EXPIRES_IN: z.string().default('5m'),
   RESEND_API_KEY: z.string().min(10),
-  ACCESS_TOKEN_SECRET: z.string(),
-  REFRESH_TOKEN_SECRET: z.string(),
+  /**
+   * Hai khoá ký JWT: **bắt buộc đủ mạnh**.
+   *
+   * Trước đây chỉ `z.string()` nên copy nguyên `.env.production.example`
+   * (`ACCESS_TOKEN_SECRET=thay_bang_chuoi_ngau_nhien_32_ky_tu`) là app vẫn chạy — với một khoá đã
+   * **công khai trong repo**, ai cũng ký được token ADMIN. Chặn ở đây: tối thiểu 32 ký tự và
+   * không chấp nhận chuỗi mẫu.
+   */
+  ACCESS_TOKEN_SECRET: secretSchema('ACCESS_TOKEN_SECRET'),
+  REFRESH_TOKEN_SECRET: secretSchema('REFRESH_TOKEN_SECRET'),
   ACCESS_TOKEN_EXPIRES_IN: z.string(),
   REFRESH_TOKEN_EXPIRES_IN: z.string(),
   PAYMENT_API_KEY: z.string(),

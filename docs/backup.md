@@ -56,8 +56,9 @@ docker exec res-mana-postgres psql -U postgres -d ecommerce_restore_test -c 'sel
 ./deploy/backup/restore-postgres.sh backups/ecommerce-YYYYmmdd-HHMMSS.sql.gz
 docker compose restart be
 
-# 4. Redis: tồn kho dựng lại từ DB
-npm run reconcile
+# 4. Redis: tồn kho dựng lại từ DB (BẮT BUỘC — luồng bán hàng trừ kho trên Redis)
+docker compose restart be
+npm run reconcile-inventory --fix
 ```
 
 > Backup chưa từng được **phục hồi thử** thì chưa được coi là backup. Diễn tập mỗi quý.
