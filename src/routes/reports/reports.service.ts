@@ -258,7 +258,9 @@ export class ReportsService {
       message: 'Success.RevenueByItem',
       fromDate: from,
       toDate: to,
-      branchId,
+      // ADMIN xem tổng -> `undefined`; schema là `number | null` nên PHẢI là null.
+      // `undefined` làm ZodSerializer ném "expected number, received undefined" -> 500.
+      branchId: branchId ?? null,
       rows: rows.map((row) => ({
         productId: row.productId,
         name: row.name,
