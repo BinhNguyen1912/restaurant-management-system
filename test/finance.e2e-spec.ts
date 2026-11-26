@@ -986,6 +986,36 @@ describe('Finance (e2e)', () => {
     expect(typeof recompute.body.written).toBe('number')
   })
 
+  it('danh sách nhân viên: trả kèm chi nhánh của từng người (cột Chi nhánh trên bảng)', async () => {
+    const staffRole = await prisma.role.findFirst({ where: { name: 'STAFF' } })
+    const branch = await prisma.branch.findFirst({ where: { isActive: true }, orderBy: { id: 'asc' } })
+    const email = `e2e-listbranch-${Date.now()}@example.com`
+
+    const createdUser = await api()
+      .post('/users')
+      .set(auth())
+      .send({
+        email,
+        password: '123456',
+        name: 'NV Co Chi Nhanh',
+        roleId: staffRole!.id,
+        branchId: branch!.id,
+        status: 'ACTIVE',
+      })
+      .expect(201)
+    created.userIds.push(createdUser.body.id)
+
+    const list = await api().get('/users?limit=100').set(auth()).expect(200)
+    const row = (list.body.data as any[]).find((user) => user.id === createdUser.body.id)
+
+    // Trước đây `branch` có trong repo include nhưng bị ZodSerializerDto cắt vì schema response
+    // không khai báo -> bảng nhân viên không có chi nhánh, và không có lỗi nào báo.
+    expect(row).toBeTruthy()
+    expect(row.branch).toEqual(
+      expect.objectContaining({ id: branch!.id, code: branch!.code, name: branch!.name }),
+    )
+  })
+
   it('nhật ký quyền: đổi quyền của role và đổi chi nhánh của nhân viên đều được ghi lại', async () => {
     const staffRole = await prisma.role.findFirst({ where: { name: 'STAFF' } })
     const branches = await prisma.branch.findMany({ where: { isActive: true }, orderBy: { id: 'asc' }, take: 2 })
