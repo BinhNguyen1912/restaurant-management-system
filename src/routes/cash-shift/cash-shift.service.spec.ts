@@ -158,7 +158,12 @@ describe('CashShiftService.addMovement — chứng từ', () => {
   it('chi tay -> bút toán Nợ OTHER_EXPENSE / Có CASH (vào sổ cái)', async () => {
     const { service, ledgerPosting } = makeService()
 
-    const result = await service.addMovement(7, staff, { type: 'OUT', reason: 'mua đá', amount: 50_000 })
+    const result = (await service.addMovement(7, staff, {
+      type: 'OUT',
+      reason: 'mua đá',
+      amount: 50_000,
+      evidenceUrls: [],
+    })) as any
 
     expect(ledgerPosting.postEntry).toHaveBeenCalledTimes(1)
     const entry = ledgerPosting.postEntry.mock.calls[0][0]
@@ -176,7 +181,7 @@ describe('CashShiftService.addMovement — chứng từ', () => {
   it('thu tay -> bút toán Nợ CASH / Có OTHER_INCOME', async () => {
     const { service, ledgerPosting } = makeService()
 
-    await service.addMovement(7, staff, { type: 'IN', reason: 'thu khác', amount: 300_000 })
+    await service.addMovement(7, staff, { type: 'IN', reason: 'thu khác', amount: 300_000, evidenceUrls: [] })
 
     const entry = ledgerPosting.postEntry.mock.calls[0][0]
     expect(entry.lines).toEqual([
