@@ -986,6 +986,66 @@ describe('Finance (e2e)', () => {
     expect(typeof recompute.body.written).toBe('number')
   })
 
+  it('chi nhánh là bắt buộc với nhân viên: thiếu thì 400, bỏ gán (null) cũng 400, ADMIN thì không cần', async () => {
+    const staffRole = await prisma.role.findFirst({ where: { name: 'STAFF' } })
+    const branch = await prisma.branch.findFirst({ where: { isActive: true }, orderBy: { id: 'asc' } })
+    const email = `e2e-reqbranch-${Date.now()}@example.com`
+
+    // 1. tạo nhân viên KHÔNG chọn chi nhánh -> 400 với mã lỗi rõ ràng
+    const bad = await api()
+      .post('/users')
+      .set(auth())
+      .send({ email, password: '123456', name: 'NV Thieu Chi Nhanh', roleId: staffRole!.id, status: 'ACTIVE' })
+      .expect(400)
+    expect(bad.body.message).toBe('Error.BranchRequiredForEmployee')
+
+    // 2. có chi nhánh -> tạo được
+    const ok = await api()
+      .post('/users')
+      .set(auth())
+      .send({
+        email,
+        password: '123456',
+        name: 'NV Du Chi Nhanh',
+        roleId: staffRole!.id,
+        branchId: branch!.id,
+        status: 'ACTIVE',
+      })
+      .expect(201)
+    created.userIds.push(ok.body.id)
+
+    // 3. bỏ gán chi nhánh của nhân viên -> 400 (không cho quay về trạng thái vô chủ)
+    await api()
+      .put(`/users/${ok.body.id}`)
+      .set(auth())
+      .send({
+        email,
+        name: 'NV Du Chi Nhanh',
+        roleId: staffRole!.id,
+        branchId: null,
+        status: 'ACTIVE',
+        changePassword: false,
+      })
+      .expect(400)
+
+    // 4. ADMIN là cấp tổng: không có chi nhánh vẫn hợp lệ (tạo admin mới không bị chặn)
+    const adminRole = await prisma.role.findFirst({ where: { name: 'ADMIN' } })
+    const adminEmail = `e2e-admin-nobranch-${Date.now()}@example.com`
+    const createdAdmin = await api()
+      .post('/users')
+      .set(auth())
+      .send({
+        email: adminEmail,
+        password: '123456',
+        name: 'Admin Khong Chi Nhanh',
+        roleId: adminRole!.id,
+        status: 'ACTIVE',
+      })
+      .expect(201)
+    created.userIds.push(createdAdmin.body.id)
+    expect(createdAdmin.body.branchId).toBeNull()
+  })
+
   it('danh sách nhân viên: trả kèm chi nhánh của từng người (cột Chi nhánh trên bảng)', async () => {
     const staffRole = await prisma.role.findFirst({ where: { name: 'STAFF' } })
     const branch = await prisma.branch.findFirst({ where: { isActive: true }, orderBy: { id: 'asc' } })
@@ -1106,13 +1166,24 @@ describe('Finance (e2e)', () => {
 
   it('phạm vi chi nhánh: người CHƯA gán chi nhánh bị từ chối thay vì thấy dữ liệu toàn hệ thống', async () => {
     const readerRole = await prisma.role.findFirst({ where: { name: 'KE_TOAN' } })
+    const branch = await prisma.branch.findFirst({ where: { isActive: true }, orderBy: { id: 'asc' } })
     const email = `e2e-nobranch-${Date.now()}@example.com`
     const createdUser = await api()
       .post('/users')
       .set(auth())
-      .send({ email, password: '123456', name: 'KT Khong Chi Nhanh', roleId: readerRole!.id, status: 'ACTIVE' })
+      .send({
+        email,
+        password: '123456',
+        name: 'KT Khong Chi Nhanh',
+        roleId: readerRole!.id,
+        branchId: branch!.id,
+        status: 'ACTIVE',
+      })
       .expect(201)
     created.userIds.push(createdUser.body.id)
+    // API giờ KHÔNG cho tạo nhân viên thiếu chi nhánh, nên gỡ trực tiếp trong DB để mô phỏng
+    // dữ liệu cũ (tạo trước khi có ràng buộc) — đúng tình huống cần bảo vệ.
+    await prisma.user.update({ where: { id: createdUser.body.id }, data: { branchId: null } })
 
     const token = (await api().post('/auth/login').send({ email, password: '123456' }).expect(201)).body
       .accessToken as string
@@ -1165,7 +1236,14 @@ describe('Finance (e2e)', () => {
     const staffRes = await api()
       .post('/users')
       .set(auth())
-      .send({ email, password: '123456', name: 'NV Phân Quyền', roleId: staffRole!.id, status: 'ACTIVE' })
+      .send({
+        email,
+        password: '123456',
+        name: 'NV Phân Quyền',
+        roleId: staffRole!.id,
+        branchId: (await prisma.branch.findFirst({ where: { isActive: true }, orderBy: { id: 'asc' } }))!.id,
+        status: 'ACTIVE',
+      })
       .expect(201)
     const userId = staffRes.body.id as number
     created.userIds.push(userId)
@@ -1254,8 +1332,9 @@ describe('Finance (e2e)', () => {
     expect(login.body.user.branchId).toBe(branchId)
     expect(login.body.user.branch).toEqual(expect.objectContaining({ id: branchId, name: 'Chi nhánh E2E (sửa)' }))
 
-    // BỎ GÁN chi nhánh (branchId = null) phải lưu thật vào DB — trước đây service bóc danh sách
-    // trường cố định nên nuốt mất branchId: API trả 200 mà chi nhánh vẫn còn.
+    // BỎ GÁN chi nhánh: trước đây service bóc danh sách trường cố định nên nuốt mất branchId
+    // (API 200 mà DB không đổi). Giờ chi nhánh là BẮT BUỘC với nhân viên nên phải bị từ chối 400,
+    // và DB phải giữ nguyên chi nhánh cũ — không được "nửa vời" (400 mà vẫn xoá).
     const userId = created.userIds[created.userIds.length - 1]
     await api()
       .put(`/users/${userId}`)
@@ -1268,8 +1347,8 @@ describe('Finance (e2e)', () => {
         status: 'ACTIVE',
         changePassword: false,
       })
-      .expect(200)
-    expect((await prisma.user.findUnique({ where: { id: userId } }))?.branchId).toBeNull()
+      .expect(400)
+    expect((await prisma.user.findUnique({ where: { id: userId } }))?.branchId).toBe(branchId)
 
     // gán lại cũng phải lưu được (chiều ngược lại của cùng một lỗi)
     await api()

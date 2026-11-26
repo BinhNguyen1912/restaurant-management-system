@@ -15,7 +15,7 @@ import { HashingService } from '@/shared/service/hashing.service'
 import { SharedGuestRepo } from '@/shared/shared-repository/shared-guest.repo'
 import { SharedRoleRepo } from '@/shared/shared-repository/shared-role.repo'
 import { SharedUserRepo } from '@/shared/shared-repository/shared-user.repo'
-import { Injectable, UnauthorizedException } from '@nestjs/common'
+import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common'
 import { AuditLogService } from '@/shared/service/audit-log.service'
 
 @Injectable()
@@ -61,6 +61,30 @@ export class UsersService {
     })
   }
 
+  /**
+   * Chi nhánh là **bắt buộc** với tài khoản nhân viên, trừ ADMIN.
+   *
+   * Vì sao bắt buộc: chi nhánh quyết định dữ liệu người đó đọc được. Tạo nhân viên không có chi
+   * nhánh thì họ đăng nhập được nhưng mọi endpoint tài chính trả 403 — rất khó hiểu, và là lỗi
+   * cấu hình chứ không phải lỗi nghiệp vụ.
+   * ADMIN là cấp tổng nên KHÔNG gán chi nhánh (gán cũng không có tác dụng: admin luôn thấy tất cả).
+   */
+  private assertBranchForEmployee(roleNameValue: string, branchId?: number | null) {
+    if (roleNameValue === roleName.ADMIN) return
+    if (!branchId) throw new BadRequestException('Error.BranchRequiredForEmployee')
+  }
+
+  /**
+   * Update: chỉ chặn khi cố tình **bỏ trống** chi nhánh (`branchId = null`).
+   * Không gửi `branchId` = "giữ nguyên", nên sửa tên nhân viên cũ (đang null) vẫn làm được.
+   */
+  private async assertBranchOnUpdate(userId: number, nextRoleId: number, branchId?: number | null) {
+    if (branchId !== null) return
+    const role = await this.sharedRoleRepo.findRoleById({ id: nextRoleId, deletedAt: null })
+    if (role?.name === roleName.ADMIN) return
+    throw new BadRequestException('Error.BranchRequiredForEmployee')
+  }
+
   async verifyRole({ roleNameAgent, roleIdTaget }: { roleNameAgent: string; roleIdTaget: number }) {
     if (roleNameAgent == roleName.ADMIN) return true
     else {
@@ -89,6 +113,7 @@ export class UsersService {
       })
       if (!role) throw RoleNotFoundException
       await this.verifyRole({ roleNameAgent: roleName, roleIdTaget: roleId })
+      this.assertBranchForEmployee(role.name, body.branchId)
       const Hashpassword = await this.hashingservice.hashPassword(password)
       const created = await this.userRepository.createUser({ ...body, password: Hashpassword, createdById })
       await this.recordAccessChange({
@@ -148,6 +173,7 @@ export class UsersService {
 
         // Kiểm tra quyền hiện tại so với quyền mục tiêu
         await this.verifyRole({ roleNameAgent: updateByRoleName, roleIdTaget: currentUser.roleId })
+        await this.assertBranchOnUpdate(id, roleId ?? currentUser.roleId, branchId)
 
         //Kiểm tra người update có quyền được update người khác không
         if (data.roleId && data.roleId != currentUser.roleId) {
@@ -182,6 +208,7 @@ export class UsersService {
 
         // Kiểm tra quyền hiện tại so với quyền mục tiêu
         await this.verifyRole({ roleNameAgent: updateByRoleName, roleIdTaget: currentUser.roleId })
+        await this.assertBranchOnUpdate(id, roleId ?? currentUser.roleId, branchId)
 
         //Kiểm tra người update có quyền được update người khác không
         if (data.roleId && data.roleId != currentUser.roleId) {
