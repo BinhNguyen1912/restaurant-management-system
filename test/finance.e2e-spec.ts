@@ -886,15 +886,101 @@ describe('Finance (e2e)', () => {
     expect(report.body.totals.cogs).toBeGreaterThanOrEqual(124_000)
   })
 
+  it('phạm vi chi nhánh: nhân viên chỉ đọc được sổ quỹ/sổ cái của chi nhánh mình, client gửi branchId khác bị bỏ qua', async () => {
+    // phải dùng vai trò CÓ quyền LEDGER (STAFF cố tình không có LEDGER) — nếu không thì
+    // 403 đến từ phân quyền chứ không phải từ phạm vi chi nhánh, test sẽ vô nghĩa
+    const readerRole = await prisma.role.findFirst({ where: { name: 'KE_TOAN' } })
+    const branches = await prisma.branch.findMany({ where: { isActive: true }, orderBy: { id: 'asc' }, take: 2 })
+    expect(branches.length).toBeGreaterThanOrEqual(2)
+    const [branchA, branchB] = branches
+
+    const email = `e2e-scope-${Date.now()}@example.com`
+    const createdUser = await api()
+      .post('/users')
+      .set(auth())
+      .send({
+        email,
+        password: '123456',
+        name: 'Ke Toan Chi Nhanh A',
+        roleId: readerRole!.id,
+        branchId: branchA.id,
+        status: 'ACTIVE',
+      })
+      .expect(201)
+    created.userIds.push(createdUser.body.id)
+
+    const token = (await api().post('/auth/login').send({ email, password: '123456' }).expect(201)).body
+      .accessToken as string
+    const asStaff = () => ({ Authorization: `Bearer ${token}` })
+
+    // ADMIN xem riêng chi nhánh A -> đây là "đáp án đúng"
+    const adminA = await api().get(`/ledger/cash-book?branchId=${branchA.id}`).set(auth()).expect(200)
+    const adminB = await api().get(`/ledger/cash-book?branchId=${branchB.id}`).set(auth()).expect(200)
+    expect(adminA.body.data.branchId).toBe(branchA.id)
+    // chứng minh phép so sánh có ý nghĩa: chi nhánh A phải KHÁC chi nhánh B
+    // (nếu cả hai đều 0 thì mọi assert bên dưới đều đúng một cách vô nghĩa)
+    expect(adminA.body.data.total.closing).not.toEqual(adminB.body.data.total.closing)
+
+    // nhân viên chi nhánh A, KHÔNG truyền gì -> phải ra đúng số của A (không phải tổng 2 chi nhánh)
+    const staffDefault = await api().get('/ledger/cash-book').set(asStaff()).expect(200)
+    expect(staffDefault.body.data.branchId).toBe(branchA.id)
+    expect(staffDefault.body.data.total).toEqual(adminA.body.data.total)
+
+    // nhân viên A cố tình xin chi nhánh B -> bị ép về A
+    const staffAskB = await api().get(`/ledger/cash-book?branchId=${branchB.id}`).set(asStaff()).expect(200)
+    expect(staffAskB.body.data.branchId).toBe(branchA.id)
+    expect(staffAskB.body.data.total).toEqual(adminA.body.data.total)
+
+    // ADMIN không truyền branchId -> thấy toàn hệ thống (tổng >= từng chi nhánh)
+    const adminAll = await api().get('/ledger/cash-book').set(auth()).expect(200)
+    expect(adminAll.body.data.branchId).toBeNull()
+    expect(adminAll.body.data.total.closing).toBeGreaterThanOrEqual(adminA.body.data.total.closing)
+
+    // nhật ký sổ cái cũng bị giới hạn: mọi dòng trả về phải thuộc chi nhánh của nhân viên
+    // (chỉ kiểm khi chi nhánh B thật sự có bút toán, nếu không test sẽ vô nghĩa)
+    const adminEntryB = await api().get(`/ledger/entries?branchId=${branchB.id}&limit=1`).set(auth()).expect(200)
+    if (adminEntryB.body.data.length > 0) {
+      const staffEntries = await api().get(`/ledger/entries?branchId=${branchB.id}&limit=100`).set(asStaff()).expect(200)
+      const ids = (staffEntries.body.data as any[]).map((entry) => entry.id)
+      expect(ids).not.toContain(adminEntryB.body.data[0].id)
+    }
+  })
+
+  it('phạm vi chi nhánh: người CHƯA gán chi nhánh bị từ chối thay vì thấy dữ liệu toàn hệ thống', async () => {
+    const readerRole = await prisma.role.findFirst({ where: { name: 'KE_TOAN' } })
+    const email = `e2e-nobranch-${Date.now()}@example.com`
+    const createdUser = await api()
+      .post('/users')
+      .set(auth())
+      .send({ email, password: '123456', name: 'KT Khong Chi Nhanh', roleId: readerRole!.id, status: 'ACTIVE' })
+      .expect(201)
+    created.userIds.push(createdUser.body.id)
+
+    const token = (await api().post('/auth/login').send({ email, password: '123456' }).expect(201)).body
+      .accessToken as string
+
+    await api().get('/ledger/cash-book').set({ Authorization: `Bearer ${token}` }).expect(403)
+    await api().get('/ledger/entries').set({ Authorization: `Bearer ${token}` }).expect(403)
+  })
+
   it('vai trò đặt sẵn KE_TOAN: đọc được sổ quỹ / báo cáo, không ghi được đơn hay xem nhân viên', async () => {
     const role = await prisma.role.findFirst({ where: { name: 'KE_TOAN' } })
     expect(role).toBeTruthy()
+    // phải gán chi nhánh: chưa gán thì đọc sổ quỹ bị 403 (đúng thiết kế phạm vi chi nhánh)
+    const branch = await prisma.branch.findFirst({ where: { isActive: true }, orderBy: { id: 'asc' } })
 
     const email = `e2e-kt-${Date.now()}@example.com`
     const createdUser = await api()
       .post('/users')
       .set(auth())
-      .send({ email, password: '123456', name: 'Ke Toan E2E', roleId: role!.id, status: 'ACTIVE' })
+      .send({
+        email,
+        password: '123456',
+        name: 'Ke Toan E2E',
+        roleId: role!.id,
+        branchId: branch!.id,
+        status: 'ACTIVE',
+      })
       .expect(201)
     created.userIds.push(createdUser.body.id)
 

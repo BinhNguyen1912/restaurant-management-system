@@ -12,6 +12,7 @@ import { LedgerIntegrityService } from '@/shared/service/ledger-integrity.servic
 import { LedgerPostingService } from '@/shared/service/ledger-posting.service'
 import { PrismaService } from '@/shared/service/prisma.service'
 import { toMoneyNumbers } from '@/shared/service/money-serializer'
+import { resolveBranchScope } from '@/shared/service/branch.resolver'
 
 /**
  * Nhật ký sổ cái + kiểm tra cân đối.
@@ -31,20 +32,26 @@ export class LedgerEntryService {
     private readonly prismaService: PrismaService,
   ) {}
 
-  async list(query: LedgerEntryQueryType) {
-    return toMoneyNumbers(await this.repo.list(query))
+  async list(query: LedgerEntryQueryType, actor?: { userId?: number | null; roleName?: string | null }) {
+    const branchId = await resolveBranchScope(this.prismaService, actor, query.branchId)
+    return toMoneyNumbers(await this.repo.list({ ...query, branchId }))
   }
 
   /**
    * Sổ quỹ: mỗi tài khoản quỹ 4 con số (đầu kỳ / thu / chi / tồn) + dòng tổng.
    * Không truyền kỳ thì lấy tháng hiện tại — đúng câu hỏi "tháng này quỹ còn bao nhiêu".
    */
-  async cashBook(query: CashBookQueryType) {
+  async cashBook(
+    query: CashBookQueryType,
+    actor?: { userId?: number | null; roleName?: string | null },
+  ) {
     const today = new Date()
     const fromDate = query.fromDate ?? new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10)
     const toDate = query.toDate ?? today.toISOString().slice(0, 10)
 
-    const accounts = await this.repo.cashBook({ ...query, fromDate, toDate })
+    // Người không phải ADMIN: bỏ qua `branchId` client gửi, ép về chi nhánh của họ.
+    const branchId = await resolveBranchScope(this.prismaService, actor, query.branchId)
+    const accounts = await this.repo.cashBook({ ...query, branchId, fromDate, toDate })
     const total = accounts.reduce(
       (acc, account) => ({
         opening: acc.opening + account.opening,
@@ -57,7 +64,7 @@ export class LedgerEntryService {
 
     return toMoneyNumbers({
       message: 'Success.CashBook',
-      data: { fromDate, toDate, branchId: query.branchId ?? null, accounts, total },
+      data: { fromDate, toDate, branchId: branchId ?? null, accounts, total },
     })
   }
 

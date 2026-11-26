@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common'
+import { BadRequestException, ForbiddenException } from '@nestjs/common'
 import { PrismaService } from '@/shared/service/prisma.service'
 import { roleName } from '@/shared/constants/role.constant'
 
@@ -84,4 +84,34 @@ export async function resolveBranchId(
 
   if (!branch) throw new BadRequestException('Error.BranchNotConfigured')
   return branch.id
+}
+
+/**
+ * Phạm vi chi nhánh cho endpoint **ĐỌC** dữ liệu nhạy cảm (sổ cái, sổ quỹ, báo cáo).
+ *
+ * Khác `resolveBranchId` ở chỗ: `resolveBranchId` luôn trả về một chi nhánh (fallback chi nhánh
+ * đầu tiên) vì nó dùng để GHI dữ liệu. Hàm này dùng để LỌC khi đọc, nên phải phân biệt 2 ý:
+ *  - `undefined` = không lọc (ADMIN xem toàn hệ thống),
+ *  - một id       = chỉ xem chi nhánh đó.
+ *
+ * Với người KHÔNG phải ADMIN: **bỏ qua `requested`**; luôn ép về chi nhánh của chính họ.
+ * Không có chi nhánh nào thì **từ chối** thay vì trả toàn bộ dữ liệu — im lặng trả hết là lỗi
+ * lộ dữ liệu, tệ hơn nhiều so với một câu 403 dễ hiểu.
+ */
+export async function resolveBranchScope(
+  prisma: PrismaService | PrismaLike,
+  options: { userId?: number | null; roleName?: string | null } = {},
+  requested?: number | null,
+): Promise<number | undefined> {
+  if (options.roleName === roleName.ADMIN) return requested ?? undefined
+
+  const client = prisma as PrismaLike
+  if (!options.userId) throw new ForbiddenException('Error.PermissionDenied')
+
+  const user = await client.user.findUnique({
+    where: { id: options.userId },
+    select: { branchId: true },
+  })
+  if (!user?.branchId) throw new ForbiddenException('Error.BranchNotAssigned')
+  return user.branchId
 }

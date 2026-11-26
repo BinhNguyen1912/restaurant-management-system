@@ -15,6 +15,8 @@ export class LedgerEntryRepo {
   private buildWhere(query: LedgerEntryQueryType): Prisma.LedgerEntryWhereInput {
     const where: Prisma.LedgerEntryWhereInput = {}
 
+    // phạm vi chi nhánh do service quyết định (ADMIN có thể xem tất cả, người khác bị ép)
+    if (query.branchId) where.branchId = query.branchId
     if (query.status) where.status = query.status
     if (query.refType) where.refType = query.refType
     if (query.accountCode) where.lines = { some: { account: { code: query.accountCode } } }

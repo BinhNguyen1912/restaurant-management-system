@@ -62,6 +62,8 @@ export const LedgerEntryQuerySchema = z.object({
   accountCode: z.string().trim().toUpperCase().optional(),
   /** tìm trong memo / idempotencyKey / refId */
   search: z.string().trim().optional(),
+  /** ADMIN lọc được theo chi nhánh; người khác luôn bị ép về chi nhánh của mình */
+  branchId: z.coerce.number().int().positive().optional(),
 })
 
 export const LedgerEntryListResSchema = z.object({

@@ -1,6 +1,8 @@
 import { Body, Controller, Get, Post, Query } from '@nestjs/common'
 import { ZodSerializerDto } from 'nestjs-zod'
 import { LedgerEntryService } from '@/routes/ledger-entry/ledger-entry.service'
+import { ActiveUser } from '@/shared/decorators/active-user.decorator'
+import { AccessTokenPayload } from '@/shared/types/jwt.types'
 import {
   CashBookQueryDTO,
   CashBookResDTO,
@@ -19,15 +21,15 @@ export class LedgerEntryController {
   /** Nhật ký bút toán (audit): mỗi bút toán kèm dòng Nợ/Có */
   @Get('entries')
   @ZodSerializerDto(LedgerEntryListResDTO)
-  async list(@Query() query: LedgerEntryQueryDTO) {
-    return await this.ledgerEntryService.list(query)
+  async list(@Query() query: LedgerEntryQueryDTO, @ActiveUser() user: AccessTokenPayload) {
+    return await this.ledgerEntryService.list(query, { userId: user.userId, roleName: user.roleName })
   }
 
   /** Sổ quỹ: Tiền mặt / Ngân hàng / Tổng quỹ theo kỳ (đầu kỳ, thu, chi, tồn) */
   @Get('cash-book')
   @ZodSerializerDto(CashBookResDTO)
-  async cashBook(@Query() query: CashBookQueryDTO) {
-    return await this.ledgerEntryService.cashBook(query)
+  async cashBook(@Query() query: CashBookQueryDTO, @ActiveUser() user: AccessTokenPayload) {
+    return await this.ledgerEntryService.cashBook(query, { userId: user.userId, roleName: user.roleName })
   }
 
   /** Đối soát Payment ↔ sổ cái theo phương thức (CASH, VNPAY) */
