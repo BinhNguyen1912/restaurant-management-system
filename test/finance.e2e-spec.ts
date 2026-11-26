@@ -19,6 +19,8 @@ describe('Finance (e2e)', () => {
   let loginUserId: number
   /** id admin, dùng để ghi `openedById` khi test mở bàn */
   let adminUserId: number
+  /** trạng thái GỐC của các bàn test đã mở, để trả lại trong afterAll */
+  const originalTableStates = new Map<number, { status: string; openedAt: Date | null; openedById: number | null }>()
   const createdProbeEntries: number[] = []
   const created: { shiftIds: number[]; orderIds: number[]; paymentIds: number[]; guestIds: number[]; areaIds: number[]; branchIds: number[]; userIds: number[] } = {
     shiftIds: [],
@@ -103,11 +105,24 @@ describe('Finance (e2e)', () => {
    * đưa mã QR cho khách.
    */
   const takeTable = async (branchId: number) => {
-    const openTable = (id: number) =>
-      prisma.tableNode.update({
+    // Ghi nhớ trạng thái GỐC của bàn để trả lại sau khi test xong. Trước đây helper này mở bàn
+    // rồi để nguyên, nên chạy e2e xong là hàng loạt bàn kẹt "Có khách" dù không có đơn nào.
+    const rememberTable = async (id: number) => {
+      if (originalTableStates.has(id)) return
+      const table = await prisma.tableNode.findUnique({
+        where: { id },
+        select: { status: true, openedAt: true, openedById: true },
+      })
+      if (table) originalTableStates.set(id, table)
+    }
+
+    const openTable = async (id: number) => {
+      await rememberTable(id)
+      return prisma.tableNode.update({
         where: { id },
         data: { status: 'OCCUPIED', openedAt: new Date(), openedById: adminUserId },
       })
+    }
 
     const alreadyOpen = await prisma.tableNode.findFirst({
       where: { branchId, status: 'OCCUPIED', openedAt: { not: null } },
@@ -119,11 +134,11 @@ describe('Finance (e2e)', () => {
       where: { branchId, status: 'AVAILABLE' },
       orderBy: { id: 'asc' },
     })
-    if (free) return openTable(free.id)
+    if (free) return await openTable(free.id)
 
     const anyTable = await prisma.tableNode.findFirst({ where: { branchId }, orderBy: { id: 'asc' } })
     if (!anyTable) return null
-    return openTable(anyTable.id)
+    return await openTable(anyTable.id)
   }
 
   beforeAll(async () => {
@@ -134,6 +149,12 @@ describe('Finance (e2e)', () => {
 
     await topUpIngredientStock()
     await resetSkuStatuses()
+    // Dọn ca thu ngân còn OPEN do lần chạy trước bị huỷ: chỉ 1 ca/branch được mở, sót lại là
+    // test "mở ca" nhận 409 và cả suite đỏ vì dữ liệu, không phải vì code.
+    await prisma.cashShift.updateMany({
+      where: { status: 'OPEN' },
+      data: { status: 'CLOSED', closedAt: new Date() },
+    })
 
     const login = await api()
       .post('/auth/login')
@@ -201,6 +222,14 @@ describe('Finance (e2e)', () => {
     if (created.reservationIds.length) {
       await attempt('deposit settled entries', () => prisma.ledgerEntry.deleteMany({ where: { refType: 'DEPOSIT_SETTLED', refId: { in: created.reservationIds } } }))
       await attempt('reservations', () => prisma.reservation.deleteMany({ where: { id: { in: created.reservationIds } } }))
+    }
+    for (const [tableId, state] of originalTableStates) {
+      await attempt(`restore table #${tableId}`, () =>
+        prisma.tableNode.update({
+          where: { id: tableId },
+          data: { status: state.status as any, openedAt: state.openedAt, openedById: state.openedById },
+        }),
+      )
     }
     if (createdProbeEntries.length) {
       await attempt('probe ledger lines', () =>

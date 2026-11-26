@@ -17,6 +17,12 @@ export const tableNodeSchema = z.object({
     TableStatus.HIDE,
   ]),
   token: z.string(),
+  /**
+   * Phiên bàn do NHÂN VIÊN mở. Phải khai báo ở đây, nếu không `@ZodSerializerDto` sẽ cắt mất
+   * (giống bẫy `branch`/`usage` trước đây) và FE luôn thấy "Chưa mở" dù bàn đang mở.
+   */
+  openedAt: z.date().nullable().optional(),
+  openedById: z.number().nullable().optional(),
   type: z.enum([
     Furniture.COUNTER,
     Furniture.DECORATION,

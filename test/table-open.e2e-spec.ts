@@ -75,6 +75,19 @@ describe('Mở bàn trước khi khách quét QR (e2e)', () => {
     expect(after!.openedAt).toBeNull()
   })
 
+  it('danh sách bàn phải trả `openedAt` (nếu không FE luôn hiện "Chưa mở")', async () => {
+    const table = await createTable()
+    await api().post(`/table-node/${table.id}/open`).set(auth()).expect(201)
+
+    // danh sách có phân trang -> xin trang lớn để chắc chắn bàn vừa tạo có trong kết quả
+    const list = await api().get('/table-node?limit=100').set(auth()).expect(200)
+    const row = (list.body.data as any[]).find((item) => item.id === table.id)
+    expect(row).toBeTruthy()
+    // serializer chỉ trả trường có trong schema -> thiếu khai báo là mất âm thầm
+    expect(row.openedAt).toBeTruthy()
+    expect(row.openedById).toBeTruthy()
+  })
+
   it('nhân viên mở bàn -> khách quét được; bàn ghi ai mở, lúc nào', async () => {
     const table = await createTable()
 
