@@ -671,7 +671,11 @@ describe('Finance (e2e)', () => {
 
     const before = Number(product!.basePrice)
     const newPrice = before + 1000
-    await api().put(`/manage-product/products/${product!.id}`).set(auth()).send(payload(newPrice)).expect(200)
+    const updated = await api().put(`/manage-product/products/${product!.id}`).set(auth()).send(payload(newPrice))
+    if (updated.status !== 200) {
+      // in body để biết vì sao 400 (validate payload nào) thay vì chỉ "got 400"
+      throw new Error(`PUT product trả ${updated.status}: ${JSON.stringify(updated.body)}`)
+    }
 
     const audit = await prisma.auditLog.findFirst({
       where: { entityType: 'PRODUCT', entityId: product!.id, action: 'PRODUCT_PRICE_CHANGED' },
