@@ -1,6 +1,8 @@
 import { createZodDto } from 'nestjs-zod'
 import {
   CashBookQuerySchema,
+  CashBookLineQuerySchema,
+  CashBookLineResSchema,
   CashBookResSchema,
   LedgerEntryListResSchema,
   LedgerEntryQuerySchema,
@@ -20,3 +22,6 @@ export class SettleVnpayClearingDTO extends createZodDto(SettleVnpayClearingSche
 
 export class CashBookQueryDTO extends createZodDto(CashBookQuerySchema) {}
 export class CashBookResDTO extends createZodDto(CashBookResSchema) {}
+
+export class CashBookLineQueryDTO extends createZodDto(CashBookLineQuerySchema) {}
+export class CashBookLineResDTO extends createZodDto(CashBookLineResSchema) {}

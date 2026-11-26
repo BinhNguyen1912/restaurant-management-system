@@ -19,6 +19,7 @@ describe('Finance (e2e)', () => {
   let loginUserId: number
   /** id admin, dùng để ghi `openedById` khi test mở bàn */
   let adminUserId: number
+  const createdProbeEntries: number[] = []
   const created: { shiftIds: number[]; orderIds: number[]; paymentIds: number[]; guestIds: number[]; areaIds: number[]; branchIds: number[]; userIds: number[] } = {
     shiftIds: [],
     userIds: [],
@@ -200,6 +201,14 @@ describe('Finance (e2e)', () => {
     if (created.reservationIds.length) {
       await attempt('deposit settled entries', () => prisma.ledgerEntry.deleteMany({ where: { refType: 'DEPOSIT_SETTLED', refId: { in: created.reservationIds } } }))
       await attempt('reservations', () => prisma.reservation.deleteMany({ where: { id: { in: created.reservationIds } } }))
+    }
+    if (createdProbeEntries.length) {
+      await attempt('probe ledger lines', () =>
+        prisma.ledgerLine.deleteMany({ where: { entryId: { in: createdProbeEntries } } }),
+      )
+      await attempt('probe ledger entries', () =>
+        prisma.ledgerEntry.deleteMany({ where: { id: { in: createdProbeEntries } } }),
+      )
     }
     if (created.userIds.length) await attempt('users', () => prisma.user.deleteMany({ where: { id: { in: created.userIds } } }))
     if (created.voucherIds.length) {
@@ -918,6 +927,31 @@ describe('Finance (e2e)', () => {
     expect(branches.length).toBeGreaterThanOrEqual(2)
     const [branchA, branchB] = branches
 
+    // Dữ liệu seed đã bị dọn nên sổ cái có thể rỗng -> tự tạo 1 bút toán CASH ở chi nhánh A để
+    // phép so sánh A ≠ B có nghĩa (nếu cả hai đều 0 thì assert bên dưới đúng một cách vô nghĩa).
+    const cashAccount = await prisma.ledgerAccount.findFirst({ where: { code: 'CASH' } })
+    const revenueAccount = await prisma.ledgerAccount.findFirst({ where: { code: 'REVENUE_FOOD' } })
+    const probeKey = `e2e-scope-probe-${Date.now()}`
+    const probeEntry = await prisma.ledgerEntry.create({
+      data: {
+        branchId: branchA.id,
+        refType: 'ORDER_PAID_CASH',
+        refId: 0,
+        idempotencyKey: probeKey,
+        status: 'POSTED',
+        postedAt: new Date(),
+        requestHash: 'e2e'.padEnd(64, '0'),
+        memo: 'e2e probe for branch scoping',
+        lines: {
+          create: [
+            { accountId: cashAccount!.id, direction: 'DEBIT', amount: 1000 },
+            { accountId: revenueAccount!.id, direction: 'CREDIT', amount: 1000 },
+          ],
+        },
+      },
+    })
+    createdProbeEntries.push(probeEntry.id)
+
     const email = `e2e-scope-${Date.now()}@example.com`
     const createdUser = await api()
       .post('/users')
@@ -968,6 +1002,64 @@ describe('Finance (e2e)', () => {
       const ids = (staffEntries.body.data as any[]).map((entry) => entry.id)
       expect(ids).not.toContain(adminEntryB.body.data[0].id)
     }
+  })
+
+  it('sổ quỹ: có DANH SÁCH DÒNG và tổng của dòng khớp đúng 4 thẻ', async () => {
+    // Thẻ chỉ nói "tổng thu X" — không có dòng thì không ai kiểm tra được con số đó.
+    const card = await api().get('/ledger/cash-book').set(auth()).expect(200)
+    const lines = await api().get('/ledger/cash-book/lines?limit=100').set(auth()).expect(200)
+
+    // tổng của các dòng (cả kỳ) phải bằng đúng tổng thu/chi của 2 tài khoản quỹ
+    expect(lines.body.data.inflow).toBeCloseTo(card.body.data.total.inflow, 2)
+    expect(lines.body.data.outflow).toBeCloseTo(card.body.data.total.outflow, 2)
+    expect(lines.body.data.fromDate).toBe(card.body.data.fromDate)
+
+    for (const line of lines.body.data.lines as any[]) {
+      expect(['CASH', 'BANK']).toContain(line.accountCode)
+      expect(['DEBIT', 'CREDIT']).toContain(line.direction)
+      expect(typeof line.amount).toBe('number')
+      expect(line.occurredAt).toBeTruthy()
+    }
+
+    // lọc theo 1 tài khoản: chỉ trả dòng của tài khoản đó
+    const cashOnly = await api().get('/ledger/cash-book/lines?account=CASH&limit=100').set(auth()).expect(200)
+    for (const line of cashOnly.body.data.lines as any[]) {
+      expect(line.accountCode).toBe('CASH')
+    }
+    // và tổng thu của CASH một mình không vượt tổng của cả 2 quỹ
+    expect(cashOnly.body.data.inflow).toBeLessThanOrEqual(lines.body.data.inflow)
+  })
+
+  it('sổ quỹ: dòng cũng bị giới hạn theo chi nhánh (không lộ chi nhánh khác)', async () => {
+    const branches = await prisma.branch.findMany({ where: { isActive: true }, orderBy: { id: 'asc' }, take: 2 })
+    const [a, b] = branches
+
+    const aLines = await api().get(`/ledger/cash-book/lines?branchId=${a.id}&limit=100`).set(auth()).expect(200)
+    const bLines = await api().get(`/ledger/cash-book/lines?branchId=${b.id}&limit=100`).set(auth()).expect(200)
+
+    expect(aLines.body.data.branchId).toBe(a.id)
+    expect(bLines.body.data.branchId).toBe(b.id)
+    expect(aLines.body.data.totalItems + bLines.body.data.totalItems).toBeGreaterThanOrEqual(
+      aLines.body.data.lines.length,
+    )
+
+    // người không phải ADMIN bị ép về chi nhánh của mình (dùng chung cơ chế với /ledger/cash-book)
+    const readerRole = await prisma.role.findFirst({ where: { name: 'KE_TOAN' } })
+    const email = `e2e-lines-${Date.now()}@example.com`
+    const createdUser = await api()
+      .post('/users')
+      .set(auth())
+      .send({ email, password: '123456', name: 'KT Lines', roleId: readerRole!.id, branchId: a.id, status: 'ACTIVE' })
+      .expect(201)
+    created.userIds.push(createdUser.body.id)
+    const token = (await api().post('/auth/login').send({ email, password: '123456' }).expect(201)).body
+      .accessToken as string
+
+    const forced = await api()
+      .get(`/ledger/cash-book/lines?branchId=${b.id}`)
+      .set({ Authorization: `Bearer ${token}` })
+      .expect(200)
+    expect(forced.body.data.branchId).toBe(a.id) // xin chi nhánh B nhưng bị ép về A
   })
 
   it('mọi endpoint báo cáo: branchId phải là number hoặc null, KHÔNG được undefined (500)', async () => {
