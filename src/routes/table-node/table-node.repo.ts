@@ -162,4 +162,29 @@ export class TableNodeRepo {
   deleteAllByArea({ areaId }: { areaId: number }) {
     return this.prismaService.tableNode.deleteMany({ where: { areaId, deletedAt: null } })
   }
+
+  /**
+   * Mở bàn: đặt OCCUPIED + ghi ai mở, lúc nào. Điều kiện `openedAt: null` để hai nhân viên bấm
+   * cùng lúc không ghi đè nhau (bấm lần 2 trả về null -> service báo "bàn đã mở").
+   */
+  async open(id: number, openedById: number) {
+    const { count } = await this.prismaService.tableNode.updateMany({
+      where: { id, deletedAt: null, openedAt: null, status: { in: ['AVAILABLE', 'RESERVED'] } },
+      data: { status: 'OCCUPIED', openedAt: new Date(), openedById, updatedById: openedById },
+    })
+    if (count === 0) return null
+    return this.prismaService.tableNode.findUnique({ where: { id } })
+  }
+
+  /** Đóng bàn: trả về AVAILABLE và xoá phiên (khách quét lại phải nhờ nhân viên mở) */
+  async close(id: number, updatedById: number) {
+    return this.prismaService.tableNode.update({
+      where: { id },
+      data: { status: 'AVAILABLE', openedAt: null, openedById: null, updatedById },
+    })
+  }
+
+  findById(id: number) {
+    return this.prismaService.tableNode.findUnique({ where: { id, deletedAt: null } })
+  }
 }

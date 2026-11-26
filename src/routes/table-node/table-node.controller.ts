@@ -54,6 +54,18 @@ export class TableNodeController {
     return controller
   }
 
+  /** Mở bàn: khách chỉ quét QR gọi món được khi bàn đang mở */
+  @Post(':id/open')
+  async open(@Param() params: TableNodeParamsDTO, @ActiveUser('userId') userId: number) {
+    return await this.tableNodeService.openTable(params.id, userId)
+  }
+
+  /** Đóng bàn: trả bàn về trống, kết thúc phiên của khách */
+  @Post(':id/close')
+  async close(@Param() params: TableNodeParamsDTO, @ActiveUser('userId') userId: number) {
+    return await this.tableNodeService.closeTable(params.id, userId)
+  }
+
   @Delete(':id')
   @ZodSerializerDto(TableNodeResDTO)
   async delete(@Param() params: TableNodeParamsDTO, @ActiveUser('userId') deletedById: number) {

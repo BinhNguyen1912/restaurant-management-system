@@ -10,7 +10,7 @@ import {
 import { TableNodeRepo } from '@/routes/table-node/table-node.repo'
 import { isNotFoundPrisma, isUniqueConstraintPrisma, randomId } from '@/shared/helper'
 import { SharedTableNodeRepo } from '@/shared/shared-repository/shared-tableNode.repo'
-import { Injectable } from '@nestjs/common'
+import { BadRequestException, ConflictException, Injectable } from '@nestjs/common'
 
 @Injectable()
 export class TableNodeService {
@@ -66,6 +66,29 @@ export class TableNodeService {
       }
     }
   }
+  /**
+   * Nhân viên mở bàn — đây là điều kiện để khách quét QR gọi món.
+   *
+   * Bàn hỏng / đang ẩn thì không mở được (khách vào sẽ ăn sai bàn). Bàn đã mở rồi thì báo lỗi
+   * thay vì âm thầm ghi đè người mở (cần biết ai đang phụ trách bàn).
+   */
+  async openTable(id: number, openedById: number) {
+    const table = await this.tableNodeRepo.findById(id)
+    if (!table) throw TableNodeNotFoundException
+    if (table.status === 'OUT_OF_SERVICE') throw new BadRequestException('Error.TableBrokenOrUnavailable')
+    if (table.status === 'HIDE') throw new BadRequestException('Error.TableIsHidden')
+
+    const opened = await this.tableNodeRepo.open(id, openedById)
+    if (!opened) throw new ConflictException('Error.TableAlreadyOpened')
+    return { message: 'Success.TableOpened', data: opened }
+  }
+
+  async closeTable(id: number, updatedById: number) {
+    const table = await this.tableNodeRepo.findById(id)
+    if (!table) throw TableNodeNotFoundException
+    return { message: 'Success.TableClosed', data: await this.tableNodeRepo.close(id, updatedById) }
+  }
+
   async updateBatch(data: UpdateTableNodeBodyBatchType, updatedById: number) {
     return await this.tableNodeRepo.updateBatch({ data, updatedById })
   }

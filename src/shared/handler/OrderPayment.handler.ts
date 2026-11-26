@@ -32,6 +32,9 @@ export class OrderGuestPaymentPaymentHandler implements PostPaymentHandler {
         where: { id: tableNodeId },
         data: {
           status: TableStatus.AVAILABLE,
+          // đóng phiên bàn: khách quét QR lại sẽ phải nhờ nhân viên mở bàn
+          openedAt: null,
+          openedById: null,
         },
       })
       console.log(`Table ${tableNodeId} status updated to CLEANING after payment.`)

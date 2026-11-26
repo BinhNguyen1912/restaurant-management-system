@@ -17,6 +17,8 @@ describe('Finance (e2e)', () => {
   let prisma: PrismaService
   let token: string
   let loginUserId: number
+  /** id admin, dùng để ghi `openedById` khi test mở bàn */
+  let adminUserId: number
   const created: { shiftIds: number[]; orderIds: number[]; paymentIds: number[]; guestIds: number[]; areaIds: number[]; branchIds: number[]; userIds: number[] } = {
     shiftIds: [],
     userIds: [],
@@ -94,15 +96,33 @@ describe('Finance (e2e)', () => {
    * Bàn để test: ưu tiên bàn đang AVAILABLE; hết bàn (test trước để lại OCCUPIED) thì
    * giải phóng 1 bàn. Test phải chạy được độc lập, không phụ thuộc thứ tự.
    */
+  /**
+   * Lấy 1 bàn để khách quét QR. Từ nay khách chỉ vào được khi bàn ĐÃ ĐƯỢC NHÂN VIÊN MỞ
+   * (`openedAt`), nên helper này mở bàn luôn — đúng thao tác mà nhân viên làm trước khi
+   * đưa mã QR cho khách.
+   */
   const takeTable = async (branchId: number) => {
+    const openTable = (id: number) =>
+      prisma.tableNode.update({
+        where: { id },
+        data: { status: 'OCCUPIED', openedAt: new Date(), openedById: adminUserId },
+      })
+
+    const alreadyOpen = await prisma.tableNode.findFirst({
+      where: { branchId, status: 'OCCUPIED', openedAt: { not: null } },
+      orderBy: { id: 'asc' },
+    })
+    if (alreadyOpen) return alreadyOpen
+
     const free = await prisma.tableNode.findFirst({
       where: { branchId, status: 'AVAILABLE' },
       orderBy: { id: 'asc' },
     })
-    if (free) return free
+    if (free) return openTable(free.id)
+
     const anyTable = await prisma.tableNode.findFirst({ where: { branchId }, orderBy: { id: 'asc' } })
     if (!anyTable) return null
-    return prisma.tableNode.update({ where: { id: anyTable.id }, data: { status: 'AVAILABLE' } })
+    return openTable(anyTable.id)
   }
 
   beforeAll(async () => {
@@ -121,6 +141,7 @@ describe('Finance (e2e)', () => {
     token = login.body.accessToken
     // actorId trong nhật ký = user đang đăng nhập; lấy một lần để assert cho chắc
     loginUserId = login.body.user.id as number
+    adminUserId = loginUserId
   })
 
   const attempt = async (label: string, run: () => Promise<unknown>) => {
