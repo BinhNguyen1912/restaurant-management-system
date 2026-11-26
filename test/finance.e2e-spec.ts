@@ -16,6 +16,7 @@ describe('Finance (e2e)', () => {
   let app: INestApplication
   let prisma: PrismaService
   let token: string
+  let loginUserId: number
   const created: { shiftIds: number[]; orderIds: number[]; paymentIds: number[]; guestIds: number[]; areaIds: number[]; branchIds: number[]; userIds: number[] } = {
     shiftIds: [],
     userIds: [],
@@ -118,6 +119,8 @@ describe('Finance (e2e)', () => {
       .send({ email: 'admin@order.com', password: '123456' })
       .expect(201)
     token = login.body.accessToken
+    // actorId trong nhật ký = user đang đăng nhập; lấy một lần để assert cho chắc
+    loginUserId = login.body.user.id as number
   })
 
   const attempt = async (label: string, run: () => Promise<unknown>) => {
@@ -944,6 +947,94 @@ describe('Finance (e2e)', () => {
       const ids = (staffEntries.body.data as any[]).map((entry) => entry.id)
       expect(ids).not.toContain(adminEntryB.body.data[0].id)
     }
+  })
+
+  it('nhật ký quyền: đổi quyền của role và đổi chi nhánh của nhân viên đều được ghi lại', async () => {
+    const staffRole = await prisma.role.findFirst({ where: { name: 'STAFF' } })
+    const branches = await prisma.branch.findMany({ where: { isActive: true }, orderBy: { id: 'asc' }, take: 2 })
+
+    // 1. đổi quyền của role -> ROLE_PERMISSIONS_CHANGED, lưu cả id được cấp/thu hồi
+    const matrix = await api().get(`/role/${staffRole!.id}/permissions`).set(auth()).expect(200)
+    const originalIds: number[] = matrix.body.data.permissions
+      .filter((permission: any) => permission.granted)
+      .map((permission: any) => permission.id)
+    const target = matrix.body.data.permissions.find(
+      (permission: any) => permission.granted && permission.method === 'GET' && permission.path === '/tables',
+    )
+    expect(target).toBeTruthy()
+
+    try {
+      await api()
+        .put(`/role/${staffRole!.id}/permissions`)
+        .set(auth())
+        .send({ permissionIds: originalIds.filter((id) => id !== target.id) })
+        .expect(200)
+
+      const audit = await prisma.auditLog.findFirst({
+        where: { action: 'ROLE_PERMISSIONS_CHANGED', entityType: 'ROLE', entityId: staffRole!.id },
+        orderBy: { id: 'desc' },
+      })
+      expect(audit).toBeTruthy()
+      expect(audit!.actorId).toBe(loginUserId)
+      expect((audit!.after as any).revoked).toContain(target.id)
+      expect((audit!.before as any).permissionIds).toContain(target.id)
+    } finally {
+      await api().put(`/role/${staffRole!.id}/permissions`).set(auth()).send({ permissionIds: originalIds })
+    }
+
+    // 2. đổi chi nhánh của nhân viên -> USER_ACCESS_CHANGED
+    const email = `e2e-audit-${Date.now()}@example.com`
+    const employee = await api()
+      .post('/users')
+      .set(auth())
+      .send({
+        email,
+        password: '123456',
+        name: 'NV Audit',
+        roleId: staffRole!.id,
+        branchId: branches[0].id,
+        status: 'ACTIVE',
+      })
+      .expect(201)
+    created.userIds.push(employee.body.id)
+
+    await api()
+      .put(`/users/${employee.body.id}`)
+      .set(auth())
+      .send({
+        email,
+        name: 'NV Audit',
+        roleId: staffRole!.id,
+        branchId: branches[1].id,
+        status: 'ACTIVE',
+        changePassword: false,
+      })
+      .expect(200)
+
+    const userAudit = await prisma.auditLog.findFirst({
+      where: { action: 'USER_ACCESS_CHANGED', entityType: 'USER', entityId: employee.body.id },
+      orderBy: { id: 'desc' },
+    })
+    expect(userAudit).toBeTruthy()
+    expect((userAudit!.before as any).branchId).toBe(branches[0].id)
+    expect((userAudit!.after as any).branchId).toBe(branches[1].id)
+
+    // 3. lưu mà KHÔNG đổi gì thì không sinh thêm dòng rác
+    const before = await prisma.auditLog.count({ where: { action: 'USER_ACCESS_CHANGED', entityId: employee.body.id } })
+    await api()
+      .put(`/users/${employee.body.id}`)
+      .set(auth())
+      .send({
+        email,
+        name: 'NV Audit',
+        roleId: staffRole!.id,
+        branchId: branches[1].id,
+        status: 'ACTIVE',
+        changePassword: false,
+      })
+      .expect(200)
+    const after = await prisma.auditLog.count({ where: { action: 'USER_ACCESS_CHANGED', entityId: employee.body.id } })
+    expect(after).toBe(before)
   })
 
   it('phạm vi chi nhánh: người CHƯA gán chi nhánh bị từ chối thay vì thấy dữ liệu toàn hệ thống', async () => {

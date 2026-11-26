@@ -1295,6 +1295,12 @@ enum AuditAction {
   ORDER_PRICE_CHANGED
   PRODUCT_PRICE_CHANGED
   PAYMENT_REFUNDED
+  /// cấp/thu hồi quyền của 1 vai trò
+  ROLE_PERMISSIONS_CHANGED
+  ROLE_CREATED
+  ROLE_DELETED
+  /// đổi vai trò hoặc chi nhánh của một tài khoản
+  USER_ACCESS_CHANGED
 }
 
 enum AuditEntityType {
@@ -1302,6 +1308,8 @@ enum AuditEntityType {
   PRODUCT
   SKU
   PAYMENT
+  ROLE
+  USER
 }
 
 model AuditLog {

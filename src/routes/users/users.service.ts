@@ -16,6 +16,7 @@ import { SharedGuestRepo } from '@/shared/shared-repository/shared-guest.repo'
 import { SharedRoleRepo } from '@/shared/shared-repository/shared-role.repo'
 import { SharedUserRepo } from '@/shared/shared-repository/shared-user.repo'
 import { Injectable, UnauthorizedException } from '@nestjs/common'
+import { AuditLogService } from '@/shared/service/audit-log.service'
 
 @Injectable()
 export class UsersService {
@@ -25,7 +26,40 @@ export class UsersService {
     private readonly sharedRoleRepo: SharedRoleRepo,
     private readonly hashingservice: HashingService,
     private readonly sharedGuestRepo: SharedGuestRepo,
+    private readonly auditLog: AuditLogService,
   ) {}
+
+  /**
+   * Ghi nhật ký khi **quyền truy cập** của một tài khoản đổi (vai trò hoặc chi nhánh).
+   *
+   * Đây là đường leo thang quyền thật sự: nâng một nhân viên lên ADMIN, hoặc chuyển họ sang
+   * chi nhánh khác để xem dữ liệu chi nhánh đó. Không ghi thì không truy được ai làm.
+   * Chỉ ghi khi thật sự có thay đổi — tránh rác log vì mỗi lần bấm "Lưu".
+   */
+  private async recordAccessChange({
+    targetUserId,
+    actorId,
+    before,
+    after,
+  }: {
+    targetUserId: number
+    actorId?: number
+    before: { roleId?: number | null; branchId?: number | null }
+    after: { roleId?: number | null; branchId?: number | null }
+  }) {
+    const roleChanged = after.roleId !== undefined && after.roleId !== before.roleId
+    const branchChanged = after.branchId !== undefined && after.branchId !== before.branchId
+    if (!roleChanged && !branchChanged) return
+
+    await this.auditLog.recordSafe({
+      actorId: actorId ?? null,
+      action: 'USER_ACCESS_CHANGED',
+      entityType: 'USER',
+      entityId: targetUserId,
+      before: { roleId: before.roleId ?? null, branchId: before.branchId ?? null },
+      after: { roleId: after.roleId ?? null, branchId: after.branchId ?? null },
+    })
+  }
 
   async verifyRole({ roleNameAgent, roleIdTaget }: { roleNameAgent: string; roleIdTaget: number }) {
     if (roleNameAgent == roleName.ADMIN) return true
@@ -56,7 +90,14 @@ export class UsersService {
       if (!role) throw RoleNotFoundException
       await this.verifyRole({ roleNameAgent: roleName, roleIdTaget: roleId })
       const Hashpassword = await this.hashingservice.hashPassword(password)
-      return await this.userRepository.createUser({ ...body, password: Hashpassword, createdById })
+      const created = await this.userRepository.createUser({ ...body, password: Hashpassword, createdById })
+      await this.recordAccessChange({
+        targetUserId: created.id,
+        actorId: createdById,
+        before: {},
+        after: { roleId: created.roleId, branchId: created.branchId ?? null },
+      })
+      return created
     } catch (error) {
       if (isNotFoundPrisma(error)) throw RoleNotFoundException
       if (isUniqueConstraintPrisma(error)) {
@@ -112,7 +153,7 @@ export class UsersService {
         if (data.roleId && data.roleId != currentUser.roleId) {
           await this.verifyRole({ roleNameAgent: updateByRoleName, roleIdTaget: data.roleId })
         }
-        return await this.sharedUserRepo.update(id, {
+        const updated = await this.sharedUserRepo.update(id, {
           password: hashPassword,
           name,
           roleId,
@@ -124,6 +165,13 @@ export class UsersService {
           // undefined = không gửi thì Prisma giữ nguyên; null = bỏ gán chi nhánh
           branchId,
         })
+        await this.recordAccessChange({
+          targetUserId: id,
+          actorId: updatedById,
+          before: { roleId: currentUser.roleId, branchId: currentUser.branchId ?? null },
+          after: { roleId, branchId },
+        })
+        return updated
       } else {
         //Lấy thông tin user được update ra và kiểm tra tồm tại
         const currentUser = await this.sharedUserRepo.findUniqueUser({ id })
@@ -139,7 +187,7 @@ export class UsersService {
         if (data.roleId && data.roleId != currentUser.roleId) {
           await this.verifyRole({ roleNameAgent: updateByRoleName, roleIdTaget: data.roleId })
         }
-        return await this.sharedUserRepo.update(id, {
+        const updated = await this.sharedUserRepo.update(id, {
           password: currentUser.password,
           name,
           roleId,
@@ -151,6 +199,13 @@ export class UsersService {
           // undefined = không gửi thì Prisma giữ nguyên; null = bỏ gán chi nhánh
           branchId,
         })
+        await this.recordAccessChange({
+          targetUserId: id,
+          actorId: updatedById,
+          before: { roleId: currentUser.roleId, branchId: currentUser.branchId ?? null },
+          after: { roleId, branchId },
+        })
+        return updated
       }
     } catch (error) {
       if (isNotFoundPrisma(error)) throw UserNotFoundException

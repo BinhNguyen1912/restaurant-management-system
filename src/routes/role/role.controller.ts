@@ -23,6 +23,7 @@ import {
   UpdateRolePermissionsBodyDTO,
 } from '@/routes/role/role.dto'
 import { ActiveUser } from '@/shared/decorators/active-user.decorator'
+import { ActiveRole } from '@/shared/decorators/active-role.decorator'
 import { MessageResDto } from '@/shared/dtos/respone.dto'
 
 @Controller('role')
@@ -59,8 +60,14 @@ export class RoleController {
 
   /** Ghi đè toàn bộ quyền của role; ADMIN bị khoá (luôn full quyền) */
   @Put(':id/permissions')
-  async updatePermissions(@Param() params: GetRoleParamsDTO, @Body() body: UpdateRolePermissionsBodyDTO) {
-    return await this.roleService.updatePermissions(params.id, body.permissionIds)
+  async updatePermissions(
+    @Param() params: GetRoleParamsDTO,
+    @Body() body: UpdateRolePermissionsBodyDTO,
+    @ActiveUser('userId') userId: number,
+    @ActiveRole('name') roleName: string,
+  ) {
+    // actorId/actorRole là thứ duy nhất trả lời được "ai đã cấp quyền này" về sau
+    return await this.roleService.updatePermissions(params.id, body.permissionIds, { userId, roleName })
   }
 
   @Put(':id')
