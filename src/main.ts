@@ -21,8 +21,19 @@ async function bootstrap() {
   const reflector = app.get(Reflector)
   app.useGlobalPipes(new CustomZodValidationPipe())
 
+  /**
+   * CORS: production chỉ cho phép domain của FE (env `FRONTEND_URL`, nhiều domain cách nhau dấu phẩy).
+   *
+   * `origin: '*'` không dùng được khi cookie auth là `secure`/httpOnly trên 2 domain khác nhau —
+   * và cũng là lỗ hổng (mọi site gọi API được). Ngoài production vẫn để `*` cho tiện dev.
+   */
+  const allowedOrigins = (envConfig.FRONTEND_URL ?? '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean)
   app.enableCors({
-    origin: '*',
+    origin: process.env.NODE_ENV === 'production' && allowedOrigins.length > 0 ? allowedOrigins : '*',
+    credentials: true,
   })
   app.use(helmet()) //
   app.useWebSocketAdapter(new WebSocketAuthAdapter(app))

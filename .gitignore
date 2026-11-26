@@ -40,6 +40,8 @@ lerna-debug.log*
 .env.development.local
 .env.test.local
 .env.production.local
+# file env thật trên VPS (chỉ commit .env.production.example)
+.env.production
 .env.local
 
 # temp directory
