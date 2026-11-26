@@ -126,6 +126,26 @@ export class CashShiftRepo {
     return result._sum.amount ?? new Prisma.Decimal(0)
   }
 
+  /** Danh sách khoản thu TIỀN MẶT từ đơn trong ca (cùng bộ lọc với `sumCashPayments`) */
+  cashPaymentsIn({ branchId, from, to }: { branchId: number; from: Date; to?: Date }) {
+    return this.prismaService.payment.findMany({
+      where: {
+        branchId,
+        method: 'CASH',
+        status: 'SUCCESS',
+        paidAt: { gte: from, ...(to ? { lt: to } : {}) },
+      },
+      orderBy: { paidAt: 'asc' },
+      select: {
+        id: true,
+        amount: true,
+        paidAt: true,
+        method: true,
+        order: { select: { id: true } },
+      },
+    })
+  }
+
   /** Σ thu tay / chi tay trong ca, tach theo loai */
   async sumMovements(shiftId: number): Promise<{ cashIn: Prisma.Decimal; cashOut: Prisma.Decimal }> {
     const rows = await this.prismaService.cashMovement.groupBy({

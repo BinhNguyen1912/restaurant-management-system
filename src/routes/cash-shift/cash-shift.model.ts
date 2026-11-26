@@ -54,9 +54,24 @@ export const CashShiftLiveTotalsSchema = z.object({
   unpaidCashOrders: z.number(),
 })
 
+/** Một khoản tiền mặt thu được từ đơn trong ca — để giải thích `cashIn` gồm những gì */
+export const CashShiftPaymentRowSchema = z.object({
+  paymentId: z.number(),
+  amount: moneyOutputSchema,
+  paidAt: z.date().nullable(),
+  method: z.string().nullable(),
+  /** mã đơn liên quan (nếu có) để mở đơn từ trang chi tiết ca */
+  orderIds: z.array(z.number()),
+})
+
 export const CashShiftDetailSchema = CashShiftSchema.extend({
   movements: z.array(CashMovementSchema),
   liveTotals: CashShiftLiveTotalsSchema.optional(),
+  /**
+   * Các khoản thu tiền mặt từ đơn trong ca. Không có danh sách này thì `cashIn` lại là một con số
+   * không kiểm tra được — đúng vấn đề đã gặp ở Sổ quỹ.
+   */
+  cashPayments: z.array(CashShiftPaymentRowSchema).optional(),
 })
 
 export const OpenCashShiftSchema = z.object({

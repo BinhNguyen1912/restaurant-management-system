@@ -1033,6 +1033,53 @@ describe('Finance (e2e)', () => {
     }
   })
 
+  it('chi tiết ca: có thu/chi trong ca và danh sách khoản thu tiền mặt (giải thích cashIn)', async () => {
+    const open = await api().post('/cash-shifts').set(auth()).send({ openingFloat: 100_000 }).expect(201)
+    const shiftId = open.body.id as number
+    created.shiftIds.push(shiftId)
+
+    // thu tay 300k, chi tay 50k
+    await api()
+      .post(`/cash-shifts/${shiftId}/movements`)
+      .set(auth())
+      .send({ type: 'IN', reason: 'Thu khác trong ca', amount: 300_000, evidenceUrls: ['https://x/in.jpg'] })
+      .expect(201)
+    await api()
+      .post(`/cash-shifts/${shiftId}/movements`)
+      .set(auth())
+      .send({ type: 'OUT', reason: 'Chi mua đá', amount: 50_000 })
+      .expect(201)
+
+    const detail = await api().get(`/cash-shifts/${shiftId}`).set(auth()).expect(200)
+    const data = detail.body
+
+    // thu/chi trong ca: đủ cả loại, số tiền, lý do và CHỨNG TỪ (để đối chiếu)
+    expect(data.movements).toHaveLength(2)
+    const income = data.movements.find((m: any) => m.type === 'IN')
+    const expense = data.movements.find((m: any) => m.type === 'OUT')
+    expect(income.amount).toBe(300_000)
+    expect(income.reason).toBe('Thu khác trong ca')
+    expect(income.evidenceUrls).toEqual(['https://x/in.jpg'])
+    expect(expense.amount).toBe(50_000)
+
+    // danh sách khoản thu tiền mặt: trước đây chỉ có con số `cashIn` không kiểm tra được
+    expect(Array.isArray(data.cashPayments)).toBe(true)
+    for (const payment of data.cashPayments) {
+      expect(typeof payment.paymentId).toBe('number')
+      expect(typeof payment.amount).toBe('number')
+      expect(Array.isArray(payment.orderIds)).toBe(true)
+    }
+
+    // số két phải khớp công thức: mở + thu tiền mặt + thu tay − chi tay
+    expect(data.liveTotals.expectedCash).toBeCloseTo(
+      data.liveTotals.openingFloat + data.liveTotals.cashIn + 300_000 - 50_000,
+      2,
+    )
+    // và Σ cashPayments phải bằng cashIn (cùng một nguồn)
+    const sumPayments = data.cashPayments.reduce((sum: number, p: any) => sum + p.amount, 0)
+    expect(sumPayments).toBeCloseTo(data.liveTotals.cashIn, 2)
+  })
+
   it('sổ quỹ: có DANH SÁCH DÒNG và tổng của dòng khớp đúng 4 thẻ', async () => {
     // Thẻ chỉ nói "tổng thu X" — không có dòng thì không ai kiểm tra được con số đó.
     const card = await api().get('/ledger/cash-book').set(auth()).expect(200)

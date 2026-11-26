@@ -171,8 +171,21 @@ export class CashShiftService {
     if (!found) throw CashShiftNotFoundException
     const shift = found
     if (shift.status !== 'OPEN') {
+      // Ca đã đóng: lấy đúng khoảng thời gian của ca để giải thích `cashIn`
+      const closedPayments = await this.repo.cashPaymentsIn({
+        branchId: shift.branchId,
+        from: shift.openedAt,
+        to: shift.closedAt ?? undefined,
+      })
       return toMoneyNumbers({
         ...shift,
+        cashPayments: closedPayments.map((payment) => ({
+          paymentId: payment.id,
+          amount: payment.amount,
+          paidAt: payment.paidAt,
+          method: payment.method,
+          orderIds: payment.order.map((order) => order.id),
+        })),
         liveTotals: {
           openingFloat: shift.openingFloat,
           cashIn: shift.cashIn,
@@ -184,10 +197,11 @@ export class CashShiftService {
       })
     }
 
-    const [cashIn, movements, unpaid] = await Promise.all([
+    const [cashIn, movements, unpaid, cashPayments] = await Promise.all([
       this.repo.sumCashPayments({ branchId: shift.branchId, from: shift.openedAt }),
       this.repo.sumMovements(shift.id),
       this.repo.findUnpaidCashOrderIds({ branchId: shift.branchId, from: shift.openedAt }),
+      this.repo.cashPaymentsIn({ branchId: shift.branchId, from: shift.openedAt }),
     ])
     const totals = cashShiftTotals({
       openingFloat: shift.openingFloat,
@@ -198,6 +212,13 @@ export class CashShiftService {
 
     return toMoneyNumbers({
       ...shift,
+      cashPayments: cashPayments.map((payment) => ({
+        paymentId: payment.id,
+        amount: payment.amount,
+        paidAt: payment.paidAt,
+        method: payment.method,
+        orderIds: payment.order.map((order) => order.id),
+      })),
       liveTotals: {
         ...totals,
         unpaidCashOrders: unpaid.length,
