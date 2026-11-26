@@ -57,6 +57,12 @@ export const getListUsersSchema = z.object({
       totpSecret: true,
     }).extend({
       role: RoleSchema.pick({ name: true, id: true }),
+      /**
+       * Chi nhánh của nhân viên. PHẢI khai báo ở đây: repo có `include: branch` nhưng
+       * `@ZodSerializerDto` chỉ trả về trường nằm trong schema — thiếu là FE nhận `undefined`
+       * và cột "Chi nhánh" trong bảng trống, không có lỗi nào báo.
+       */
+      branch: z.object({ id: z.number(), code: z.string(), name: z.string() }).nullable().optional(),
     }),
   ),
   totalItems: z.number(),
