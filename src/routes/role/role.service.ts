@@ -15,6 +15,7 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager'
 import { Cache } from 'cache-manager'
 import { CacheService } from '@/cache/services/cache.service'
 import { CACHE_KEYS } from '@/cache/cache.constant'
+import { AuditLogService } from '@/shared/service/audit-log.service'
 
 @Injectable()
 export class RoleService {
@@ -22,10 +23,20 @@ export class RoleService {
     private readonly roleRepository: RoleRepository,
     private readonly sharedRoleRepo: SharedRoleRepo,
     private readonly cacheService: CacheService,
+    private readonly auditLog: AuditLogService,
   ) {}
   async create(body: RoleBodyType & { createdById: number | null }) {
     try {
-      return await this.roleRepository.create(body)
+      const created = await this.roleRepository.create(body)
+      // vai trò mới chưa có quyền nào — ghi lại để giải trình được "ai tạo, lúc nào"
+      await this.auditLog.recordSafe({
+        actorId: body.createdById,
+        action: 'ROLE_CREATED',
+        entityType: 'ROLE',
+        entityId: created.id,
+        after: { name: created.name, description: created.description, permissionCount: 0 },
+      })
+      return created
     } catch (error) {
       if (isUniqueConstraintPrisma(error)) {
         throw RoleAlreadyExitsException
@@ -89,7 +100,11 @@ export class RoleService {
     }
   }
 
-  async updatePermissions(roleId: number, permissionIds: number[]) {
+  async updatePermissions(
+    roleId: number,
+    permissionIds: number[],
+    actor?: { userId?: number | null; roleName?: string | null },
+  ) {
     const role = await this.sharedRoleRepo.findRoleById({ id: roleId, deletedAt: null })
     if (!role) throw RoleNotFoundException
     if (role.name === roleName.ADMIN) throw CannotUpdateAdminRoleException
@@ -102,9 +117,25 @@ export class RoleService {
     // id lạ = client gửi sai; nhận vào là âm thầm gán quyền sai
     if (unknown.length > 0) throw new BadRequestException('Error.PermissionNotFound')
 
+    const beforeIds = existing.permissions.filter((permission) => permission.granted).map((permission) => permission.id)
+    const granted = unique.filter((id) => !beforeIds.includes(id))
+    const revoked = beforeIds.filter((id) => !unique.includes(id))
+
     const result = await this.roleRepository.setPermissions(roleId, unique)
     // cache role 1 giờ: không xoá thì người dùng còn dùng quyền cũ rất lâu
     await this.cacheService.del(CACHE_KEYS.ROLE(roleId))
+
+    // Nhật ký quyền truy cập: lưu CẢ id được cấp/thu hồi (không chỉ số lượng) để đọc lại
+    // là biết chính xác quyền nào bị mất — đây là thứ cần khi có sự cố.
+    await this.auditLog.recordSafe({
+      actorId: actor?.userId ?? null,
+      actorRole: actor?.roleName ?? null,
+      action: 'ROLE_PERMISSIONS_CHANGED',
+      entityType: 'ROLE',
+      entityId: roleId,
+      before: { roleName: role.name, permissionIds: beforeIds },
+      after: { roleName: role.name, permissionIds: unique, granted, revoked },
+    })
     return { message: 'Success.RolePermissionsUpdated', data: result }
   }
 
@@ -120,6 +151,12 @@ export class RoleService {
       const resuft = await this.roleRepository.delete({
         id,
         isHard: true,
+      })
+      await this.auditLog.recordSafe({
+        action: 'ROLE_DELETED',
+        entityType: 'ROLE',
+        entityId: id,
+        before: { name: role.name },
       })
       await this.cacheService.del(CACHE_KEYS.ROLE(id))
       return {

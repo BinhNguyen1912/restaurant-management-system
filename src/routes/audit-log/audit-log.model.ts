@@ -10,9 +10,13 @@ export const AuditActionSchema = z.enum([
   'ORDER_PRICE_CHANGED',
   'PRODUCT_PRICE_CHANGED',
   'PAYMENT_REFUNDED',
+  'ROLE_PERMISSIONS_CHANGED',
+  'ROLE_CREATED',
+  'ROLE_DELETED',
+  'USER_ACCESS_CHANGED',
 ])
 
-export const AuditEntityTypeSchema = z.enum(['ORDER', 'PRODUCT', 'SKU', 'PAYMENT'])
+export const AuditEntityTypeSchema = z.enum(['ORDER', 'PRODUCT', 'SKU', 'PAYMENT', 'ROLE', 'USER'])
 
 export const AuditLogQuerySchema = z.object({
   page: z.coerce.number().int().positive().default(1),

@@ -20,8 +20,13 @@ export type AuditActionType =
   | 'ORDER_PRICE_CHANGED'
   | 'PRODUCT_PRICE_CHANGED'
   | 'PAYMENT_REFUNDED'
+  // thay đổi QUYỀN TRUY CẬP: cấp/thu hồi quyền, đổi vai trò hoặc chi nhánh của tài khoản
+  | 'ROLE_PERMISSIONS_CHANGED'
+  | 'ROLE_CREATED'
+  | 'ROLE_DELETED'
+  | 'USER_ACCESS_CHANGED'
 
-export type AuditEntityTypeValue = 'ORDER' | 'PRODUCT' | 'SKU' | 'PAYMENT'
+export type AuditEntityTypeValue = 'ORDER' | 'PRODUCT' | 'SKU' | 'PAYMENT' | 'ROLE' | 'USER'
 
 export type RecordAuditInput = {
   actorId?: number | null
