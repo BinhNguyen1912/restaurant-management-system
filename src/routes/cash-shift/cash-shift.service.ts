@@ -3,7 +3,7 @@ import { Injectable } from '@nestjs/common'
 import { PrismaService } from '@/shared/service/prisma.service'
 import { LedgerPostingService } from '@/shared/service/ledger-posting.service'
 import { cashShiftTotals, cashVariance, cashVarianceLines } from '@/shared/service/cash-shift-math'
-import { resolveBranchId } from '@/shared/service/branch.resolver'
+import { resolveBranchId, resolveBranchScope } from '@/shared/service/branch.resolver'
 import { toMoneyNumbers } from '@/shared/service/money-serializer'
 import { roleName } from '@/shared/constants/role.constant'
 import { CashShiftRepo } from '@/routes/cash-shift/cash-shift.repo'
@@ -56,7 +56,8 @@ export class CashShiftService {
   }
 
   async current(actor: Actor) {
-    const branchId = await resolveBranchId(this.prismaService, { userId: actor.userId, roleName: actor.roleName })
+    // READ: ADMIN (branchId null) -> undefined = ca đang mở của BẤT KỲ chi nhánh nào
+    const branchId = await resolveBranchScope(this.prismaService, { userId: actor.userId, roleName: actor.roleName })
     const open = await this.repo.findOpenByBranch(branchId)
     if (!open) return null
     const shift = await this.repo.findById(open.id, branchId)
@@ -65,14 +66,16 @@ export class CashShiftService {
   }
 
   async detail(id: number, actor: Actor) {
-    const branchId = await resolveBranchId(this.prismaService, { userId: actor.userId, roleName: actor.roleName })
+    // READ: ADMIN xem được ca của mọi chi nhánh
+    const branchId = await resolveBranchScope(this.prismaService, { userId: actor.userId, roleName: actor.roleName })
     const shift = await this.repo.findById(id, branchId)
     if (!shift) throw CashShiftNotFoundException
     return this.withLiveTotals(shift)
   }
 
   async list(query: CashShiftListQueryType, actor: Actor) {
-    const branchId = await resolveBranchId(this.prismaService, { userId: actor.userId, roleName: actor.roleName })
+    // READ: ADMIN xem lịch sử ca của mọi chi nhánh
+    const branchId = await resolveBranchScope(this.prismaService, { userId: actor.userId, roleName: actor.roleName })
     const result = await this.repo.list(query, branchId)
     return toMoneyNumbers(result)
   }

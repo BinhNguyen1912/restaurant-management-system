@@ -38,9 +38,10 @@ const movementSelect = {
 export class CashShiftRepo {
   constructor(private readonly prismaService: PrismaService) {}
 
-  findOpenByBranch(branchId: number) {
+  /** `branchId` undefined = ca đang mở ở BẤT KỲ chi nhánh nào (ADMIN xem tổng) */
+  findOpenByBranch(branchId?: number) {
     return this.prismaService.cashShift.findFirst({
-      where: { branchId, status: 'OPEN' },
+      where: { ...(branchId ? { branchId } : {}), status: 'OPEN' },
       select: shiftSelect,
     })
   }
@@ -71,8 +72,9 @@ export class CashShiftRepo {
     })
   }
 
-  async list(query: CashShiftListQueryType, branchId: number) {
-    const where: Prisma.CashShiftWhereInput = { branchId }
+  async list(query: CashShiftListQueryType, branchId?: number) {
+    // undefined = không lọc chi nhánh (ADMIN xem lịch sử ca của mọi chi nhánh)
+    const where: Prisma.CashShiftWhereInput = { ...(branchId ? { branchId } : {}) }
     if (query.status) where.status = query.status
     const [data, totalItems] = await Promise.all([
       this.prismaService.cashShift.findMany({

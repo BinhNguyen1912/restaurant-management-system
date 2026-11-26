@@ -4,7 +4,7 @@ import { AreaRepo } from '@/routes/area/area.repo'
 import { isNotFoundPrisma, isUniqueConstraintPrisma } from '@/shared/helper'
 import { Injectable } from '@nestjs/common'
 import { PrismaService } from '@/shared/service/prisma.service'
-import { resolveBranchId } from '@/shared/service/branch.resolver'
+import { resolveBranchId, resolveBranchScope } from '@/shared/service/branch.resolver'
 import { AccessTokenPayload } from '@/shared/types/jwt.types'
 
 @Injectable()
@@ -14,8 +14,14 @@ export class AreaService {
     private readonly prismaService: PrismaService,
   ) {}
 
+  /** Resolver cho đường GHI: luôn trả đúng 1 chi nhánh (không có chi nhánh -> chi nhánh active đầu) */
   private branchIdOf(actor?: { userId?: number; roleName?: string }) {
     return resolveBranchId(this.prismaService, { userId: actor?.userId, roleName: actor?.roleName })
+  }
+
+  /** Resolver cho đường ĐỌC: ADMIN -> undefined = mọi chi nhánh (xem chú thích ở orders.service) */
+  private branchScopeOf(actor?: { userId?: number; roleName?: string }) {
+    return resolveBranchScope(this.prismaService, { userId: actor?.userId, roleName: actor?.roleName })
   }
 
   async create({ createdById, actorRoleName, data }: { data: AreaBodyType; createdById: number; actorRoleName?: string }) {
@@ -32,7 +38,7 @@ export class AreaService {
     }
   }
   async getAreaById(areaId: number, actor?: AccessTokenPayload) {
-    const area = await this.areaRepo.GetAreaById(areaId, await this.branchIdOf(actor))
+    const area = await this.areaRepo.GetAreaById(areaId, await this.branchScopeOf(actor))
     if (!area) throw AreaNotFoundException
     return area
   }
@@ -50,7 +56,8 @@ export class AreaService {
     }
   }
   async getList(query: AreaQueryType, actor?: AccessTokenPayload) {
-    return await this.areaRepo.list(query, await this.branchIdOf(actor))
+    // READ: ADMIN thấy khu vực của mọi chi nhánh
+    return await this.areaRepo.list(query, await this.branchScopeOf(actor))
   }
   async delete({ areaId, deletedById }: { areaId: number; deletedById: number }) {
     return await this.areaRepo.delete({

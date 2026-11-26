@@ -1,4 +1,4 @@
-import { resolveBranchId } from '@/shared/service/branch.resolver'
+import { resolveBranchId, resolveBranchScope } from '@/shared/service/branch.resolver'
 import { BadRequestException, Injectable } from '@nestjs/common'
 
 import { OrdersRepo } from '@/routes/orders/orders.repo'
@@ -17,8 +17,13 @@ export class OrdersService {
   ) {}
   async list(query: OrderQueryType, actor?: { userId?: number; roleName?: string }) {
     try {
-      // Loc theo chi nhanh cua nguoi dang dang nhap (ADR 0001 D4): don cua chi nhanh khac khong lo ra
-      const branchId = await resolveBranchId(this.prismaService, {
+      /**
+       * READ: dùng `resolveBranchScope` (ADMIN -> undefined = **mọi chi nhánh**), không dùng
+       * `resolveBranchId`. Hàm sau là resolver cho đường GHI: nó luôn trả đúng 1 chi nhánh và
+       * fallback "chi nhánh active đầu tiên", nên ADMIN (branchId = null) chỉ thấy chi nhánh 1 —
+       * trong khi báo cáo/tổng quan thấy cả 3. Nhìn như mất dữ liệu.
+       */
+      const branchId = await resolveBranchScope(this.prismaService, {
         userId: actor?.userId,
         roleName: actor?.roleName,
       })
@@ -30,8 +35,9 @@ export class OrdersService {
 
   async getById(orderId: number, actor?: { userId?: number; roleName?: string }) {
     try {
-      // Doc theo id van phai kiem chi nhanh: neu khong, biet id la doc duoc don chi nhanh khac
-      const branchId = await resolveBranchId(this.prismaService, {
+      // Đọc theo id vẫn phải kiểm chi nhánh: không thì biết id là đọc được đơn chi nhánh khác.
+      // ADMIN: undefined = không lọc (xem được đơn của mọi chi nhánh).
+      const branchId = await resolveBranchScope(this.prismaService, {
         userId: actor?.userId,
         roleName: actor?.roleName,
       })
