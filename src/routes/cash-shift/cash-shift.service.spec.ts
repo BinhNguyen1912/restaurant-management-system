@@ -151,6 +151,37 @@ describe('CashShiftService.addMovement — chứng từ', () => {
       amount: 50_000,
       evidenceUrls: urls,
     })
-    expect(repo.addMovement).toHaveBeenCalledWith(7, 1, expect.objectContaining({ evidenceUrls: urls }))
+    // tham số thứ 4 là transaction (movement + bút toán phải cùng một transaction)
+    expect(repo.addMovement).toHaveBeenCalledWith(7, 1, expect.objectContaining({ evidenceUrls: urls }), expect.anything())
+  })
+
+  it('chi tay -> bút toán Nợ OTHER_EXPENSE / Có CASH (vào sổ cái)', async () => {
+    const { service, ledgerPosting } = makeService()
+
+    const result = await service.addMovement(7, staff, { type: 'OUT', reason: 'mua đá', amount: 50_000 })
+
+    expect(ledgerPosting.postEntry).toHaveBeenCalledTimes(1)
+    const entry = ledgerPosting.postEntry.mock.calls[0][0]
+    expect(entry.refType).toBe('CASH_MOVEMENT')
+    expect(entry.branchId).toBe(1)
+    expect(entry.idempotencyKey).toBe('cash-movement:1')
+    expect(entry.lines).toEqual([
+      { accountCode: 'OTHER_EXPENSE', direction: 'DEBIT', amount: expect.anything() },
+      { accountCode: 'CASH', direction: 'CREDIT', amount: expect.anything() },
+    ])
+    // trả về id bút toán để UI/đối soát biết khoản này đã ghi sổ
+    expect(result.ledgerEntryId).toBe(99)
+  })
+
+  it('thu tay -> bút toán Nợ CASH / Có OTHER_INCOME', async () => {
+    const { service, ledgerPosting } = makeService()
+
+    await service.addMovement(7, staff, { type: 'IN', reason: 'thu khác', amount: 300_000 })
+
+    const entry = ledgerPosting.postEntry.mock.calls[0][0]
+    expect(entry.lines).toEqual([
+      { accountCode: 'CASH', direction: 'DEBIT', amount: expect.anything() },
+      { accountCode: 'OTHER_INCOME', direction: 'CREDIT', amount: expect.anything() },
+    ])
   })
 })

@@ -24,6 +24,8 @@ export type LedgerRefType =
   | 'CASH_VARIANCE'
   | 'VNPAY_SETTLEMENT'
   | 'ORDER_COGS'
+  /** Thu/chi tiền mặt tay trong ca (Nợ CASH/Có OTHER_INCOME hoặc ngược lại) */
+  | 'CASH_MOVEMENT'
 
 export type PostEntryInput = {
   branchId: number

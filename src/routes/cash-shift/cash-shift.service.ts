@@ -77,14 +77,58 @@ export class CashShiftService {
     return toMoneyNumbers(result)
   }
 
-  /** Thu/chi tien mat trong ca dang mo */
+  /**
+   * Thu/chi tiền mặt trong ca đang mở — và **ghi bút toán sổ cái** cho khoản đó.
+   *
+   * Trước đây chỉ ghi bảng `CashMovement`: tiền vào/ra két KHÔNG vào sổ cái, nên Sổ quỹ / Sổ cái /
+   * Báo cáo không phản ánh tiền mặt thực tế, và số két lệch với sổ mà không ai thấy.
+   *
+   * Bút toán đối ứng:
+   *  - IN : Nợ CASH / Có OTHER_INCOME   (thu khác, không phải doanh thu bán hàng)
+   *  - OUT: Nợ OTHER_EXPENSE / Có CASH
+   * Chạy trong CÙNG transaction với việc tạo movement: không thể có chuyện "có phiếu thu mà sổ
+   * không ghi" hoặc ngược lại.
+   */
   async addMovement(id: number, actor: Actor, data: CreateCashMovementType) {
     const shift = await this.requireOpenShift(id, actor)
-    const movement = await this.repo.addMovement(shift.id, shift.branchId, {
-      ...data,
-      createdById: actor.userId,
+
+    const result = await this.prismaService.$transaction(async (tx) => {
+      const movement = await this.repo.addMovement(
+        shift.id,
+        shift.branchId,
+        { ...data, createdById: actor.userId },
+        tx,
+      )
+
+      const amount = new Prisma.Decimal(data.amount)
+      const lines =
+        data.type === 'IN'
+          ? [
+              { accountCode: 'CASH', direction: 'DEBIT' as const, amount },
+              { accountCode: 'OTHER_INCOME', direction: 'CREDIT' as const, amount },
+            ]
+          : [
+              { accountCode: 'OTHER_EXPENSE', direction: 'DEBIT' as const, amount },
+              { accountCode: 'CASH', direction: 'CREDIT' as const, amount },
+            ]
+
+      const entry = await this.ledgerPosting.postEntry(
+        {
+          branchId: shift.branchId,
+          refType: 'CASH_MOVEMENT',
+          refId: movement.id,
+          // cùng 1 phiếu thu chỉ có 1 bút toán, kể cả khi request bị gửi lặp
+          idempotencyKey: `cash-movement:${movement.id}`,
+          memo: `${data.type === 'IN' ? 'Thu' : 'Chi'} tiền mặt trong ca #${shift.id}: ${data.reason}`,
+          lines,
+        },
+        tx,
+      )
+
+      return { movement, ledgerEntryId: entry.id }
     })
-    return toMoneyNumbers(movement)
+
+    return toMoneyNumbers({ ...result.movement, ledgerEntryId: result.ledgerEntryId })
   }
 
   /**

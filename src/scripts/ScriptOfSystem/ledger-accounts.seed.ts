@@ -39,6 +39,10 @@ const ACCOUNTS: AccountSeed[] = [
   { code: 'CASH_SHORTAGE', name: 'Thiếu tiền quỹ', type: 'EXPENSE' },
   { code: 'CASH_OVERAGE', name: 'Thừa tiền quỹ', type: 'REVENUE' },
   { code: 'ROUNDING_ADJUSTMENT', name: 'Chênh lệch làm tròn', type: 'REVENUE' },
+
+  // Thu/chi tiền mặt TAY trong ca (không phải doanh thu bán hàng)
+  { code: 'OTHER_INCOME', name: 'Thu nhập khác bằng tiền mặt', type: 'REVENUE' },
+  { code: 'OTHER_EXPENSE', name: 'Chi phí khác bằng tiền mặt', type: 'EXPENSE' },
 ]
 
 async function main() {
