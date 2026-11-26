@@ -225,14 +225,27 @@ export const ProductNameInputSchema = z
   .max(100, 'Tên món tối đa 100 ký tự')
 
 /** Ảnh sản phẩm: phải là URL http(s) thật (chặn blob: do upload thất bại nhưng vẫn gửi lên) */
+/**
+ * Ảnh sản phẩm.
+ *
+ * Lọc BỎ chuỗi rỗng TRƯỚC khi validate: `catalog.seed` cũ ghi `images: ['']` (chỗ giữ chỗ cho ảnh
+ * demo), và FE gửi lại nguyên mảng đó khi admin sửa sản phẩm → `''` không phải URL nên cả request
+ * **400 "Ảnh phải là URL http(s) hợp lệ"**. Tức là sản phẩm seed **không sửa được** dù người dùng
+ * không đụng vào ảnh. Lọc ở đây sửa được cả dữ liệu cũ lẫn dữ liệu mới.
+ */
 export const ProductImagesInputSchema = z
-  .array(
+  .array(z.string().trim())
+  .transform((list) => list.filter((url) => url.length > 0))
+  .pipe(
     z
-      .string()
-      .regex(/^https?:\/\/.+/i, 'Ảnh phải là URL http(s) hợp lệ')
-      .max(500, 'URL ảnh quá dài'),
+      .array(
+        z
+          .string()
+          .regex(/^https?:\/\/.+/i, 'Ảnh phải là URL http(s) hợp lệ')
+          .max(500, 'URL ảnh quá dài'),
+      )
+      .max(10, 'Tối đa 10 ảnh'),
   )
-  .max(10, 'Tối đa 10 ảnh')
 
 export const ProductDescriptionInputSchema = z.string().trim().max(500, 'Mô tả tối đa 500 ký tự').default('')
 
