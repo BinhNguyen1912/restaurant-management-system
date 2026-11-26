@@ -257,6 +257,39 @@ async function repairData(adminId: number) {
     fixed.phanLoaiLai = (fixed.phanLoaiLai ?? 0) + 1
   }
 
+  // 7. Đơn rác: PENDING, thanh toán PENDING, KHÔNG có bút toán nào và đã quá 1 ngày.
+  //    Đây là đơn do lần chạy e2e bị huỷ để lại — hiện trong danh sách đơn của staging như đơn
+  //    thật nhưng chưa từng có tiền. Bút toán là bằng chứng "đơn có tiền", nên không có = xoá được.
+  const oldPendingOrders = await prisma.order.findMany({
+    where: {
+      deletedAt: null,
+      status: 'PENDING',
+      createdAt: { lt: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+      payment: { is: { status: 'PENDING' } },
+    },
+    select: { id: true, paymentId: true },
+  })
+  for (const order of oldPendingOrders) {
+    // Bút toán là bằng chứng "đơn đã có tiền" -> có bút toán thì KHÔNG xoá
+    const entries = await prisma.ledgerEntry.count({
+      where: { refId: order.id, refType: { in: ['ORDER_PAID_CASH', 'ORDER_PAID_VNPAY'] } },
+    })
+    if (entries > 0) continue
+    await prisma.productSKUSnapshot.deleteMany({ where: { orderId: order.id } })
+    await prisma.order.delete({ where: { id: order.id } })
+    fixed.donRac = (fixed.donRac ?? 0) + 1
+  }
+
+  // 8. Payment mồ côi: không còn đơn nào trỏ tới, vẫn PENDING (chưa từng có tiền) -> xoá
+  const orphans = await prisma.payment.findMany({
+    where: { status: 'PENDING', order: { none: {} } },
+    select: { id: true },
+  })
+  if (orphans.length) {
+    await prisma.payment.deleteMany({ where: { id: { in: orphans.map((payment) => payment.id) } } })
+    fixed.paymentMoCoi = orphans.length
+  }
+
   return fixed
 }
 
