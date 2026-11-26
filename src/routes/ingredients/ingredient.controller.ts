@@ -10,6 +10,12 @@ import {
 import { IngredientService } from '@/routes/ingredients/ingredient.service'
 import { ActiveUser } from '@/shared/decorators/active-user.decorator'
 import { MessageResDto } from '@/shared/dtos/respone.dto'
+import { ActiveRole } from '@/shared/decorators/active-role.decorator'
+import {
+  CreateStockReceiptDTO,
+  CreateStockReceiptResDTO,
+  StockReceiptListResDTO,
+} from '@/routes/ingredients/ingredient.dtos'
 import { Body, Controller, Delete, Get, Param, Post, Put, Query } from '@nestjs/common'
 import { ZodSerializerDto } from 'nestjs-zod'
 
@@ -45,6 +51,30 @@ export class IngredientController {
     @Param() param: GetIngredientParamDTO,
   ) {
     return await this.ingredientService.update({ data: body, id: param.id, updatedById: userId })
+  }
+
+  /** Nhập hàng: cộng dồn tồn kho, kèm ảnh bằng chứng + giá nhập */
+  @Post(':id/receipts')
+  @ZodSerializerDto(CreateStockReceiptResDTO)
+  async createReceipt(
+    @Param() param: GetIngredientParamDTO,
+    @Body() body: CreateStockReceiptDTO,
+    @ActiveUser('userId') userId: number,
+    @ActiveRole('name') roleName: string,
+  ) {
+    return await this.ingredientService.createStockReceipt({
+      ingredientId: param.id,
+      data: body,
+      createdById: userId,
+      actor: { roleName },
+    })
+  }
+
+  /** Lịch sử nhập hàng của nguyên liệu (ảnh, giá, người nhận) */
+  @Get(':id/receipts')
+  @ZodSerializerDto(StockReceiptListResDTO)
+  async listReceipts(@Param() param: GetIngredientParamDTO) {
+    return await this.ingredientService.listStockReceipts(param.id)
   }
 
   @Delete(':id')

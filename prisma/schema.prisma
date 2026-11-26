@@ -240,6 +240,7 @@ model User {
   createdReminders            Reminders[]           @relation("RemindersCreatedBy")
   deletedReminders            Reminders[]           @relation("RemindersDeletedBy")
   updatedReminders            Reminders[]           @relation("RemindersUpdatedBy")
+  createdStockReceipts        StockReceipt[]        @relation("StockReceiptCreatedBy")
   createdReservation          Reservation[]         @relation("ReservationCreateBy")
   deletedReservation          Reservation[]         @relation("ReservationDeleteBy")
   updatedReservation          Reservation[]         @relation("ReservationUpdateBy")
@@ -828,6 +829,7 @@ model Ingredient {
   deletedById         Int?
   updatedById         Int?
   image               String?
+  stockReceipts       StockReceipt[]
   createdBy           User?                 @relation("ingredientCreateBy", fields: [createdById], references: [id])
   deletedBy           User?                 @relation("ingredientDeleteBy", fields: [deletedById], references: [id])
   unit                Unit                  @relation(fields: [unitId], references: [name], onDelete: NoAction, onUpdate: NoAction)
@@ -877,6 +879,32 @@ model VoucherSnapshot {
 /// * - 1 công thức (recipeId)
 /// * - 1 nguyên liệu (ingredientId)
 /// * - kèm thêm thông tin bổ sung: quantity, unitId
+/// Một lần NHẬP HÀNG: hàng về bao nhiêu, giá bao nhiêu, ai nhận, ảnh bằng chứng.
+/// Tồn kho KHÔNG ghi đè mà CỘNG dồn (`stock = stock + quantity`), nên không thể "nhập 5 mà mất 10".
+/// `unitCost` của nguyên liệu được tính lại theo bình quân gia quyền để COGS sát thực tế.
+model StockReceipt {
+  id           Int      @id @default(autoincrement())
+  ingredientId Int
+  ingredient   Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  /// số lượng nhập, theo đơn vị của nguyên liệu (Ingredient.unitId)
+  quantity     Float
+  /// giá nhập cho 1 đơn vị trong lần này
+  unitCost     Decimal  @default(0) @db.Decimal(14, 2)
+  /// nhà cung cấp (chuỗi tự do — chưa có danh mục NCC)
+  supplier     String?  @db.VarChar(255)
+  note         String?  @db.VarChar(500)
+  /// ảnh bằng chứng (phiếu giao hàng, hàng thực tế) — URL từ /media
+  images       String[]
+  /// giá trị tồn SAU khi nhập, để đọc lại biết ngay đã cộng đúng
+  stockAfter   Float
+  receivedAt   DateTime @default(now())
+  createdById  Int?
+  createdBy    User?    @relation("StockReceiptCreatedBy", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  createdAt    DateTime @default(now())
+
+  @@index([ingredientId, receivedAt])
+}
+
 model SKURecipeIngredient {
   id           Int        @id @default(autoincrement())
   skuId        Int
@@ -1301,6 +1329,8 @@ enum AuditAction {
   ROLE_DELETED
   /// đổi vai trò hoặc chi nhánh của một tài khoản
   USER_ACCESS_CHANGED
+  /// nhập hàng: tồn kho tăng, có ảnh bằng chứng
+  STOCK_RECEIVED
 }
 
 enum AuditEntityType {
@@ -1310,6 +1340,7 @@ enum AuditEntityType {
   PAYMENT
   ROLE
   USER
+  INGREDIENT
 }
 
 model AuditLog {

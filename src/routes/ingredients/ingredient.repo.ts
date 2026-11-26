@@ -1,4 +1,5 @@
 /* eslint-disable prefer-const */
+import { Prisma } from '@prisma/client'
 import { Injectable } from '@nestjs/common'
 import { PrismaService } from '@/shared/service/prisma.service'
 import {
@@ -146,5 +147,78 @@ export class IngredientRepo {
       totalPages: Math.ceil(totalItems / limit),
       totalItems,
     } as any
+  }
+
+  /**
+   * Ghi 1 lần nhập hàng và CỘNG DỒN tồn kho trong CÙNG transaction.
+   *
+   * Dùng `increment` (không ghi đè) nên không thể "nhập 5 mà mất 10". Giá vốn tính lại theo
+   * bình quân gia quyền: (tồn cũ × giá cũ + SL nhập × giá nhập) / (tồn cũ + SL nhập).
+   * Nếu tồn cũ ≤ 0 thì lấy thẳng giá nhập lần này (không chia cho số âm/0).
+   */
+  async createStockReceipt({
+    ingredientId,
+    quantity,
+    unitCost,
+    supplier,
+    note,
+    images,
+    createdById,
+  }: {
+    ingredientId: number
+    quantity: number
+    unitCost: number
+    supplier?: string
+    note?: string
+    images?: string[]
+    createdById: number
+  }) {
+    return this.prismaService.$transaction(async (tx) => {
+      const ingredient = await tx.ingredient.findUnique({
+        where: { id: ingredientId, deletedAt: null },
+        select: { id: true, stock: true, unitCost: true },
+      })
+      if (!ingredient) return null
+
+      const oldStock = Number(ingredient.stock)
+      const oldCost = Number(ingredient.unitCost)
+      const newStock = oldStock + quantity
+      const newUnitCost =
+        oldStock > 0 ? (oldStock * oldCost + quantity * unitCost) / newStock : unitCost
+
+      const updated = await tx.ingredient.update({
+        where: { id: ingredientId },
+        data: {
+          stock: newStock,
+          unitCost: new Prisma.Decimal(Math.round(newUnitCost * 100) / 100),
+        },
+        select: { id: true, name: true, stock: true, unitCost: true, unitId: true, minStock: true },
+      })
+
+      const receipt = await tx.stockReceipt.create({
+        data: {
+          ingredientId,
+          quantity,
+          unitCost: new Prisma.Decimal(unitCost),
+          supplier: supplier?.trim() || null,
+          note: note?.trim() || null,
+          images: images ?? [],
+          stockAfter: newStock,
+          createdById,
+        },
+      })
+
+      return { receipt, ingredient: updated }
+    })
+  }
+
+  /** Lịch sử nhập hàng của 1 nguyên liệu, mới nhất trước */
+  listStockReceipts(ingredientId: number, limit = 50) {
+    return this.prismaService.stockReceipt.findMany({
+      where: { ingredientId },
+      orderBy: { receivedAt: 'desc' },
+      take: limit,
+      include: { createdBy: { select: { name: true } } },
+    })
   }
 }
