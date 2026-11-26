@@ -10,7 +10,7 @@ import {
   RunQueryDTO,
   RunResDTO,
 } from '@/routes/reconciliation/reconciliation.dtos'
-import { resolveBranchId } from '@/shared/service/branch.resolver'
+import { resolveBranchScope } from '@/shared/service/branch.resolver'
 import { PrismaService } from '@/shared/service/prisma.service'
 import { DEFAULT_RECONCILIATION_PERIOD, resolvePeriod } from '@/routes/reconciliation/reconciliation.period'
 
@@ -30,7 +30,10 @@ export class ReconciliationController {
   @ZodSerializerDto(RunResDTO)
   async run(@Body() body: RunQueryDTO, @ActiveUser() user: AccessTokenPayload) {
     const period = resolvePeriod(body.fromDate, body.toDate)
-    const branchId = body.branchId ?? (await resolveBranchId(this.prismaService, user))
+    // READ: ADMIN không truyền branchId -> undefined = đối soát MỌI chi nhánh
+    const branchId =
+      body.branchId ??
+      (await resolveBranchScope(this.prismaService, { userId: user.userId, roleName: user.roleName }))
     const run = await this.reconciliationService.executeRun({ ...period, branchId })
     return {
       message: 'Success.ReconciliationRun',

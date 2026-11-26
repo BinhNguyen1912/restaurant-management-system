@@ -1,4 +1,4 @@
-import { resolveBranchId } from '@/shared/service/branch.resolver'
+import { resolveBranchId, resolveBranchScope } from '@/shared/service/branch.resolver'
 import { TableExitsException, TableNotFoundException } from '@/routes/table/table.error'
 import { CreateTableBodyType, UpdateTableBodyType } from '@/routes/table/table.model'
 import { TableRepo } from '@/routes/table/table.repo'
@@ -47,7 +47,8 @@ export class TableService {
 
   async getListTable(userId?: number) {
     try {
-      const branchId = await resolveBranchId(this.prismaService, { userId })
+      // READ: ADMIN thấy bàn của mọi chi nhánh (undefined = không lọc)
+      const branchId = await resolveBranchScope(this.prismaService, { userId })
       const data = await this.tableRepo.getTableList(branchId)
       return {
         message: 'Success.GetTableList',

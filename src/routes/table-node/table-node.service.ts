@@ -1,5 +1,5 @@
 import { PrismaService } from '@/shared/service/prisma.service'
-import { resolveBranchId } from '@/shared/service/branch.resolver'
+import { resolveBranchId, resolveBranchScope } from '@/shared/service/branch.resolver'
 import { TableNodeAlreadyExitsException, TableNodeNotFoundException } from '@/routes/table-node/table-node.error'
 import {
   TableNodeBodyType,
@@ -40,8 +40,8 @@ export class TableNodeService {
   }
 
   async getTableNodeById(TableNodeId: number, actor?: { userId?: number; roleName?: string }) {
-    // Ban cua chi nhanh khac -> coi nhu khong ton tai
-    const branchId = await resolveBranchId(this.prismaService, {
+    // Bàn của chi nhánh khác vẫn coi như không tồn tại. ADMIN (undefined) xem được mọi chi nhánh.
+    const branchId = await resolveBranchScope(this.prismaService, {
       userId: actor?.userId,
       roleName: actor?.roleName,
     })
@@ -94,7 +94,8 @@ export class TableNodeService {
   }
 
   async getList(query: TableNodeQueryType, actor?: { userId?: number; roleName?: string }) {
-    const branchId = await resolveBranchId(this.prismaService, {
+    // READ: ADMIN thấy sơ đồ bàn của mọi chi nhánh
+    const branchId = await resolveBranchScope(this.prismaService, {
       userId: actor?.userId,
       roleName: actor?.roleName,
     })

@@ -1986,19 +1986,47 @@ describe('Finance (e2e)', () => {
     expect(String(recreate.body.message)).toContain(code)
   })
 
-  it('scope chi nhánh: token chi nhánh 1 không đọc được khu vực của chi nhánh khác', async () => {
+  it('scope chi nhánh: ADMIN thấy khu vực của MỌI chi nhánh, nhân viên chỉ thấy chi nhánh mình', async () => {
     const other = await prisma.branch.create({
       data: { code: `E2E-${Date.now()}`, name: 'E2E chi nhánh phụ', address: 'e2e', isActive: true },
     })
     created.branchIds.push(other.id)
-    const area = await prisma.area.create({ data: { name: `E2E khu ${Date.now()}`, branchId: other.id } })
+    const area = await prisma.area.create({
+      data: { name: `E2E khu ${Date.now()}`, branchId: other.id, isActive: true },
+    })
     created.areaIds.push(area.id)
 
-    const list = await api().get('/area?page=1&limit=100').set(auth()).expect(200)
-    const ids = (list.body.data ?? []).map((row: any) => row.id)
-    expect(ids).not.toContain(area.id)
+    // ADMIN là cấp tổng: phải THẤY khu vực của chi nhánh khác (trước đây test này assert ngược lại,
+    // vì đường đọc dùng resolveBranchId nên admin bị kẹt ở chi nhánh 1 — chính là bug).
+    const adminList = await api().get('/area?page=1&limit=100').set(auth()).expect(200)
+    const adminIds = (adminList.body.data ?? []).map((row: any) => row.id)
+    expect(adminIds).toContain(area.id)
 
-    const detail = await api().get(`/area/${area.id}`).set(auth())
+    // Nhân viên gắn chi nhánh 1 thì KHÔNG thấy khu vực của chi nhánh khác
+    const branchOne = await prisma.branch.findFirst({ where: { id: { not: other.id }, isActive: true }, orderBy: { id: 'asc' } })
+    const staffRole = await prisma.role.findFirst({ where: { name: 'STAFF' } })
+    const email = `e2e-areascope-${Date.now()}@example.com`
+    const staff = await api()
+      .post('/users')
+      .set(auth())
+      .send({
+        email,
+        password: '123456',
+        name: 'NV Area Scope',
+        roleId: staffRole!.id,
+        branchId: branchOne!.id,
+        status: 'ACTIVE',
+      })
+      .expect(201)
+    created.userIds.push(staff.body.id)
+    const staffToken = (await api().post('/auth/login').send({ email, password: '123456' }).expect(201)).body
+      .accessToken as string
+
+    const staffList = await api().get('/area?page=1&limit=100').set({ Authorization: `Bearer ${staffToken}` }).expect(200)
+    const staffIds = (staffList.body.data ?? []).map((row: any) => row.id)
+    expect(staffIds).not.toContain(area.id)
+
+    const detail = await api().get(`/area/${area.id}`).set({ Authorization: `Bearer ${staffToken}` })
     expect([404, 422]).toContain(detail.status)
   })
 })
