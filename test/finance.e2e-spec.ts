@@ -189,7 +189,23 @@ describe('Finance (e2e)', () => {
     }
 
     // Dọn dữ liệu test
+    // Thu/chi tay trong ca giờ sinh BÚT TOÁN: phải xoá bút toán TRƯỚC khi xoá movement, nếu không
+    // sổ cái còn bút toán trỏ tới movement đã mất (đã xảy ra: 9 bút toán mồ côi).
     if (created.shiftIds.length) {
+      const movementIds = (
+        await prisma.cashMovement.findMany({ where: { shiftId: { in: created.shiftIds } }, select: { id: true } })
+      ).map((movement) => movement.id)
+      if (movementIds.length) {
+        const movementEntries = await prisma.ledgerEntry.findMany({
+          where: { refType: 'CASH_MOVEMENT', refId: { in: movementIds } },
+          select: { id: true },
+        })
+        if (movementEntries.length) {
+          const entryIds = movementEntries.map((entry) => entry.id)
+          await attempt('cash movement ledger lines', () => prisma.ledgerLine.deleteMany({ where: { entryId: { in: entryIds } } }))
+          await attempt('cash movement ledger entries', () => prisma.ledgerEntry.deleteMany({ where: { id: { in: entryIds } } }))
+        }
+      }
       await attempt('cash movements', () => prisma.cashMovement.deleteMany({ where: { shiftId: { in: created.shiftIds } } }))
       await attempt('cash shifts', () => prisma.cashShift.deleteMany({ where: { id: { in: created.shiftIds } } }))
     }
