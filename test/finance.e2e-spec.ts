@@ -183,6 +183,31 @@ describe('Finance (e2e)', () => {
   })
 
   /**
+   * Chọn SKU **có định lượng nguyên liệu** để đặt món.
+   *
+   * Không phải SKU nào cũng đặt được: SKU chưa có recipe bị BE từ chối thẳng
+   * (`NO_RECIPE: "Sản phẩm … chưa có định lượng nguyên liệu"`). Trước đây test lấy SKU đầu tiên
+   * theo id — trên máy dev id 1 tình cờ có recipe nên xanh, trên CI id 1 là món chưa có recipe
+   * nên 7 test đỏ với 400.
+   */
+  const pickSkuWithRecipe = async () => {
+    const sku = await prisma.sKU.findFirst({
+      where: {
+        deletedAt: null,
+        product: { deletedAt: null, status: 'ACTIVE' },
+        skuRecipeIngredients: { some: { deletedAt: null } },
+      },
+      orderBy: { id: 'asc' },
+    })
+    if (!sku) {
+      throw new Error(
+        'Không có SKU nào có định lượng — dữ liệu nền thiếu recipe (seed:demo tạo recipe cho vài món).',
+      )
+    }
+    return sku
+  }
+
+  /**
    * Tạo đơn cho khách và **ném lỗi kèm body** nếu không phải 2xx.
    *
    * Lý do: `.expect(201)` chỉ nói "got 400", không nói vì sao. Trên CI cần biết ngay lỗi nghiệp vụ
@@ -396,7 +421,7 @@ describe('Finance (e2e)', () => {
     const guestId = guestLogin.body.guest.id as number
     created.guestIds.push(guestId)
 
-    const sku = await prisma.sKU.findFirst({ where: { product: { deletedAt: null, status: 'ACTIVE' } }, orderBy: { id: 'asc' } })
+    const sku = await pickSkuWithRecipe()
     expect(sku).toBeTruthy()
 
     const order = await createGuestOrder(guestId, [{ skuId: sku!.id, quantity: 2 }], '')
@@ -538,7 +563,7 @@ describe('Finance (e2e)', () => {
       .expect(201)
     const guestId = guestLogin.body.guest.id as number
     created.guestIds.push(guestId)
-    const sku = await prisma.sKU.findFirst({ where: { product: { deletedAt: null, status: 'ACTIVE' } }, orderBy: { id: 'asc' } })
+    const sku = await pickSkuWithRecipe()
     const order = await createGuestOrder(guestId, [{ skuId: sku!.id, quantity: 1 }], '')
     created.orderIds.push(order.body.id)
     created.paymentIds.push(order.body.paymentId)
@@ -579,7 +604,7 @@ describe('Finance (e2e)', () => {
       .expect(201)
     const guestId = guestLogin.body.guest.id as number
     created.guestIds.push(guestId)
-    const sku = await prisma.sKU.findFirst({ where: { product: { deletedAt: null, status: 'ACTIVE' } }, orderBy: { id: 'asc' } })
+    const sku = await pickSkuWithRecipe()
     const order = await createGuestOrder(guestId, [{ skuId: sku!.id, quantity: 1 }], '')
     const orderId = order.body.id as number
     created.orderIds.push(orderId)
@@ -675,7 +700,7 @@ describe('Finance (e2e)', () => {
     const guestId = guestLogin.body.guest.id as number
     created.guestIds.push(guestId)
 
-    const sku = await prisma.sKU.findFirst({ where: { product: { deletedAt: null, status: 'ACTIVE' } }, orderBy: { id: 'asc' } })
+    const sku = await pickSkuWithRecipe()
     const code = `E2E${Date.now()}`
     const voucher = await prisma.voucher.create({
       data: {
@@ -755,7 +780,7 @@ describe('Finance (e2e)', () => {
     const guestId = guestLogin.body.guest.id as number
     created.guestIds.push(guestId)
 
-    const sku = await prisma.sKU.findFirst({ where: { product: { deletedAt: null, status: 'ACTIVE' } }, orderBy: { id: 'asc' } })
+    const sku = await pickSkuWithRecipe()
     const order = await createGuestOrder(guestId, [{ skuId: sku!.id, quantity: 3 }], '')
     created.orderIds.push(order.body.id)
     created.paymentIds.push(order.body.paymentId)
@@ -791,7 +816,7 @@ describe('Finance (e2e)', () => {
       .expect(201)
     const guestId = guestLogin.body.guest.id as number
     created.guestIds.push(guestId)
-    const sku = await prisma.sKU.findFirst({ where: { product: { deletedAt: null, status: 'ACTIVE' } }, orderBy: { id: 'asc' } })
+    const sku = await pickSkuWithRecipe()
     const order = await createGuestOrder(guestId, [{ skuId: sku!.id, quantity: 1 }], '')
     created.orderIds.push(order.body.id)
     created.paymentIds.push(order.body.paymentId)
