@@ -949,6 +949,33 @@ describe('Finance (e2e)', () => {
     }
   })
 
+  it('mọi endpoint báo cáo: branchId phải là number hoặc null, KHÔNG được undefined (500)', async () => {
+    // Lỗi thật đã xảy ra: `revenueByItem` trả `branchId: undefined` khi ADMIN xem tổng ->
+    // ZodSerialization ném "expected number, received undefined" -> 500. Test này gọi HẾT các
+    // endpoint có trường branchId để không tái diễn ở bất kỳ endpoint nào khác.
+    const endpoints = [
+      '/reports/revenue',
+      '/reports/revenue/by-item',
+      '/dashboard/overview',
+      '/ledger/cash-book',
+      '/ledger/reconciliation',
+    ]
+
+    for (const endpoint of endpoints) {
+      const res = await api().get(endpoint).set(auth())
+      expect({ endpoint, status: res.status }).toEqual({ endpoint, status: 200 })
+
+      // KHÔNG dùng `??`: null là giá trị hợp lệ ("tất cả chi nhánh"), `??` sẽ biến nó thành
+      // fallback và test báo sai. Lấy đúng object chứa trường rồi kiểm tra `undefined`.
+      const payload = res.body.data ? res.body.data : res.body
+      const branchId = payload.branchId
+      expect({ endpoint, branchId: branchId === undefined ? 'undefined' : 'ok' }).toEqual({
+        endpoint,
+        branchId: 'ok',
+      })
+    }
+  })
+
   it('ADMIN là cấp tổng: báo cáo/tổng quan không chọn chi nhánh thì ra TỔNG mọi chi nhánh', async () => {
     const branches = await prisma.branch.findMany({ where: { isActive: true }, orderBy: { id: 'asc' } })
 
