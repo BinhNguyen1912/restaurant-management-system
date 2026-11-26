@@ -1,0 +1,16 @@
+# Reverse proxy + HTTPS tự động cho cả FE và BE.
+# app.$DOMAIN -> container `fe` (repo FE), api.$DOMAIN -> container `be` (repo BE).
+# Cả 2 container nằm trong network `res-mana` nên Caddy gọi bằng tên container.
+{$DOMAIN} {
+	handle /api/* {
+		# FE có route handler /api/* riêng -> vẫn về FE
+		reverse_proxy fe:3000
+	}
+	handle {
+		reverse_proxy fe:3000
+	}
+}
+
+api.{$DOMAIN} {
+	reverse_proxy be:4000
+}

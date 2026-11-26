@@ -1,0 +1,72 @@
+# Stack BE trên VPS: API + Postgres + Redis. FE có Docker riêng (repo FE).
+# Dùng: docker compose --env-file .env.production up -d --build
+#
+# Postgres/Redis KHÔNG mở port ra ngoài: chỉ container trong cùng network truy cập được.
+# Caddy (reverse proxy) ở file riêng để FE và BE không phải biết nhau.
+services:
+  be:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: res-mana-be:latest
+    container_name: res-mana-be
+    restart: unless-stopped
+    env_file: .env.production
+    environment:
+      # trong network của compose, host là tên service
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+      REDIS_URL: redis://redis:6379
+      PORT: 4000
+      NODE_ENV: production
+      TZ: Asia/Ho_Chi_Minh
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [res-mana]
+    # không publish port: Caddy gọi be:4000 qua network
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: res-mana-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      TZ: Asia/Ho_Chi_Minh
+      PGTZ: Asia/Ho_Chi_Minh
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [res-mana]
+
+  redis:
+    image: redis:7-alpine
+    container_name: res-mana-redis
+    restart: unless-stopped
+    # tồn kho nằm trong Redis: bật AOF để restart container không mất số đã trừ
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [res-mana]
+
+volumes:
+  pgdata:
+  redisdata:
+
+networks:
+  res-mana:
+    name: res-mana
+    # external: FE compose và proxy cùng join network này
+    external: true

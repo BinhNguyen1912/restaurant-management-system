@@ -1,0 +1,26 @@
+# Proxy đứng ngoài 2 repo: chỉ join network chung, không build gì từ FE/BE.
+# Dùng: DOMAIN=abc.com docker compose -f deploy/proxy/docker-compose.yml up -d
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: res-mana-proxy
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN}
+      TZ: Asia/Ho_Chi_Minh
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [res-mana]
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  res-mana:
+    external: true
