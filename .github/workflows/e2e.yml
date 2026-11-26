@@ -34,10 +34,12 @@ jobs:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5433/ecommerce?schema=public
       REDIS_URL: redis://localhost:6379
       PORT: 4000
-      # e2e đăng nhập bằng tài khoản này (xem test/*.e2e-spec.ts)
-      ADMIN_EMAIL: admin@order.com
-      ADMIN_NAME: admin
-      ADMIN_PASSWORD: '123456'
+      # `src/shared/config.ts` đọc ĐÚNG các tên này (`Admin_email`, không phải ADMIN_EMAIL);
+      # dotenv không override process.env nên giá trị ở đây thắng file .env.
+      # e2e đăng nhập bằng chính tài khoản này.
+      Admin_email: admin@order.com
+      Admin_name: admin
+      Admin_password: '123456'
 
     steps:
       - uses: actions/checkout@v4
