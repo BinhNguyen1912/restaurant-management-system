@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client'
 import { addRevenueByDate, revenueByDateToNumbers } from '@/routes/dashboard/dashboard-money'
-import { resolveBranchId } from '@/shared/service/branch.resolver'
+import { resolveBranchScope } from '@/shared/service/branch.resolver'
 import { Injectable } from '@nestjs/common'
 import { PrismaService } from '@/shared/service/prisma.service'
 import { OrderStatus } from '@/shared/constants/order.constant'
@@ -34,7 +34,9 @@ export class DashboardIndicatorService {
     { fromDate, toDate }: DashboardIndicatorQueryType,
     actor?: { userId?: number; roleName?: string },
   ): Promise<DashboardIndicatorType> {
-    const branchId = await resolveBranchId(this.prismaService, {
+    // ADMIN là cấp tổng: không chọn chi nhánh thì số liệu là TỔNG mọi chi nhánh.
+    // Người khác luôn bị ép về chi nhánh của mình (resolveBranchScope lo việc đó).
+    const branchId = await resolveBranchScope(this.prismaService, {
       userId: actor?.userId,
       roleName: actor?.roleName,
     })
@@ -61,7 +63,7 @@ export class DashboardIndicatorService {
             lte: toDateObj,
           },
           deletedAt: null,
-          branchId,
+          ...(branchId ? { branchId } : {}),
         },
       }) as any,
       this.prismaService.guest.findMany({
@@ -75,7 +77,7 @@ export class DashboardIndicatorService {
             some: {
               status: OrderStatus.PAID,
               deletedAt: null,
-              branchId,
+              ...(branchId ? { branchId } : {}),
             },
           },
         },
