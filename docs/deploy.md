@@ -31,6 +31,9 @@ docker compose --env-file .env.production up -d postgres redis
 ## Deploy
 
 ```bash
+# 0. BACKUP TRƯỚC KHI DEPLOY — mất dữ liệu hay xảy ra lúc migrate, không phải lúc ổ hỏng
+./deploy/backup/backup-postgres.sh
+
 # build + chạy API
 docker compose --env-file .env.production up -d --build be
 
@@ -73,8 +76,8 @@ curl -fsS https://api.abc.com/health
 ```
 
 ## Sao lưu
+Xem **[docs/backup.md](./backup.md)** — có script `deploy/backup/backup-postgres.sh` (dump + kiểm tra
+file + giữ 14 ngày/8 tuần/12 tháng) và `restore-postgres.sh`, kèm khuyến nghị tần suất theo RPO.
 
-```bash
-docker exec res-mana-postgres pg_dump -U postgres ecommerce | gzip > backup-$(date +%F).sql.gz
-```
-Redis có AOF (`--appendonly yes`) vì **tồn kho nằm trong Redis**; mất Redis là mất số đã trừ.
+Tóm tắt: **chỉ Postgres cần backup** (sổ cái là nguồn sự thật; Redis và projection báo cáo dựng lại
+được). Redis chạy `--appendonly yes` để restart không mất tồn kho đang dùng.
