@@ -30,7 +30,8 @@
     "tables:close-stale": "ts-node -r tsconfig-paths/register src/scripts/ScriptOfSystem/close-stale-tables.ts",
     "seed:demo:clear": "ts-node -r tsconfig-paths/register src/scripts/ScriptOfSystem/clear-demo-seed.ts",
     "seed:demo": "npx ts-node -r tsconfig-paths/register src/scripts/ScriptOfSystem/demo-data.seed.ts",
-    "db:dump": "npx ts-node -r tsconfig-paths/register src/scripts/ScriptOfSystem/dump-data.ts"
+    "db:dump": "npx ts-node -r tsconfig-paths/register src/scripts/ScriptOfSystem/dump-data.ts",
+    "data:vn": "ts-node -r tsconfig-paths/register src/scripts/data/init-vietnam-data.ts"
   },
   "dependencies": {
     "@keyv/redis": "^2.8.5",
