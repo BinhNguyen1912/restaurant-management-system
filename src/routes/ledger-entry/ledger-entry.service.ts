@@ -3,6 +3,7 @@ import { BadRequestException } from '@nestjs/common'
 import { Prisma } from '@prisma/client'
 import { LedgerEntryRepo, LedgerReconciliationRepo } from '@/routes/ledger-entry/ledger-entry.repo'
 import {
+  CashBookLineQueryType,
   CashBookQueryType,
   LedgerEntryQueryType,
   LedgerReconciliationQueryType,
@@ -35,6 +36,37 @@ export class LedgerEntryService {
   async list(query: LedgerEntryQueryType, actor?: { userId?: number | null; roleName?: string | null }) {
     const branchId = await resolveBranchScope(this.prismaService, actor, query.branchId)
     return toMoneyNumbers(await this.repo.list({ ...query, branchId }))
+  }
+
+  /**
+   * Các DÒNG của sổ quỹ để chứng minh 4 con số trên thẻ.
+   * Cùng phạm vi chi nhánh với `cashBook` — lệch phạm vi thì dòng không khớp thẻ, mất tin cậy.
+   */
+  async cashBookLines(
+    query: CashBookLineQueryType & { account?: 'CASH' | 'BANK' },
+    actor?: { userId?: number | null; roleName?: string | null },
+  ) {
+    const today = new Date()
+    const fromDate = query.fromDate ?? new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10)
+    const toDate = query.toDate ?? today.toISOString().slice(0, 10)
+    const branchId = await resolveBranchScope(this.prismaService, actor, query.branchId)
+
+    const accountCodes =
+      query.account === 'CASH' ? ['CASH'] : query.account === 'BANK' ? ['BANK'] : ['CASH', 'BANK']
+
+    const result = await this.repo.cashBookLines({
+      fromDate,
+      toDate,
+      branchId,
+      page: query.page,
+      limit: query.limit,
+      accountCodes,
+    })
+
+    return toMoneyNumbers({
+      message: 'Success.CashBookLines',
+      data: { fromDate, toDate, branchId: branchId ?? null, page: query.page, limit: query.limit, ...result },
+    })
   }
 
   /**

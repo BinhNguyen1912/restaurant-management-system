@@ -4,6 +4,8 @@ import { LedgerEntryService } from '@/routes/ledger-entry/ledger-entry.service'
 import { ActiveUser } from '@/shared/decorators/active-user.decorator'
 import { AccessTokenPayload } from '@/shared/types/jwt.types'
 import {
+  CashBookLineQueryDTO,
+  CashBookLineResDTO,
   CashBookQueryDTO,
   CashBookResDTO,
   LedgerEntryListResDTO,
@@ -30,6 +32,20 @@ export class LedgerEntryController {
   @ZodSerializerDto(CashBookResDTO)
   async cashBook(@Query() query: CashBookQueryDTO, @ActiveUser() user: AccessTokenPayload) {
     return await this.ledgerEntryService.cashBook(query, { userId: user.userId, roleName: user.roleName })
+  }
+
+  /** Các dòng (bút toán) của sổ quỹ — chứng minh cho 4 con số trên thẻ */
+  @Get('cash-book/lines')
+  @ZodSerializerDto(CashBookLineResDTO)
+  async cashBookLines(
+    @Query() query: CashBookLineQueryDTO,
+    @Query('account') account: 'CASH' | 'BANK' | undefined,
+    @ActiveUser() user: AccessTokenPayload,
+  ) {
+    return await this.ledgerEntryService.cashBookLines({ ...query, account }, {
+      userId: user.userId,
+      roleName: user.roleName,
+    })
   }
 
   /** Đối soát Payment ↔ sổ cái theo phương thức (CASH, VNPAY) */

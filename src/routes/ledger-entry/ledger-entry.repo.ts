@@ -207,6 +207,77 @@ export class LedgerEntryRepo {
       // thứ tự CASH rồi BANK, không phụ thuộc DB trả về
       .sort((a, b) => LedgerEntryRepo.CASH_BOOK_CODES.indexOf(a.code) - LedgerEntryRepo.CASH_BOOK_CODES.indexOf(b.code))
   }
+
+  /**
+   * Các DÒNG của sổ quỹ trong kỳ — để chứng minh cho 4 con số trên thẻ.
+   *
+   * Trả kèm `inflow`/`outflow` của **cả kỳ** (không phải của trang đang xem) để FE đối chiếu với
+   * thẻ: nếu người dùng cộng tay các dòng trong trang mà khác tổng thì phải thấy ngay là do phân
+   * trang, không phải số sai.
+   */
+  async cashBookLines({
+    fromDate,
+    toDate,
+    branchId,
+    page,
+    limit,
+    accountCodes,
+  }: {
+    fromDate: string
+    toDate: string
+    branchId?: number
+    page: number
+    limit: number
+    accountCodes: string[]
+  }) {
+    const where: Prisma.LedgerLineWhereInput = {
+      account: { code: { in: accountCodes } },
+      entry: {
+        status: 'POSTED',
+        ...(branchId ? { branchId } : {}),
+        occurredAt: { gte: new Date(`${fromDate}T00:00:00`), lte: new Date(`${toDate}T23:59:59.999`) },
+      },
+    }
+
+    const [lines, totalItems, sums] = await Promise.all([
+      this.prismaService.ledgerLine.findMany({
+        where,
+        orderBy: [{ entry: { occurredAt: 'desc' } }, { id: 'desc' }],
+        skip: (page - 1) * limit,
+        take: limit,
+        select: {
+          id: true,
+          direction: true,
+          amount: true,
+          orderId: true,
+          paymentId: true,
+          account: { select: { code: true, name: true } },
+          entry: { select: { occurredAt: true, refType: true, refId: true, memo: true } },
+        },
+      }),
+      this.prismaService.ledgerLine.count({ where }),
+      this.prismaService.ledgerLine.groupBy({ by: ['direction'], where, _sum: { amount: true } }),
+    ])
+
+    return {
+      lines: lines.map((line) => ({
+        id: line.id,
+        occurredAt: line.entry.occurredAt,
+        refType: line.entry.refType,
+        refId: line.entry.refId,
+        memo: line.entry.memo,
+        accountCode: line.account.code,
+        accountName: line.account.name,
+        direction: line.direction,
+        amount: Number(line.amount),
+        orderId: line.orderId,
+        paymentId: line.paymentId,
+      })),
+      totalItems,
+      inflow: Number(sums.find((row) => row.direction === 'DEBIT')?._sum.amount ?? 0),
+      outflow: Number(sums.find((row) => row.direction === 'CREDIT')?._sum.amount ?? 0),
+    }
+  }
 }
 
 /**
@@ -366,4 +437,3 @@ export class LedgerReconciliationRepo {
     }
   }
 }
-

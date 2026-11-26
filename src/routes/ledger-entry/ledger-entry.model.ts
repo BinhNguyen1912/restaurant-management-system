@@ -194,3 +194,49 @@ export const CashBookResSchema = z.object({
 
 export type CashBookQueryType = z.infer<typeof CashBookQuerySchema>
 export type CashBookAccountType = z.infer<typeof CashBookAccountSchema>
+
+/**
+ * Danh sách DÒNG của sổ quỹ — chứng minh cho 4 con số trên thẻ.
+ *
+ * Thẻ chỉ nói "tổng thu 167.259.000đ"; người dùng không có cách nào kiểm tra con số đó.
+ * Endpoint này trả từng bút toán (ngày, loại, diễn giải, số tiền) để đối chiếu.
+ */
+export const CashBookLineQuerySchema = z.object({
+  fromDate: z.string().trim().optional(),
+  toDate: z.string().trim().optional(),
+  branchId: z.coerce.number().int().positive().optional(),
+  page: z.coerce.number().int().positive().default(1),
+  limit: z.coerce.number().int().positive().max(100).default(20),
+})
+
+export const CashBookLineResSchema = z.object({
+  message: z.string(),
+  data: z.object({
+    fromDate: z.string(),
+    toDate: z.string(),
+    branchId: z.number().nullable(),
+    totalItems: z.number(),
+    page: z.number(),
+    limit: z.number(),
+    /** tổng thu/chi của CHÍNH các dòng đang trả về (cả kỳ) — FE đối chiếu với thẻ */
+    inflow: moneyOutputSchema,
+    outflow: moneyOutputSchema,
+    lines: z.array(
+      z.object({
+        id: z.number(),
+        occurredAt: z.date(),
+        refType: z.string(),
+        refId: z.number(),
+        memo: z.string().nullable(),
+        accountCode: z.string(),
+        accountName: z.string(),
+        direction: z.enum(['DEBIT', 'CREDIT']),
+        amount: moneyOutputSchema,
+        orderId: z.number().nullable(),
+        paymentId: z.number().nullable(),
+      }),
+    ),
+  }),
+})
+
+export type CashBookLineQueryType = z.infer<typeof CashBookLineQuerySchema>
