@@ -32,6 +32,7 @@ docker compose --env-file .env.production up -d postgres redis
 
 ```bash
 # 0. BACKUP trước khi deploy (bỏ qua ở lần deploy ĐẦU TIÊN — chưa có DB/container để dump)
+#    lần đầu trên VPS: chmod +x deploy/backup/*.sh && mkdir -p backups   (xem docs/backup.md)
 ./deploy/backup/backup-postgres.sh
 
 # 1. build image
@@ -50,15 +51,20 @@ docker compose --env-file .env.production up -d be
 ```
 
 > **Khôi phục từ backup / chạy `data:vn` trên máy đang chạy**: sau khi ghi DB phải
-> `docker compose restart be` (nạp lại cache từ Postgres) và chạy `npm run reconcile-inventory --fix`
+> `docker compose --env-file .env.production restart be` rồi chạy
+> `docker compose --env-file .env.production exec be node dist/scripts/ScriptOfSystem/reconcile-inventory.js --fix`
 > để **Redis khớp lại tồn kho** — luồng bán hàng trừ kho trên Redis, không phải Postgres.
+> Không có npm script cho việc này: image production chỉ có `dist`, không có `ts-node`.
 
 `deploy:prepare:prod` = `prisma migrate deploy` → seed danh mục tài khoản → seed role + admin
-(idempotent, **không** đổi mật khẩu admin đã có) → `create-permissions`.
+(idempotent, **không** đổi mật khẩu admin đã có). **KHÔNG** còn chạy `create-permissions` (xem cảnh
+báo ngay dưới).
 
-> ⚠️ **Không** đưa `create-permissions` vào `CMD` của container: script đó gán lại quyền theo
-> policy trong code, nên chạy mỗi lần restart sẽ **xoá mọi thay đổi quyền bạn đã tick trên UI**.
-> Chỉ chạy khi **bộ route thay đổi** (thêm/xoá endpoint).
+> ⚠️ **Không** đưa `create-permissions` vào `CMD` của container **hoặc vào lệnh deploy**: script đó
+> (a) gán lại toàn bộ quyền theo policy trong code bằng `set`, nên **xoá mọi thay đổi quyền bạn đã
+> tick trên UI**, và (b) khởi động nguyên `AppModule` — tạo instance thứ hai chạy cron/BullMQ và
+> **ghi đè tồn kho Redis từ Postgres** giữa lúc quán đang bán. Chỉ chạy tay khi **bộ route thay
+> đổi** (thêm/xoá endpoint): `docker compose --env-file .env.production run --rm be node dist/scripts/ScriptOfSystem/create-permissions.js`.
 >
 > Nếu quên chạy: API vẫn lên nhưng **route mới trả 403 cho mọi vai trò**. Container sẽ in cảnh báo
 > ngay lúc khởi động: `⚠️ Có N route CHƯA có permission…`.
