@@ -1,7 +1,9 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query, Req } from '@nestjs/common'
+import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query, Req, UseInterceptors } from '@nestjs/common'
 import { Request } from 'express'
 import { ZodSerializerDto } from 'nestjs-zod'
 import { ActiveUser } from '@/shared/decorators/active-user.decorator'
+import { LogAccess } from '@/shared/decorators/access-log.decorator'
+import { AccessLogInterceptor } from '@/interceptor/access-log.interceptor'
 import { AccessTokenPayload } from '@/shared/types/jwt.types'
 import { CustomerService } from '@/routes/customer/customer.service'
 import {
@@ -25,8 +27,12 @@ import {
  *
  * Nhân viên chỉ ĐỌC (tra SĐT khi khách tới), số liệu cắt theo chi nhánh của họ; ghi chú chăm sóc
  * và báo cáo khách mới/quay lại là của ADMIN (khai báo ở `create-permissions.ts`).
+ *
+ * Các route đọc PII đều có `@LogAccess`: NĐ 13/2023 đòi trả lời được "ai đã đọc hồ sơ của khách
+ * này", mà `AuditLog` chỉ ghi thao tác GHI nên không thay thế được (`AccessLogInterceptor`).
  */
 @Controller('customers')
+@UseInterceptors(AccessLogInterceptor)
 export class CustomerController {
   constructor(private readonly customerService: CustomerService) {}
 
@@ -38,12 +44,14 @@ export class CustomerController {
   }
 
   @Get()
+  @LogAccess('GET /customers')
   @ZodSerializerDto(CustomerListResDTO)
   async list(@Query() query: CustomerListQueryDTO, @ActiveUser() user: AccessTokenPayload) {
     return await this.customerService.list(query, user)
   }
 
   @Get(':id')
+  @LogAccess('GET /customers/:id')
   @ZodSerializerDto(CustomerDetailResDTO)
   async detail(@Param('id', ParseIntPipe) id: number, @ActiveUser() user: AccessTokenPayload) {
     return await this.customerService.detail(id, user)
@@ -51,6 +59,7 @@ export class CustomerController {
 
   /** Số dư điểm + lịch sử kiếm/đổi điểm của một khách. */
   @Get(':id/points')
+  @LogAccess('GET /customers/:id/points')
   @ZodSerializerDto(CustomerPointsResDTO)
   async points(@Param('id', ParseIntPipe) id: number) {
     return await this.customerService.points(id)
@@ -58,6 +67,7 @@ export class CustomerController {
 
   /** Đơn còn trừ được điểm (chưa thu tiền, có dòng món) — danh sách để chọn khi đổi điểm. */
   @Get(':id/open-orders')
+  @LogAccess('GET /customers/:id/open-orders')
   @ZodSerializerDto(CustomerOpenOrdersResDTO)
   async openOrders(@Param('id', ParseIntPipe) id: number, @ActiveUser() user: AccessTokenPayload) {
     return await this.customerService.openOrders(id, user)
@@ -65,6 +75,7 @@ export class CustomerController {
 
   /** Trạng thái đồng ý xử lý dữ liệu cá nhân theo từng mục đích (NĐ 13/2023/NĐ-CP). */
   @Get(':id/consent')
+  @LogAccess('GET /customers/:id/consent')
   @ZodSerializerDto(CustomerConsentResDTO)
   async consents(@Param('id', ParseIntPipe) id: number) {
     return await this.customerService.consents(id)
@@ -101,7 +112,11 @@ export class CustomerController {
 
   @Patch(':id/note')
   @ZodSerializerDto(CustomerNoteResDTO)
-  async updateNote(@Param('id', ParseIntPipe) id: number, @Body() body: CustomerNoteBodyDTO) {
-    return await this.customerService.updateNote(id, body.note)
+  async updateNote(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: CustomerNoteBodyDTO,
+    @ActiveUser() user: AccessTokenPayload,
+  ) {
+    return await this.customerService.updateNote(id, body.note, user)
   }
 }

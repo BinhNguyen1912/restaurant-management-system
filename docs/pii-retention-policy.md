@@ -113,7 +113,35 @@ Chạy tự động: hiện là lệnh tay. Nếu đưa vào cron thì phải (a
 
 Ghi chú chăm sóc là ô văn bản tự do: quy định nội bộ phải nói rõ **không ghi dữ liệu nhạy cảm**
 (bệnh án, tôn giáo, số giấy tờ) và phải có cách xoá khi khách yêu cầu — hiện xoá được bằng cách sửa
-ghi chú về rỗng, nhưng **không có audit cho lần sửa ghi chú** (⚠ nên thêm).
+ghi chú về rỗng. Mỗi lần sửa ghi chú **có** `AuditLog` (`CUSTOMER_NOTE_UPDATED`), nhưng nhật ký chỉ
+giữ **độ dài** và việc có/không có ghi chú, **không giữ nội dung**: ghi chú là chỗ nhân viên hay
+chép SĐT/địa chỉ khách, mà `AuditLog` là append-only — chép nội dung vào đó là tự tay tạo một bản
+sao PII không xoá được, đúng thứ mà §4 đang dọn.
+
+### Nhật ký truy cập (`AccessLog`) — đã có
+
+NĐ 13/2023 (Điều 26) đòi trả lời được "ai đã đọc dữ liệu cá nhân của khách nào, lúc nào". `AuditLog`
+không trả lời được vì nó chỉ ghi thao tác **GHI**, nên có thêm bảng `AccessLog`:
+
+| Chỗ | Nội dung |
+|---|---|
+| `AccessLogInterceptor` + `@LogAccess('GET /customers/:id')` | ghi sau guard, chỉ với route được đánh dấu: đọc danh sách, hồ sơ, điểm, đơn chưa thu tiền, trạng thái đồng ý |
+| `AccessLog` | `actorId`, `actorRole`, `route`, `customerId`, `resultCount`, `ip`, `createdAt` — append-only (trigger chặn `UPDATE`) |
+| `access-log-plan.ts` | phần quyết định "ghi gì" tách riêng, có unit test: sai ở đây thì nhật ký nói dối mà vẫn xanh |
+
+Ba giới hạn phải biết (đừng đọc bảng này như log toàn diện):
+
+1. **Không lưu query string.** Tra khách bằng SĐT/tên, chép query vào nhật ký là nhân bản PII ra thêm
+   một bảng nữa. Hệ quả: không biết *tìm từ khoá gì*, chỉ biết *đã tra và ra bao nhiêu kết quả*.
+2. **Chỉ ghi lần đọc thành công.** Request bị guard chặn (401/403) không vào bảng vì chưa đọc được
+   dòng nào. Đăng nhập sai đã có `AuditLog` (`LOGIN_LOCKED`) lo, nhưng **`LOGIN_SUCCESS`/`LOGIN_FAILED`
+   chưa được ghi** — mục 2 của §M9 mới làm phần đọc PII.
+3. **Không có khoá ngoại tới `Customer`.** Xoá hồ sơ khách không được làm biến mất bằng chứng "đã có
+   người đọc hồ sơ này"; `customerId` còn lại chỉ là một con số, không phải PII.
+
+Bảng này chứa IP của nhân viên — cũng là dữ liệu cá nhân, nên cần thời hạn lưu riêng. Trigger chỉ
+chặn `UPDATE` (không chặn `DELETE`) đúng để còn dọn được; **job dọn `AccessLog` chưa viết**, chờ con
+số đã ký như §3.
 
 ## 6. Việc còn thiếu trước khi coi là xong (§M9)
 
@@ -121,8 +149,10 @@ ghi chú về rỗng, nhưng **không có audit cho lần sửa ghi chú** (⚠ 
    chạy `--apply` với con số thật.
 2. ~~Script ẩn danh hoá~~ — **đã có** (§4), đã chạy thật trên DB dev và có e2e
    (`test/customer-anonymize.e2e-spec.ts`). Còn lại: chọn lịch chạy (cron) sau khi có con số đã ký.
-3. `AccessLog` cho route nhạy cảm (đọc dữ liệu khách cũng là xử lý dữ liệu) — §M9 mục 2.
+3. ~~`AccessLog` cho route nhạy cảm~~ — **đã có cho phần đọc PII khách** (§5). Còn lại: `AccessLog`
+   cho `reservation`, `orders`, `reports`, `users`, `ledger` + `LOGIN_SUCCESS`/`LOGIN_FAILED`.
 4. 2FA cho ADMIN/KE_TOAN — §M9 mục 5.
 5. Media chứng từ (ảnh biên nhận) đang ở Cloudinary nước ngoài — §M9 mục 4, cần đánh giá chuyển dữ
    liệu ra nước ngoài (NĐ 53/2022).
-6. Audit cho việc sửa `Customer.note` (hiện chỉ `PATCH /customers/:id/note` mà không ghi nhật ký).
+6. ~~Audit cho việc sửa `Customer.note`~~ — **đã có** (§5): `CUSTOMER_NOTE_UPDATED`, chỉ độ dài.
+7. Job dọn `AccessLog` theo thời hạn lưu (bảng chứa IP nhân viên) — sau khi §3 được ký.

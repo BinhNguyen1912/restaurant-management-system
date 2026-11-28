@@ -41,6 +41,12 @@ const NotFoundCustomerException = new NotFoundException({ message: 'Error.NotFou
 /** Đơn đã chốt tiền thì không được trừ điểm nữa (cùng luật với sửa số lượng/giảm giá ở updateOrder). */
 const CLOSED_ORDER_STATUS: string[] = [OrderStatus.PAID, OrderStatus.COMPLETED, OrderStatus.CANCELLED]
 
+/** Ghi chú khách tóm lại cho nhật ký: chỉ độ dài, KHÔNG nội dung (xem `updateNote`). */
+function summarizeNote(note: string | null): { hasNote: boolean; length: number } {
+  const text = note?.trim() ?? ''
+  return { hasNote: text.length > 0, length: text.length }
+}
+
 /**
  * Hồ sơ khách hàng.
  *
@@ -261,10 +267,34 @@ export class CustomerService {
     }
   }
 
-  async updateNote(id: number, note: string | null) {
+  /**
+   * Sửa ghi chú chăm sóc — có ghi `AuditLog`, nhưng nhật ký chỉ giữ ĐỘ DÀI và việc có/không có ghi
+   * chú, KHÔNG giữ nội dung.
+   *
+   * Lý do: ghi chú là chỗ nhân viên hay chép SĐT/địa chỉ của khách, mà `AuditLog` là append-only —
+   * chép nội dung vào đó là tự tay tạo một bản sao PII không xoá được, đúng thứ mà script ẩn danh
+   * hoá đang cố dọn (cùng lý do `CUSTOMER_ANONYMIZED` không ghi SĐT cũ). Việc "ai sửa, lúc nào, dài
+   * thêm hay ngắn đi" vẫn giải trình được.
+   */
+  async updateNote(id: number, note: string | null, actor: AccessTokenPayload) {
     const row = await this.repo.findById(id)
     if (!row) throw NotFoundCustomerException
+
     const updated = await this.repo.updateNote(id, note)
+    const changed = (row.note ?? '') !== (updated.note ?? '')
+    if (changed) {
+      await this.auditLog.record({
+        actorId: actor.userId,
+        actorRole: actor.roleName,
+        action: 'CUSTOMER_NOTE_UPDATED',
+        entityType: 'CUSTOMER',
+        entityId: id,
+        before: summarizeNote(row.note),
+        after: summarizeNote(updated.note),
+        branchId: null,
+      })
+    }
+
     return { message: 'Success.CustomerNoteUpdated', data: updated }
   }
 

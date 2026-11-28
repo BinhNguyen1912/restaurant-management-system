@@ -35,6 +35,8 @@ export type AuditActionType =
   | 'CONSENT_RECORDED'
   // ẩn danh hoá hồ sơ khách đã hết thời hạn lưu / theo yêu cầu của khách
   | 'CUSTOMER_ANONYMIZED'
+  // sửa ghi chú chăm sóc của hồ sơ khách — before/after chỉ ghi ĐỘ DÀI, không ghi nội dung
+  | 'CUSTOMER_NOTE_UPDATED'
 
 export type AuditEntityTypeValue =
   | 'ORDER'

@@ -759,6 +759,35 @@ model ConsentLog {
   @@index([customerId, purpose, createdAt])
 }
 
+/// Nhật ký TRUY CẬP dữ liệu cá nhân (NĐ 13/2023/NĐ-CP, Điều 26: ghi nhật ký truy cập).
+///
+/// Khác `AuditLog` ở chỗ đối tượng là NGƯỜI ĐỌC chứ không phải người sửa: đọc 100 lần cũng không
+/// đổi dữ liệu, nhưng mỗi lần đọc PII của một khách phải trả lời được "ai đọc, đọc hồ sơ nào, lúc
+/// nào". APPEND-ONLY (trigger DB chặn UPDATE) — sửa được nhật ký thì nó không còn là bằng chứng.
+model AccessLog {
+  id          Int      @id @default(autoincrement())
+  /// User.id người đọc (null = hệ thống/script)
+  actorId     Int?
+  /// tên role tại thời điểm đọc — giữ chuỗi, không FK: role đổi tên vẫn đọc lại được
+  actorRole   String?  @db.VarChar(50)
+  /// route đã đọc, dạng "GET /customers/:id" — CỐ Ý không lưu query string: query tìm khách
+  /// thường chính là SĐT/tên, chép vào nhật ký là nhân bản PII ra thêm một bảng
+  route       String   @db.VarChar(120)
+  /// hồ sơ bị đọc; null với route dạng danh sách (khi đó `resultCount` cho biết đọc bao nhiêu)
+  customerId  Int?
+  /// số bản ghi trả về (route danh sách) / 1 (route một hồ sơ)
+  resultCount Int?
+  /// IP người đọc
+  ip          String?  @db.VarChar(45)
+  createdAt   DateTime @default(now())
+
+  /// KHÔNG đặt khoá ngoại tới Customer: xoá hồ sơ khách không được làm biến mất bằng chứng
+  /// "đã có người đọc hồ sơ này". Số `customerId` còn lại chỉ là một con số, không phải PII.
+  @@index([customerId, createdAt])
+  @@index([actorId, createdAt])
+  @@index([route, createdAt])
+}
+
 model Category {
   id                   Int                   @id @default(autoincrement())
   logo                 String                @db.VarChar(1000)
@@ -1474,6 +1503,8 @@ enum AuditAction {
   CONSENT_RECORDED
   /// ẩn danh hoá hồ sơ khách đã hết thời hạn lưu (NĐ 13/2023) — before/after KHÔNG chứa PII
   CUSTOMER_ANONYMIZED
+  /// sửa ghi chú chăm sóc của hồ sơ khách — before/after chỉ ghi ĐỘ DÀI, không ghi nội dung
+  CUSTOMER_NOTE_UPDATED
 }
 
 enum AuditEntityType {
