@@ -141,15 +141,42 @@ Ba giới hạn phải biết (đừng đọc bảng này như log toàn diện)
    danh sách vì thế cũng không gắn chủ thể: trả lời chính xác "tôi có bị xem không" cho từng dòng
    trong một trang 20 người sẽ là 20 dòng mỗi lần bấm — thiết kế khác, chưa ai yêu cầu.
 2. **Chỉ ghi lần đọc thành công.** Request bị guard chặn (401/403) không vào bảng vì chưa đọc được
-   dòng nào. Đăng nhập sai đã có `AuditLog` (`LOGIN_LOCKED`) lo, nhưng **`LOGIN_SUCCESS`/`LOGIN_FAILED`
-   chưa được ghi** — còn chờ quyết định lưu định danh nào cho lần đăng nhập sai (IP / hash email /
-   email thô), vì đó là PII của người *chưa* đăng nhập được.
+   dòng nào. Đăng nhập (đúng/sai/khoá) không nằm ở đây mà ở bảng riêng — xem mục tiếp theo.
 3. **Không có khoá ngoại tới `Customer`/`User`.** Xoá hồ sơ không được làm biến mất bằng chứng "đã có
    người đọc hồ sơ này"; `subjectId` còn lại chỉ là một con số, không phải PII.
 
 Bảng này chứa IP của nhân viên — cũng là dữ liệu cá nhân, nên cần thời hạn lưu riêng. Trigger chỉ
 chặn `UPDATE` (không chặn `DELETE`) đúng để còn dọn được; **job dọn `AccessLog` chưa viết**, chờ con
 số đã ký như §3.
+
+### Nhật ký thử đăng nhập (`LoginAttempt`) — đã có
+
+`AuditLog`/`LOGIN_LOCKED` chỉ có một dòng **sau khi** tài khoản đã bị khoá, tức là giai đoạn dò (4 lần
+sai đầu, hoặc dò vào email không tồn tại) hoàn toàn vô hình. Bảng riêng
+`LoginAttempt{emailHash, actorId, outcome, ip, createdAt}`, append-only (trigger chặn `UPDATE`):
+
+| Chỗ | Nội dung |
+|---|---|
+| `login-attempt.ts` | `normalizeEmailForLog` (trim + lowercase) và `emailFingerprint` (sha256 hex) — hàm thuần, có unit test |
+| `AuthService.login` | ghi cả bốn nhánh: sai mật khẩu, email không tồn tại, đang bị khoá mà vẫn thử, đăng nhập đúng (sau khi cấp token) |
+
+Điểm phải biết trước khi đọc bảng này như "dữ liệu đã khử định danh":
+
+1. **Hash KHÔNG phải ẩn danh.** Ai có danh sách email ứng viên thì băm từng cái rồi so là ra định
+   danh thật. Nó chỉ chặn hai đường: đọc thẳng bảng và lỡ tay export một cột ra ngoài. Muốn chặn cả
+   đường từ điển thì phải HMAC bằng khoá bí mật; đổi lại xoay/ mất khoá là mất khả năng tương quan với
+   các dòng cũ. **Chưa làm** — cần chốt trước khi có job dọn, vì đổi cách băm thì dữ liệu cũ không còn
+   so sánh được với dữ liệu mới.
+2. **Không chuẩn hoá quá tay.** Chỉ `trim` + `lowercase`, không bỏ dấu chấm hay `+tag`: trong hệ thống
+   này `a.b@gmail.com` và `ab@gmail.com` đăng ký được thành hai tài khoản riêng, gộp chúng là ghi nhật
+   ký dò mật khẩu cho nhầm người.
+3. **Không khoá ngoại tới `User`.** Xoá tài khoản không được làm biến mất bằng chứng "đã có người thử
+   dò tài khoản này"; `actorId` còn lại chỉ là một con số.
+4. **Chỉ ghi thử đăng nhập bằng mật khẩu.** `POST /guest/login` (khách mở bàn bằng mã QR, không có mật
+   khẩu) không nằm ở đây — không có bí mật nào bị thử thì không phải cuộc dò.
+
+Bảng này cũng chứa IP và cần thời hạn lưu: dấu hiệu dò mật khẩu chỉ có giá trị trong vài tuần, giữ
+mãi chỉ còn lại rủi ro. **Job dọn chưa viết**, chờ con số đã ký (§3) — cùng đợt với `AccessLog`.
 
 ## 6. Việc còn thiếu trước khi coi là xong (§M9)
 
@@ -158,10 +185,12 @@ số đã ký như §3.
 2. ~~Script ẩn danh hoá~~ — **đã có** (§4), đã chạy thật trên DB dev và có e2e
    (`test/customer-anonymize.e2e-spec.ts`). Còn lại: chọn lịch chạy (cron) sau khi có con số đã ký.
 3. ~~`AccessLog` cho route nhạy cảm~~ — **đã có** (§5): khách, nhân viên, đặt bàn, đơn hàng, khách của
-   bàn. Còn lại `LOGIN_SUCCESS`/`LOGIN_FAILED` (chờ chốt lưu định danh nào, §5 giới hạn 2); `reports`
-   chỉ trả số tổng hợp nên không có PII từng người để ghi.
+   bàn. `reports` chỉ trả số tổng hợp nên không có PII từng người để ghi. ~~Đăng nhập~~ — **đã có**
+   (`LoginAttempt`, §5): đúng/sai/không tồn tại email/đang bị khoá đều ghi; còn lại là quyết định
+   HMAC-thay-sha256 trước khi có job dọn.
 4. 2FA cho ADMIN/KE_TOAN — §M9 mục 5.
 5. Media chứng từ (ảnh biên nhận) đang ở Cloudinary nước ngoài — §M9 mục 4, cần đánh giá chuyển dữ
    liệu ra nước ngoài (NĐ 53/2022).
 6. ~~Audit cho việc sửa `Customer.note`~~ — **đã có** (§5): `CUSTOMER_NOTE_UPDATED`, chỉ độ dài.
-7. Job dọn `AccessLog` theo thời hạn lưu (bảng chứa IP nhân viên) — sau khi §3 được ký.
+7. Job dọn `AccessLog` + `LoginAttempt` theo thời hạn lưu (hai bảng đều chứa IP) — sau khi §3 được
+   ký. `LoginAttempt` thêm một điều kiện: chốt luôn sha256 hay HMAC (§5) trước khi có dòng nào bị dọn.

@@ -15,7 +15,7 @@ import { ActiveUser } from '@/shared/decorators/active-user.decorator'
 import { IsPublic } from '@/shared/decorators/auth.decorator'
 import { MessageResDto } from '@/shared/dtos/respone.dto'
 import { AccessTokenGuard } from '@/shared/guard/access-token.guard'
-import { Body, Controller, Post, Res, UseGuards } from '@nestjs/common'
+import { Body, Controller, Ip, Post, Res, UseGuards } from '@nestjs/common'
 import { Response } from 'express'
 import { ZodSerializerDto } from 'nestjs-zod'
 
@@ -40,8 +40,8 @@ export class AuthController {
   @IsPublic()
   @Post('login')
   @ZodSerializerDto(LoginResDTO)
-  login(@Body() body: LoginBodyDTO) {
-    return this.authService.login(body)
+  login(@Body() body: LoginBodyDTO, @Ip() ip: string) {
+    return this.authService.login(body, { ip })
   }
 
   @IsPublic()
