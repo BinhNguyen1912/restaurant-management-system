@@ -90,7 +90,7 @@ nhau giữa hai repo sẽ làm nút thu tiền ở FE gọi sai.
 | # | Lỗi | Mức | Module xử lý |
 |---|---|---|---|
 | 1 | Không có hoá đơn (điện tử), không có MST/tên pháp nhân; VAT 1 mức cho toàn chi nhánh thay vì theo món | BLOCKER (pháp lý) — schema + tích hợp nhà cung cấp | M10 |
-| 2 | Media chứng từ lưu ra nước ngoài; **bắt buộc** bật 2FA cho ADMIN/KE_TOAN (rào chắn `enrolmentRequired` + hai lệnh vận hành đã xong — M9 mục 5; còn màn hình enrolment ở FE và **quyết định bật** `TWO_FACTOR_ENFORCEMENT`); PII & consent (M9 mục 2/3 đã xong; refresh token — mục 23; khoá đăng nhập tạm — mục 30; OTP — mục 31; dọn nhật ký đã có cơ chế `logs:prune` — M9 mục 2, chờ con số §3 được ký để đặt lịch) | HIGH (pháp lý) | M1, M9 |
+| 2 | Media chứng từ lưu ra nước ngoài; **bắt buộc** bật 2FA cho ADMIN/KE_TOAN (rào chắn `enrolmentRequired` + hai lệnh vận hành đã xong — M9 mục 5; còn màn hình enrolment ở FE và **quyết định bật** `TWO_FACTOR_ENFORCEMENT`); PII & consent (M9 mục 2/3 đã xong; refresh token — mục 23; khoá đăng nhập tạm — mục 30; OTP — mục 31; dọn nhật ký đã có cơ chế `logs:prune` **và đã đặt lịch** — M9 mục 2, còn con số §3 phải được ký) | HIGH (pháp lý) | M1, M9 |
 
 **Cọc reservation — đã làm (mục 24–27), mức cọc do BE chốt đã xong (mục 29).** Quyết định schema đã phác
 lúc lập kế hoạch (thêm bảng `OrderPayment`) **không dùng**: chỉ thêm `Payment.orderId` (nullable,
