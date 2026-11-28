@@ -33,6 +33,8 @@ export type AuditActionType =
   | 'POINTS_REDEEMED'
   // ghi nhận/rút đồng ý xử lý dữ liệu cá nhân của khách (NĐ 13/2023/NĐ-CP)
   | 'CONSENT_RECORDED'
+  // ẩn danh hoá hồ sơ khách đã hết thời hạn lưu / theo yêu cầu của khách
+  | 'CUSTOMER_ANONYMIZED'
 
 export type AuditEntityTypeValue =
   | 'ORDER'
