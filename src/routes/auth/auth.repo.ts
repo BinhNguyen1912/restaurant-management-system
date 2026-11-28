@@ -79,6 +79,39 @@ export class AuthRepo {
   }
 
   /**
+   * Ghi nhận một lần đăng nhập sai (hoặc khoá tài khoản) lên chính tài khoản đó.
+   *
+   * `updateMany` + `deletedAt: null` thay cho `update`: tài khoản có thể vừa bị xoá mềm trong
+   * lúc đang kiểm mật khẩu, và lúc đó không được ném P2025 — người dùng chỉ cần biết là sai.
+   */
+  recordLoginFailure(
+    userId: number,
+    state: { failedAttempts: number; lockedUntil: Date | null },
+  ): Promise<{ count: number }> {
+    return this.prismaService.user.updateMany({
+      where: { id: userId, deletedAt: null },
+      data: state,
+    })
+  }
+
+  /**
+   * Xoá dấu vết sai mật khẩu sau khi đăng nhập thành công.
+   *
+   * Điều kiện `OR` để lần đăng nhập bình thường không phát sinh UPDATE rỗng — login là đường
+   * nóng nhất của hệ thống, mỗi lần vào ca đều đi qua đây.
+   */
+  clearLoginFailures(userId: number): Promise<{ count: number }> {
+    return this.prismaService.user.updateMany({
+      where: {
+        id: userId,
+        deletedAt: null,
+        OR: [{ failedAttempts: { gt: 0 } }, { lockedUntil: { not: null } }],
+      },
+      data: { failedAttempts: 0, lockedUntil: null },
+    })
+  }
+
+  /**
    * Claim nguyên tử + (nếu token đã dùng) thu hồi cả family, trong MỘT transaction.
    *
    * `updateMany({ where: { tokenHash, usedAt: null }, data: { usedAt } })` là điểm chốt: hai

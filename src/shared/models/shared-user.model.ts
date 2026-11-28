@@ -15,6 +15,10 @@ export const UserSchema = z.object({
   /** chi nhánh nhân viên làm việc (null = chưa gán) — cột có sẵn trong DB */
   branchId: z.number().positive().nullable().optional(),
   totpSecret: z.string().nullable().optional(),
+  /** số lần đăng nhập sai liên tiếp — 0 khi đăng nhập thành công hoặc ngay khi bị khoá tạm */
+  failedAttempts: z.number().int().min(0).default(0),
+  /** khoá đăng nhập tới mốc này (null = không khoá) — xem src/routes/auth/login-lockout.ts */
+  lockedUntil: z.date().nullable().optional(),
   createdById: z.number().nullable(),
   updatedById: z.number().nullable(),
   deletedAt: z.date().nullable(),

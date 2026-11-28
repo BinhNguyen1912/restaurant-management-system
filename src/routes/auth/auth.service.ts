@@ -1,4 +1,5 @@
 import {
+  AccountLockedException,
   EmailNotFoundException,
   InvalidPasswordException,
   RefreshTokenAlreadyUsedException,
@@ -14,10 +15,17 @@ import {
   RegisterBodyType,
 } from '@/routes/auth/auth.model'
 import { AuthRepo } from '@/routes/auth/auth.repo'
+import {
+  evaluateLoginLock,
+  LOCK_MINUTES,
+  MAX_FAILED_ATTEMPTS,
+  registerFailedAttempt,
+} from '@/routes/auth/login-lockout'
 import envConfig from '@/shared/config'
 import { TypeOfVerification, TypeOfVerificationType } from '@/shared/constants/auth.constant'
 import { EmailAlreadyExistsException, InvalidEmailException } from '@/shared/error'
 import { generateCode } from '@/shared/helper'
+import { AuditLogService } from '@/shared/service/audit-log.service'
 import { EmailService } from '@/shared/service/email.service'
 import { HashingService } from '@/shared/service/hashing.service'
 import { hashRefreshToken } from '@/shared/service/token-hash'
@@ -26,12 +34,14 @@ import { SharedRefreshTokenRepo } from '@/shared/shared-repository/shared-refres
 import { SharedRoleRepo } from '@/shared/shared-repository/shared-role.repo'
 import { SharedUserRepo } from '@/shared/shared-repository/shared-user.repo'
 import { AccessTokenPayloadCreate, RefreshTokenPayload } from '@/shared/types/jwt.types'
-import { Injectable, UnprocessableEntityException } from '@nestjs/common'
+import { Injectable, Logger, UnprocessableEntityException } from '@nestjs/common'
 import { addMinutes } from 'date-fns'
 import ms, { StringValue } from 'ms'
 import { v4 as uuidv4 } from 'uuid'
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name)
+
   constructor(
     private readonly sharedUserRepo: SharedUserRepo,
     private readonly emailService: EmailService,
@@ -40,6 +50,7 @@ export class AuthService {
     private readonly sharedRoleRepo: SharedRoleRepo,
     private readonly hashingService: HashingService,
     private readonly sharedRefreshTokenRepo: SharedRefreshTokenRepo,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   async verificationCode(payload: { email: string; code: string; type: TypeOfVerificationType }) {
@@ -145,9 +156,41 @@ export class AuthService {
     if (!user) {
       throw InvalidEmailException
     }
+    // Kiểm khoá TRƯỚC khi so mật khẩu: đang khoá thì mật khẩu đúng cũng không được cấp token, và
+    // mỗi lần thử của kẻ dò không còn tốn một lượt băm scrypt của server.
+    const now = new Date()
+    const lock = evaluateLoginLock(user.lockedUntil, now)
+    if (lock.locked) {
+      throw AccountLockedException(lock.remainingMs)
+    }
+
     const isPasswordValid = await this.hashingService.comparePassword(data.password, user.password)
     if (!isPasswordValid) {
-      throw InvalidPasswordException
+      const outcome = registerFailedAttempt({ failedAttempts: user.failedAttempts ?? 0, lockedUntil: user.lockedUntil ?? null }, now)
+      await this.authRepo.recordLoginFailure(user.id, {
+        failedAttempts: outcome.failedAttempts,
+        lockedUntil: outcome.lockedUntil,
+      })
+      if (!outcome.justLocked) {
+        throw InvalidPasswordException
+      }
+      // Nhật ký best-effort: chặn được kẻ dò mật khẩu quan trọng hơn một dòng log, nên lỗi ghi
+      // audit không được biến lần thử thứ 5 thành 500.
+      await this.auditLogService
+        .record({
+          action: 'LOGIN_LOCKED',
+          entityType: 'USER',
+          entityId: user.id,
+          reason: `Sai mật khẩu ${MAX_FAILED_ATTEMPTS} lần liên tiếp`,
+          after: { failedAttempts: MAX_FAILED_ATTEMPTS, lockedUntil: outcome.lockedUntil?.toISOString() ?? null },
+        })
+        .catch((error) => this.logger.warn(`Không ghi được audit LOGIN_LOCKED cho user ${user.id}: ${error}`))
+      throw AccountLockedException(LOCK_MINUTES * 60 * 1000)
+    }
+    // Đăng nhập đúng phải xoá dấu vết sai trước đó: nhân viên gõ sai vài lần rồi gõ đúng mà bộ đếm
+    // còn nguyên thì lần sai kế tiếp (dù cách đó nhiều ngày) sẽ khoá oan.
+    if (user.failedAttempts > 0 || user.lockedUntil) {
+      await this.authRepo.clearLoginFailures(user.id)
     }
     const { accessToken, refreshToken } = await this.generateTokens({
       userId: user.id,

@@ -193,6 +193,10 @@ model User {
   phoneNumber                 String?               @unique @db.VarChar(10)
   avatar                      String?               @db.VarChar(1000)
   totpSecret                  String?
+  /// Số lần đăng nhập sai liên tiếp; về 0 khi đăng nhập thành công hoặc ngay khi bị khoá
+  failedAttempts              Int                   @default(0)
+  /// Khoá đăng nhập tới mốc này (null = không khoá) — xem src/routes/auth/login-lockout.ts
+  lockedUntil                 DateTime?
   status                      UserStatus            @default(INACTIVE)
   roleId                      Int
   createdById                 Int?
@@ -1358,6 +1362,8 @@ enum AuditAction {
   USER_ACCESS_CHANGED
   /// nhập hàng: tồn kho tăng, có ảnh bằng chứng
   STOCK_RECEIVED
+  /// đăng nhập sai quá ngưỡng => tài khoản bị khoá tạm (prod-readiness §0.2 #3)
+  LOGIN_LOCKED
 }
 
 enum AuditEntityType {

@@ -27,6 +27,8 @@ export type AuditActionType =
   | 'USER_ACCESS_CHANGED'
   // nhập hàng: tồn kho tăng, có ảnh bằng chứng
   | 'STOCK_RECEIVED'
+  // đăng nhập sai quá ngưỡng => tài khoản bị khoá tạm (prod-readiness §0.2 #3)
+  | 'LOGIN_LOCKED'
 
 export type AuditEntityTypeValue = 'ORDER' | 'PRODUCT' | 'SKU' | 'PAYMENT' | 'ROLE' | 'USER' | 'INGREDIENT'
 
