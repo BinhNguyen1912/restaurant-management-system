@@ -9,6 +9,12 @@ import { aggregateSummaries, resolveRange } from '@/routes/reports/revenue-summa
 import { SYSTEM_TIME_ZONE } from '@/shared/config/timezone'
 
 /**
+ * Tuổi tối đa của projection cho kỳ CHƯA đóng (có ngày hôm nay). Trong ngày doanh thu vẫn đang
+ * chảy, nên số đã tính phải được làm mới; 60 giây đủ nhanh cho người xem và đủ rẻ cho DB.
+ */
+const PROJECTION_TTL_MS = 60_000
+
+/**
  * Báo cáo doanh thu (ticket #09).
  *
  * Hai nửa:
@@ -273,6 +279,10 @@ export class ReportsService {
   /**
    * Báo cáo phải có số: kỳ chưa được tính thì tính luôn (lần đọc đầu tiên sau khi deploy,
    * hoặc ngày hôm nay chưa tới 01:05). Không có bút toán nào → projection rỗng, trả 0 hết.
+   *
+   * Kỳ CHƯA ĐÓNG (có ngày hôm nay) thì không được coi "có 1 dòng là xong": doanh thu vẫn đang
+   * chảy, dùng lại ô tính từ 10:00 sẽ trả số cũ suốt ngày. Chỉ dùng lại nếu vừa tính trong
+   * `PROJECTION_TTL_MS`; ngày đã qua thì cache vĩnh viễn (cron 01:05 đã chốt).
    */
   private async ensureProjection(query: ReportRangeType, actor?: { userId?: number | null; roleName?: string | null }) {
     const branchId = await this.scopeBranch(query, actor)
@@ -282,7 +292,19 @@ export class ReportsService {
       new Date(`${to}T00:00:00.000Z`),
       branchId,
     )
-    if (existing.length > 0) return
+
+    const today = resolveRange(undefined, undefined).from
+    const isOpenPeriod = to >= today
+
+    if (existing.length > 0) {
+      if (!isOpenPeriod) return
+      const freshest = existing.reduce<Date>(
+        (latest, row) => ((row as any).updatedAt > latest ? (row as any).updatedAt : latest),
+        new Date(0),
+      )
+      if (Date.now() - freshest.getTime() < PROJECTION_TTL_MS) return
+    }
+
     await this.recompute(query, actor)
   }
 
