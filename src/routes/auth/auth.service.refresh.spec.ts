@@ -55,6 +55,7 @@ function makeService(claim: ClaimRefreshTokenResult) {
     {} as any,
     {} as any,
     sharedRefreshTokenRepo as any,
+    { record: jest.fn() } as any,
   )
 
   return { service, authRepo, tokenService, sharedRefreshTokenRepo }
