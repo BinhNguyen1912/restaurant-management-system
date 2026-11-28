@@ -1,4 +1,5 @@
 import { AccountLockedException } from '@/routes/auth/auth.error'
+import { emailFingerprint } from '@/routes/auth/login-attempt'
 import { LOCK_MINUTES, MAX_FAILED_ATTEMPTS } from '@/routes/auth/login-lockout'
 import { AuthService } from '@/routes/auth/auth.service'
 
@@ -21,6 +22,7 @@ function makeService(options: {
   failedAttempts?: number
   lockedUntil?: Date | null
   isPasswordValid?: boolean
+  noUser?: boolean
 }) {
   const user = {
     id: USER_ID,
@@ -36,12 +38,13 @@ function makeService(options: {
   }
 
   const sharedUserRepo = {
-    findUserIncludeRolePermissions: jest.fn(async () => user),
+    findUserIncludeRolePermissions: jest.fn(async () => (options.noUser ? null : user)),
     findBranchOfUser: jest.fn(async () => null),
   }
   const authRepo = {
     recordLoginFailure: jest.fn(async () => ({ count: 1 })),
     clearLoginFailures: jest.fn(async () => ({ count: 1 })),
+    recordLoginAttempt: jest.fn(async () => ({ id: 1 })),
     createRefreshToken: jest.fn(async (data: any) => data),
   }
   const tokenService = {
@@ -134,6 +137,76 @@ describe('AuthService.login - khoá tạm', () => {
     await service.login(loginBody as any)
 
     expect(authRepo.clearLoginFailures).not.toHaveBeenCalled()
+  })
+})
+
+describe('AuthService.login - nhật ký thử đăng nhập', () => {
+  /** Tham số của lần ghi nhật ký đầu tiên */
+  const attempt = (authRepo: any) => (authRepo.recordLoginAttempt.mock.calls as [any][])[0][0]
+
+  it('sai mật khẩu thì ghi FAILED, gắn đúng tài khoản bị thử và IP', async () => {
+    const { service, authRepo } = makeService({ failedAttempts: 1 })
+
+    await expect(service.login(loginBody as any, { ip: '203.0.113.9' })).rejects.toMatchObject({ status: 422 })
+
+    expect(attempt(authRepo)).toEqual({
+      emailHash: emailFingerprint('ketoan@nhahang.vn'),
+      actorId: USER_ID,
+      outcome: 'FAILED',
+      ip: '203.0.113.9',
+    })
+  })
+
+  it('email không tồn tại vẫn ghi FAILED, nhưng không gắn cho tài khoản nào', async () => {
+    const { service, authRepo } = makeService({ noUser: true })
+
+    await expect(service.login(loginBody as any)).rejects.toMatchObject({ status: 422 })
+
+    expect(attempt(authRepo)).toMatchObject({
+      emailHash: emailFingerprint(loginBody.email),
+      actorId: null,
+      outcome: 'FAILED',
+    })
+  })
+
+  it('đang bị khoá vẫn ghi: tiếp tục thử trong lúc khoá là dấu hiệu dò', async () => {
+    const { service, authRepo } = makeService({ lockedUntil: new Date(Date.now() + 60_000), isPasswordValid: true })
+
+    await expect(service.login(loginBody as any)).rejects.toMatchObject({ status: 423 })
+
+    expect(attempt(authRepo)).toMatchObject({ actorId: USER_ID, outcome: 'FAILED' })
+  })
+
+  it('đăng nhập đúng ghi SUCCESS', async () => {
+    const { service, authRepo } = makeService({ isPasswordValid: true })
+
+    await service.login(loginBody as any)
+
+    expect(attempt(authRepo)).toMatchObject({ actorId: USER_ID, outcome: 'SUCCESS' })
+  })
+
+  it('chỉ hash đi vào bảng, không có email thô trong tham số ghi', async () => {
+    const { service, authRepo } = makeService({ isPasswordValid: true })
+
+    await service.login(loginBody as any)
+
+    expect(JSON.stringify(authRepo.recordLoginAttempt.mock.calls)).not.toContain('ketoan@nhahang.vn')
+  })
+
+  it('nhật ký hỏng không làm hỏng lần đăng nhập đúng', async () => {
+    const { service, authRepo } = makeService({ isPasswordValid: true })
+    authRepo.recordLoginAttempt.mockRejectedValueOnce(new Error('không ghi được'))
+
+    const result = await service.login(loginBody as any)
+
+    expect(result.accessToken).toBe('access.token')
+  })
+
+  it('nhật ký hỏng không đổi lỗi mà người dùng nhận', async () => {
+    const { service, authRepo } = makeService({ failedAttempts: 1 })
+    authRepo.recordLoginAttempt.mockRejectedValueOnce(new Error('không ghi được'))
+
+    await expect(service.login(loginBody as any)).rejects.toMatchObject({ status: 422 })
   })
 })
 

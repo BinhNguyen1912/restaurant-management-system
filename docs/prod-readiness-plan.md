@@ -620,8 +620,8 @@ Test: `usageLimit = 1`, 10 request song song ⇒ 1 thành công, `usedCount = 1`
 2. **Audit log truy cập** — **đã làm phần ĐỌC PII người** (`AccessLog` + `AccessLogInterceptor` +
    `@LogAccess`), xem ghi chú dưới. Đã phủ: khách (5 route), nhân viên (hồ sơ + danh sách), đặt bàn
    (2 route), đơn hàng (chi tiết + danh sách), khách của bàn. **Chưa làm**: `reports` (chỉ số tổng
-   hợp, không có PII từng người — không đáng ghi), `ledger` (bút toán, không có PII), và
-   `LOGIN_SUCCESS`/`LOGIN_FAILED` — cần bạn chốt một câu, xem cuối mục.
+   hợp, không có PII từng người — không đáng ghi), `ledger` (bút toán, không có PII). Đăng nhập
+   đúng/sai đã ghi ở bảng riêng `LoginAttempt` — xem ghi chú dưới.
 3. **PII** — **đã làm (xem ghi chú dưới)**: `ConsentLog` append-only + ẩn danh hoá hồ sơ. Bản phác
    trong kế hoạch (`subjectType/subjectId`, `grantedAt/revokedAt`, job `anonymizeExpiredReservations`)
    đã đổi khi làm, lý do ở dưới.
@@ -666,12 +666,27 @@ không đổi một byte dữ liệu mà vẫn phải giải trình được. N�
 xác "tôi có bị xem không" cho từng khách trong một trang 20 dòng thì phải ghi 20 dòng mỗi lần bấm —
 đó là thiết kế khác (nặng hơn nhiều) và chưa ai yêu cầu. Route một người thì ghi đúng người đó.
 
-**Cần bạn chốt một câu cho `LOGIN_FAILED`:** đăng nhập sai thì *chưa biết* là ai, nên muốn nhật ký có
-ích (đếm theo tài khoản) thì phải lưu **email khách/nhân viên vừa gõ** — tức PII của người chưa đăng
-nhập được, vào một bảng append-only. Ba lựa chọn: (a) chỉ lưu IP (đếm được theo nguồn, không theo tài
-khoản); (b) lưu hash email (ghép được các lần thử cùng một tài khoản, không đọc ngược ra email); (c) lưu
-email thô như log hệ điều hành vẫn làm. Tôi nghiêng (b) nhưng đây là quyết định về dữ liệu cá nhân nên
-không tự chốt. Hiện `LOGIN_LOCKED` (khoá tài khoản sau N lần sai) đã có trong `AuditLog`.
+**Nhật ký thử đăng nhập — đã làm (mục 2, phần login).** Bảng riêng
+`LoginAttempt{emailHash, actorId, outcome, ip, createdAt}`, append-only. Không nhét vào `AccessLog`:
+đăng nhập không đọc hồ sơ nào, nên `route` của `AccessLog` sẽ phải giả vờ có một route đọc, và câu
+"ai đã đọc dữ liệu của tôi" bị pha loãng bởi hàng nghìn dòng đăng nhập. Bốn điểm:
+
+- **Chốt (b): lưu `sha256(email chuẩn hoá)`, không lưu email thô.** Bạn không chọn trong ba lựa chọn
+  đã nêu nên tôi đi theo đề xuất của mình; đổi được bất cứ lúc nào (chỉ là ngừng ghi thêm, dòng cũ
+  giữ nguyên). Lý do: bảng append-only, để email thô ở đây là một danh sách địa chỉ không xoá được —
+  đúng thứ §4 đang dọn. **Hash không phải ẩn danh**: ai có danh sách email ứng viên thì băm từng cái
+  là ra. Chặn được cả đường đó thì phải HMAC bằng khoá bí mật, đổi lại xoay khoá là mất khả năng
+  tương quan với dòng cũ — chưa làm.
+- **Không dùng `AuditLog`**: `entityId` ở đó là `Int` bắt buộc, mà lần thử vào email *không tồn tại*
+  thì không có id nào để ghi. Nới `entityId` thành nullable chỉ để chứa một loại sự kiện là làm yếu
+  schema của mọi sự kiện khác.
+- **Ghi cả bốn nhánh**: sai mật khẩu; email không tồn tại (`actorId` null — đây chính là màn dò xem
+  địa chỉ nào có trong hệ thống, thứ mà khoá-theo-tài-khoản không bao giờ thấy); đang bị khoá mà vẫn
+  thử (dấu hiệu tiếp tục dò); và đăng nhập đúng — ghi **sau** khi cấp token xong, vì cấp token hỏng
+  thì không phiên nào được mở.
+- **Best-effort nhưng vẫn `await`**: lỗi ghi nhật ký không biến đăng nhập đúng thành 500, cũng không
+  đổi thông báo lỗi mà người dùng đang chờ. Không "bắn rồi quên" vì đây là bằng chứng, không phải số
+  liệu thống kê.
 
 Chi tiết và các ⚠ cần kế toán/luật sư: `docs/pii-retention-policy.md`.
 
@@ -686,8 +701,13 @@ thể bị CHECK chặn; đọc hồ sơ **nhân viên** ghi `USER` chứ không
 viên / đặt bàn / khách của bàn đều để lại dòng; **đọc bằng `POST /orders/lists` vẫn được ghi** (đọc
 không đồng nghĩa với GET).
 
-**Chưa có phép đo** (vì code chưa có, đừng đọc như đã xong): login sai 3 lần ⇒ 3 dòng `LOGIN_FAILED`
-có IP — chờ bạn chốt lưu định danh nào (xem cuối mục trên).
+Nhật ký đăng nhập (`test/login-attempt.e2e-spec.ts`) ⇒ đăng nhập đúng, sai mật khẩu, email không tồn
+tại, và đang bị khoá đều để lại dòng với `outcome` đúng; email không tồn tại thì `actorId` null; toàn
+bộ bảng chỉ chứa hash 64 hex (**không** có email thô); `UPDATE` bị trigger DB chặn.
+
+**Chưa có phép đo** (vì code chưa có, đừng đọc như đã xong): job dọn `AccessLog`/`LoginAttempt` theo
+thời hạn lưu (chờ con số đã ký, §3); 2FA cho ADMIN/KE_TOAN (mục 5); media chứng từ ra nước ngoài
+(mục 4).
 
 **Pháp lý**: NĐ 13/2023/NĐ-CP (đồng ý, quyền xoá, hồ sơ đánh giá tác động, log truy cập), NĐ
 53/2022/NĐ-CP (lưu log, dữ liệu tại VN — **cần luật sư xác định phạm vi**), Luật Kế toán (giữ chứng

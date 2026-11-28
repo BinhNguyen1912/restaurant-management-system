@@ -10,6 +10,7 @@ import { TypeOfVerificationType } from '@/shared/constants/auth.constant'
 import { RoleType } from '@/shared/models/shared-role.model'
 import { UserType } from '@/shared/models/shared-user.model'
 import { PrismaService } from '@/shared/service/prisma.service'
+import { LoginOutcome } from '@prisma/client'
 import { Injectable } from '@nestjs/common'
 import { subDays } from 'date-fns'
 
@@ -136,6 +137,22 @@ export class AuthRepo {
     const { count } = await this.prismaService.verificationCode.deleteMany({ where: { id } })
     return count
   }
+  /**
+   * Ghi một lần thử đăng nhập vào nhật ký bảo mật (`LoginAttempt`).
+   *
+   * Chỉ INSERT: bảng có trigger chặn UPDATE, nên sửa lại "lịch sử đăng nhập" là việc DB không cho.
+   * Không nằm trong transaction nào — đăng nhập thất bại phải để lại dấu vết kể cả khi phần còn lại
+   * của luồng ném lỗi ngay sau đó.
+   */
+  recordLoginAttempt(input: {
+    emailHash: string
+    actorId: number | null
+    outcome: LoginOutcome
+    ip: string | null
+  }): Promise<{ id: number }> {
+    return this.prismaService.loginAttempt.create({ data: input, select: { id: true } })
+  }
+
   createRefreshToken(data: CreateRefreshTokenType): Promise<RefreshTokenResType> {
     return this.prismaService.refreshToken.create({
       data,

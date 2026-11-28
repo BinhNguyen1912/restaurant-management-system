@@ -1555,3 +1555,47 @@ model AuditLog {
   @@index([actorId, createdAt])
   @@index([branchId, createdAt])
 }
+
+/// Kết quả một lần thử đăng nhập bằng mật khẩu.
+enum LoginOutcome {
+  SUCCESS
+  FAILED
+}
+
+/// Nhật ký THỬ ĐĂNG NHẬP (NĐ 13/2023/NĐ-CP Điều 26 + kiểm soát nội bộ).
+///
+/// Hai câu hỏi mà `AuditLog` không trả lời được: tài khoản này có đang bị dò không (kể cả khi chưa
+/// tới ngưỡng khoá, và cả khi tài khoản KHÔNG TỒN TẠI), và một IP đang thử bao nhiêu tài khoản khác
+/// nhau. `LOGIN_LOCKED` chỉ có một dòng khi đã khoá — tức là sau khi đã trả giá 5 lượt.
+///
+/// Tách khỏi `AccessLog`: đó là nhật ký ĐỌC dữ liệu cá nhân, đăng nhập không đọc hồ sơ nào. Gộp vào
+/// thì `route` của `AccessLog` phải giả vờ có một route đọc, và câu "ai đã đọc dữ liệu của tôi" bị
+/// pha loãng bởi hàng nghìn dòng đăng nhập.
+///
+/// APPEND-ONLY (trigger DB chặn UPDATE), DELETE vẫn cho phép để dọn theo thời hạn lưu.
+model LoginAttempt {
+  id        Int          @id @default(autoincrement())
+  /// sha256(email đã chuẩn hoá) — 64 ký tự hex. Xem `emailFingerprint`.
+  ///
+  /// Không lưu email thô: bảng này append-only, chép email vào đây là nhân bản dữ liệu cá nhân sang
+  /// một nơi không xoá được, và biến bảng nhật ký bảo mật thành một danh sách email để rò rỉ.
+  /// Hash ĐỦ để tương quan các lần thử cùng một định danh. Hash KHÔNG phải ẩn danh: với email đã
+  /// biết thì tra từ điển là ra — đừng dùng cột này như dữ liệu đã khử định danh.
+  emailHash String       @db.Char(64)
+  /// User.id của tài khoản bị thử, null khi email không tồn tại.
+  ///
+  /// Cố ý KHÔNG có khoá ngoại: xoá tài khoản không được làm biến mất bằng chứng "đã có người thử dò
+  /// tài khoản này". `actorId` còn lại chỉ là một con số, không phải PII.
+  actorId   Int?
+  outcome   LoginOutcome
+  /// IP nơi thử đăng nhập (null khi không đọc được) — cũng là dữ liệu cá nhân, xem thời hạn lưu
+  ip        String?      @db.VarChar(45)
+  createdAt DateTime     @default(now())
+
+  /// "tài khoản này bị thử bao nhiêu lần" — tra theo hash
+  @@index([emailHash, createdAt])
+  /// "IP này đang thử những tài khoản nào" — dấu hiệu dò ngược
+  @@index([ip, createdAt])
+  /// dọn theo thời hạn lưu
+  @@index([createdAt])
+}

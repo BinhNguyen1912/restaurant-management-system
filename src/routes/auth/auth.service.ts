@@ -23,6 +23,7 @@ import {
   MAX_FAILED_ATTEMPTS,
   registerFailedAttempt,
 } from '@/routes/auth/login-lockout'
+import { emailFingerprint } from '@/routes/auth/login-attempt'
 import {
   hashOtpCode,
   isOtpCodeMatch,
@@ -43,6 +44,7 @@ import { SharedRefreshTokenRepo } from '@/shared/shared-repository/shared-refres
 import { SharedRoleRepo } from '@/shared/shared-repository/shared-role.repo'
 import { SharedUserRepo } from '@/shared/shared-repository/shared-user.repo'
 import { AccessTokenPayloadCreate, RefreshTokenPayload } from '@/shared/types/jwt.types'
+import { LoginOutcome } from '@prisma/client'
 import { Injectable, Logger, UnprocessableEntityException } from '@nestjs/common'
 import { addMinutes } from 'date-fns'
 import ms, { StringValue } from 'ms'
@@ -189,10 +191,36 @@ export class AuthService {
     }
   }
 
-  async login(data: LoginBodyType) {
+  /**
+   * Ghi một lần thử đăng nhập vào nhật ký bảo mật (`LoginAttempt`).
+   *
+   * Best-effort giống `LOGIN_LOCKED`: bảng nhật ký có sự cố thì không được biến lần đăng nhập đúng
+   * thành 500, cũng không được che mất lý do "sai mật khẩu" mà người dùng đang chờ.
+   */
+  private async recordLoginAttempt(input: {
+    email: string
+    actorId: number | null
+    outcome: LoginOutcome
+    ip: string | null
+  }) {
+    await this.authRepo
+      .recordLoginAttempt({
+        emailHash: emailFingerprint(input.email),
+        actorId: input.actorId,
+        outcome: input.outcome,
+        ip: input.ip,
+      })
+      .catch((error) => this.logger.warn(`Không ghi được nhật ký đăng nhập ${input.outcome}: ${error}`))
+  }
+
+  async login(data: LoginBodyType, context: { ip?: string | null } = {}) {
+    const ip = context.ip ?? null
     const user = await this.sharedUserRepo.findUserIncludeRolePermissions({ email: data.email })
 
     if (!user) {
+      // Email không tồn tại vẫn để lại dấu: chỉ ghi khi có tài khoản thì màn dò "địa chỉ nào có
+      // trong hệ thống" — vốn không bao giờ khoá được tài khoản nào — sẽ không hiện ở đâu cả.
+      await this.recordLoginAttempt({ email: data.email, actorId: null, outcome: 'FAILED', ip })
       throw InvalidEmailException
     }
     // Kiểm khoá TRƯỚC khi so mật khẩu: đang khoá thì mật khẩu đúng cũng không được cấp token, và
@@ -200,6 +228,8 @@ export class AuthService {
     const now = new Date()
     const lock = evaluateLoginLock(user.lockedUntil, now)
     if (lock.locked) {
+      // Vẫn ghi: một lần thử trong lúc đang khoá là dấu hiệu có người tiếp tục dò, không phải nhiễu.
+      await this.recordLoginAttempt({ email: data.email, actorId: user.id, outcome: 'FAILED', ip })
       throw AccountLockedException(lock.remainingMs)
     }
 
@@ -210,6 +240,7 @@ export class AuthService {
         failedAttempts: outcome.failedAttempts,
         lockedUntil: outcome.lockedUntil,
       })
+      await this.recordLoginAttempt({ email: data.email, actorId: user.id, outcome: 'FAILED', ip })
       if (!outcome.justLocked) {
         throw InvalidPasswordException
       }
@@ -236,6 +267,10 @@ export class AuthService {
       roleId: user.roleId,
       roleName: user.role.name,
     })
+
+    // Ghi SAU khi đã cấp token: cấp token hỏng thì không phiên nào được mở, ghi SUCCESS lúc đó là
+    // nói dối về một lần đăng nhập chưa xảy ra.
+    await this.recordLoginAttempt({ email: data.email, actorId: user.id, outcome: 'SUCCESS', ip })
 
     // Chi nhánh nhân viên thuộc về (null = chưa gán). FE hiện ngay trên header để người dùng biết
     // mình đang thao tác dữ liệu của chi nhánh nào — sai chi nhánh là sai số liệu, không báo lỗi.
