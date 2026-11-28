@@ -10,6 +10,28 @@ Tài liệu này là **kế hoạch làm việc**, không phải báo cáo kiể
 > Mọi mục "pháp lý" trong tài liệu là **đánh giá kỹ thuật**, phải được kế toán trưởng và luật sư
 > xác nhận trước khi dùng để kê khai/giải trình.
 
+## Trạng thái phát hành
+
+Đợt 27 + 1 lỗi dưới đây đã lên `main` qua 2 PR (bấm vào là ra đúng trang):
+
+| Hạng mục | Liên kết |
+|---|---|
+| PR backend (đã merge) | [#56](https://github.com/BinhNguyen1912/restaurant-management-system/pull/56) |
+| PR frontend (đã merge) | [#47](https://github.com/BinhNguyen1912/restaurant-management-system-FE/pull/47) |
+| Merge commit BE trên `main` | [`d117dcb`](https://github.com/BinhNguyen1912/restaurant-management-system/commit/d117dcb8efa80cf75e7e026322b79adfb549531b) |
+| Merge commit FE trên `main` | [`cc0c490`](https://github.com/BinhNguyen1912/restaurant-management-system-FE/commit/cc0c490477a6f46873f1f1532483d8f7863976be) |
+| CI chạy trên `main` (BE) | [run 46128382043](https://github.com/BinhNguyen1912/restaurant-management-system/actions/runs/46128382043) |
+| CI chạy trên `main` (FE) | [run 46128389519](https://github.com/BinhNguyen1912/restaurant-management-system-FE/actions/runs/46128389519) |
+| Nhánh review (giữ lại để đối chiếu diff) | [BE](https://github.com/BinhNguyen1912/restaurant-management-system/tree/review/prod-readiness) · [FE](https://github.com/BinhNguyen1912/restaurant-management-system-FE/tree/review/prod-readiness) |
+| Bản sửa đối soát ghép theo chi nhánh (§0.1 #28) | [`reconciliation-check.ts`](https://github.com/BinhNguyen1912/restaurant-management-system/blob/main/src/routes/reconciliation/reconciliation-check.ts) · [`reconciliation.service.ts`](https://github.com/BinhNguyen1912/restaurant-management-system/blob/main/src/routes/reconciliation/reconciliation.service.ts) |
+
+Hai PR **phải đi cùng nhau**: `pay all` đổi `GET → POST` ở BE, FE gọi đúng method mới. Merge lệch
+nhau giữa hai repo sẽ làm nút thu tiền ở FE gọi sai.
+
+> Đợt này vào `main` **không có review độc lập** (chỉ có CI xanh: typecheck, unit, `next build`,
+> và E2E trên Postgres/Redis dựng mới). Các chỗ nên có người đọc lại diff: bút toán đảo khi huỷ đơn,
+> quyết toán cọc, ghép bút toán theo chi nhánh, và mức cọc do BE chốt (§0.2).
+
 ---
 
 ## 0. Trạng thái xuất phát (sau 2 vòng audit + fix)
@@ -21,10 +43,10 @@ Tài liệu này là **kế hoạch làm việc**, không phải báo cáo kiể
 | `tsc --noEmit` BE | PASS |
 | `tsc --noEmit` FE | PASS |
 | `prisma validate` | PASS (schema + 3 migration mới) |
-| Unit test BE | **236 passed / 36 suite** |
-| E2E BE | 4 suite (`finance`, `inventory`, `stock-receipt`, `table-open`) — **chưa chạy lại sau vòng 2** vì cần Postgres+Redis |
+| Unit test BE | **245 passed / 38 suite** |
+| E2E BE | 4 suite (`finance`, `inventory`, `stock-receipt`, `table-open`) — **52/52**, chạy 3 lần liên tiếp trên DB dựng lại từ đầu; CI cũng xanh trên Postgres+Redis mới |
 | `npm audit --omit=dev` | BE: 35 lỗ hổng (1 critical) · FE: 18 (1 critical) |
-| Lỗi chặn production đã **sửa** | 27 (danh sách §0.1) |
+| Lỗi chặn production đã **sửa** | 28 (danh sách §0.1) |
 | Lỗi chặn production **còn lại** | 3 nhóm — 1 BLOCKER + 2 HIGH (danh sách §0.2) |
 
 ### 0.1 Đã sửa (có test chứng minh)
@@ -58,6 +80,7 @@ Tài liệu này là **kế hoạch làm việc**, không phải báo cáo kiể
 | 25 | Đơn đặt bàn có preorder **không thể thu tiền**: `payOrdersByGuest` đòi `Payment.amount === grandTotal` trong khi `Payment.amount` là tiền cọc; và nó ghi `Nợ CASH = grandTotal` **rồi** thêm bút toán tất toán cọc ⇒ doanh thu và tiền mặt bị đếm hai lần | `src/routes/orders/orders.repo.ts`, `src/shared/service/order-ledger-lines.ts`, `deposit-settlement.ts` | `order-ledger-lines.spec.ts`, `orders-deposit-settlement.spec.ts` |
 | 26 | Lần thu thứ hai (phần còn lại) không có chỗ ghi: `Order.paymentId` đã trỏ vào Payment cọc (`SUCCESS`) nên `updateMany({ status: PENDING })` khớp 0 dòng | `prisma/migrations/20261128010000_payment_order_link`, `prisma/schema.prisma` (`Payment.orderId`) | `orders-deposit-settlement.spec.ts` |
 | 27 | Bút toán thu tiền dùng chung một khoá idempotency cho cả lần thu cọc và lần thu nốt ⇒ lần thứ hai bị coi là bản trùng và mất bút toán | `src/routes/orders/orders.repo.ts` (`cash:deposit-settle:<paymentId>`) | `orders-deposit-settlement.spec.ts` |
+| 28 | Đối soát gán bút toán cho payment **chỉ theo `refId`**, bỏ qua chi nhánh ⇒ một bút toán thu tiền ở chi nhánh khác trùng `refId` (bút toán giả của test báo cáo dùng `refId` 1,2,3,9,11; hoặc DB bị reset/import làm sequence id Payment đếm lại) bị quy cho payment thật ⇒ báo lệch giả `DUPLICATE`, `MATCHED = 0` | `src/routes/reconciliation/reconciliation-check.ts` (`selectEntriesForPayment`), `reconciliation.service.ts` | `reconciliation-check.spec.ts` (4 ca) + e2e trên DB dựng mới |
 
 ### 0.2 Còn lại, xếp theo mức chặn production
 
