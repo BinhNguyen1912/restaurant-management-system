@@ -60,8 +60,11 @@ export class CashShiftRepo {
     })
   }
 
-  create(data: { branchId: number; staffId: number; openingFloat: number; note?: string }) {
-    return this.prismaService.cashShift.create({
+  create(
+    data: { branchId: number; staffId: number; openingFloat: number; note?: string },
+    tx?: Prisma.TransactionClient,
+  ) {
+    return (tx ?? this.prismaService).cashShift.create({
       data: {
         branchId: data.branchId,
         staffId: data.staffId,

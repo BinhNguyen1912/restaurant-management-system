@@ -46,11 +46,40 @@ export class CashShiftService {
     ])
     if (openInBranch || openOfStaff) throw CashShiftAlreadyOpenException
 
-    const shift = await this.repo.create({
-      branchId,
-      staffId: actor.userId,
-      openingFloat: data.openingFloat,
-      note: data.note,
+    const shift = await this.prismaService.$transaction(async (tx) => {
+      const created = await this.repo.create(
+        {
+          branchId,
+          staffId: actor.userId,
+          openingFloat: data.openingFloat,
+          note: data.note,
+        },
+        tx,
+      )
+
+      /**
+       * Tiền lẻ đầu ca là tiền THẬT trong két, phải vào sổ quỹ: `expectedCash` khi đóng ca cộng
+       * `openingFloat`, nên nếu mở ca không ghi `Nợ CASH` thì số dư CASH luôn thiếu đúng khoản này
+       * và mọi lệch thật bị lẫn với khoản lệch cố định đó.
+       */
+      if (created.openingFloat && Number(created.openingFloat) > 0) {
+        await this.ledgerPosting.postEntry(
+          {
+            branchId,
+            refType: 'SHIFT_OPENING_FLOAT',
+            refId: created.id,
+            idempotencyKey: `cash-shift:${created.id}:open`,
+            memo: 'Tiền lẻ đầu ca',
+            lines: [
+              { accountCode: 'CASH', direction: 'DEBIT', amount: created.openingFloat },
+              { accountCode: 'CASH_FLOAT_SOURCE', direction: 'CREDIT', amount: created.openingFloat },
+            ],
+          },
+          tx,
+        )
+      }
+
+      return created
     })
     return toMoneyNumbers<CashShiftType>(shift)
   }

@@ -1,4 +1,31 @@
-import { CreateCashMovementSchema } from '@/routes/cash-shift/cash-shift.model'
+import { CloseCashShiftSchema, CreateCashMovementSchema, OpenCashShiftSchema } from '@/routes/cash-shift/cash-shift.model'
+
+/**
+ * Regression (audit trước prod): `z.coerce.number()` biến `null`/`''` thành 0, nên đóng ca với ô
+ * "tiền mặt thực đếm" không parse được vẫn được chấp nhận với 0đ ⇒ tự sinh bút toán thiếu quỹ
+ * bằng toàn bộ tiền trong két.
+ */
+describe('CloseCashShiftSchema — tiền đếm két', () => {
+  it('số tiền hợp lệ được làm tròn về đồng', () => {
+    expect(CloseCashShiftSchema.parse({ countedCash: 1_000_000 }).countedCash).toBe(1_000_000)
+    expect(CloseCashShiftSchema.parse({ countedCash: 99_999.6 }).countedCash).toBe(100_000)
+  })
+
+  it('null KHÔNG được coi là 0', () => {
+    expect(() => CloseCashShiftSchema.parse({ countedCash: null })).toThrow()
+  })
+
+  it('chuỗi "1.000.000" bị từ chối thay vì thành 0 hay NaN', () => {
+    expect(() => CloseCashShiftSchema.parse({ countedCash: '1.000.000' })).toThrow()
+  })
+})
+
+describe('OpenCashShiftSchema — tiền lẻ đầu ca', () => {
+  it('nhận số, từ chối null', () => {
+    expect(OpenCashShiftSchema.parse({ openingFloat: 500_000 }).openingFloat).toBe(500_000)
+    expect(() => OpenCashShiftSchema.parse({ openingFloat: null })).toThrow()
+  })
+})
 
 describe('CreateCashMovementSchema — chứng từ', () => {
   const base = { type: 'OUT', reason: 'mua đá', amount: 50_000 }
