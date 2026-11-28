@@ -144,6 +144,26 @@ export const disableTwoFactorBodySchema = UserSchema.pick({ password: true })
   })
   .strict()
 
+/**
+ * Nhập lại mật khẩu để mở khoá MỘT thao tác nhạy cảm (step-up) — xem `StepUpGuard`.
+ *
+ * Cùng hình dạng với đăng nhập (mật khẩu + yếu tố thứ hai nếu đã bật 2FA) nhưng trả về một VÉ
+ * ngắn hạn chứ không phải token phiên: đây là lần xác nhận lại, không phải đăng nhập lần hai.
+ */
+export const reauthenticateBodySchema = UserSchema.pick({ password: true })
+  .extend({
+    totpCode: z.string({ message: 'Error.CodeMustBeString' }).length(6).optional(),
+    code: z.string({ message: 'Error.CodeMustBeString' }).length(6).optional(),
+  })
+  .strict()
+
+export const reauthenticateResSchema = z.object({
+  /** vé cho header `x-step-up-token`, dùng được cho mọi thao tác nhạy cảm tới khi hết hạn */
+  stepUpToken: z.string(),
+  /** hết hạn lúc nào (ISO) — FE đóng hộp thoại theo mốc này thay vì tự đoán */
+  expiresAt: z.string(),
+})
+
 export const GetUserIncludeRoleSchema = UserSchema.extend({
   role: RoleSchema,
 })
@@ -230,3 +250,5 @@ export type GetAccessTokenResType = z.infer<typeof GetAccessTokenResSchema>
 export type TwoFactorSetupResType = z.infer<typeof twoFactorSetupResSchema>
 export type EnableTwoFactorBodyType = z.infer<typeof enableTwoFactorBodySchema>
 export type DisableTwoFactorBodyType = z.infer<typeof disableTwoFactorBodySchema>
+export type ReauthenticateBodyType = z.infer<typeof reauthenticateBodySchema>
+export type ReauthenticateResType = z.infer<typeof reauthenticateResSchema>

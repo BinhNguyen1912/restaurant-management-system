@@ -37,3 +37,23 @@ export interface GuestAccessTokenPayload extends GuestAccessTokenPayloadCreate {
   iat: number
   exp: number
 }
+
+/**
+ * Vé "vừa nhập lại mật khẩu" (step-up) cho một thao tác nhạy cảm — xem `StepUpGuard`.
+ *
+ * Cố ý KHÔNG có `roleId`/`roleName`: vé này không phải một phiên đăng nhập, nó chỉ trả lời câu
+ * "người đang giữ access token này đã gõ lại mật khẩu trong 5 phút vừa rồi". Thiếu role cũng là
+ * một lớp chắn: đem vé này đi làm Bearer token thì `AccessTokenGuard` từ chối vì không có quyền để
+ * tra, chứ không phải chỉ nhờ khác khoá ký.
+ */
+export interface StepUpTokenPayloadCreate {
+  userId: number
+}
+
+export interface StepUpTokenPayload extends StepUpTokenPayloadCreate {
+  /** dấu loại token — kiểm lại ở guard, để một token khác payload không lọt qua cùng khoá */
+  typ: 'STEP_UP'
+  uuid?: string
+  iat: number
+  exp: number
+}

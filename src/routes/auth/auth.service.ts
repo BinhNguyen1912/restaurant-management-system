@@ -19,6 +19,8 @@ import {
   ForgotPasswordType,
   LoginBodyType,
   LogoutBodyType,
+  ReauthenticateBodyType,
+  ReauthenticateResType,
   RefreshTokenBodyType,
   RegisterBodyType,
 } from '@/routes/auth/auth.model'
@@ -47,7 +49,7 @@ import {
   registerOtpMismatch,
 } from '@/routes/auth/otp-policy'
 import envConfig from '@/shared/config'
-import { TypeOfVerification, TypeOfVerificationType } from '@/shared/constants/auth.constant'
+import { STEP_UP_TOKEN_TTL_MINUTES, TypeOfVerification, TypeOfVerificationType } from '@/shared/constants/auth.constant'
 import { EmailAlreadyExistsException, InvalidEmailException } from '@/shared/error'
 import { generateCode } from '@/shared/helper'
 import { AuditLogService } from '@/shared/service/audit-log.service'
@@ -465,6 +467,59 @@ export class AuthService {
       })
       .catch((error) => this.logger.warn(`Không ghi được audit TWO_FACTOR_DISABLED cho user ${userId}: ${error}`))
     return { message: 'Đã tắt xác thực hai lớp' }
+  }
+
+  /**
+   * Nhập lại mật khẩu để mở khoá MỘT thao tác nhạy cảm — cấp vé ngắn hạn cho `x-step-up-token`.
+   *
+   * Vì sao không dùng lại `login`: login cấp cặp token MỚI, tức là biến một lần "xác nhận lại" thành
+   * một phiên thứ hai — và phiên đó không đi qua hộp thoại nào nữa. Đây là lần xác nhận, không phải
+   * lần đăng nhập.
+   *
+   * Sai mật khẩu ở đây **KHÔNG** cộng vào bộ đếm khoá đăng nhập, khác với `login`. Lý do: người gọi
+   * đã có một phiên hợp lệ, nên nếu sai mật khẩu mà khoá được tài khoản thì kẻ chiếm phiên có sẵn
+   * một nút DoS dí vào chủ tài khoản. Bù lại hai thứ: route bị giới hạn tần suất chặt (xem
+   * controller), và mỗi lần sai đều để lại một dòng `LoginAttempt` FAILED — bằng chứng "có người thử
+   * mật khẩu từ bên trong một phiên".
+   */
+  async reauthenticate(
+    userId: number,
+    data: ReauthenticateBodyType,
+    context: { ip?: string | null } = {},
+  ): Promise<ReauthenticateResType> {
+    const user = await this.sharedUserRepo.findUniqueUser({ id: userId })
+    if (!user) {
+      throw new UnauthorizedException('Error.UserNotFound')
+    }
+    const ip = context.ip ?? null
+
+    const isPasswordValid = await this.hashingService.comparePassword(data.password, user.password)
+    if (!isPasswordValid) {
+      await this.recordLoginAttempt({ email: user.email, actorId: user.id, outcome: 'FAILED', ip })
+      throw InvalidPasswordException
+    }
+
+    // Tài khoản đã bật 2FA thì "nhập lại mật khẩu" một mình không đủ: kẻ có mật khẩu (dò được, hoặc
+    // đọc được ở đâu đó) vẫn phải qua yếu tố thứ hai. Cùng quy ước với `login`.
+    if (user.twoFactorEnabled) {
+      const factor = secondFactorKind({ totpCode: data.totpCode, emailCode: data.code })
+      if (factor === 'NONE') {
+        throw TwoFactorRequiredException
+      }
+      if (factor === 'EMAIL') {
+        await this.verificationCode({ email: user.email, code: data.code as string, type: TypeOfVerification.LOGIN })
+      } else {
+        const plainSecret = decryptTotpSecret(user.totpSecret, this.totpKey)
+        if (!plainSecret || !verifyTotpCode(plainSecret, data.totpCode as string)) {
+          await this.recordLoginAttempt({ email: user.email, actorId: user.id, outcome: 'FAILED', ip })
+          throw InvalidTwoFactorCodeException
+        }
+      }
+    }
+
+    const stepUpToken = await this.tokenService.createStepUpToken({ userId: user.id })
+    const expiresAt = new Date(Date.now() + STEP_UP_TOKEN_TTL_MINUTES * 60 * 1000)
+    return { stepUpToken, expiresAt: expiresAt.toISOString() }
   }
 
   async forgotPassword(data: ForgotPasswordType) {

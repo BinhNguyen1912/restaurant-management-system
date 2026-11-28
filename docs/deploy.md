@@ -68,6 +68,11 @@ báo ngay dưới).
 >
 > Nếu quên chạy: API vẫn lên nhưng **route mới trả 403 cho mọi vai trò**. Container sẽ in cảnh báo
 > ngay lúc khởi động: `⚠️ Có N route CHƯA có permission…`.
+>
+> Lần gần nhất bộ route đổi: thêm `POST /auth/reauth` (vé nhập-lại-mật-khẩu cho thao tác nhạy cảm —
+> xem `docs/prod-readiness-plan.md` §M9 mục 6). Deploy bản có route này **phải** chạy
+> `create-permissions` một lần, nếu không thì chính route cấp vé sẽ trả 403 và mọi thao tác nhạy cảm
+> đứng hình (FE không lấy được vé để gửi kèm).
 
 ## Job dọn nhật ký (tự động, hằng tháng)
 

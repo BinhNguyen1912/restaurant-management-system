@@ -10,7 +10,11 @@ import {
   GuestRefreshTokenPayloadCreate,
   RefreshTokenPayload,
   RefreshTokenPayloadCreate,
+  StepUpTokenPayload,
+  StepUpTokenPayloadCreate,
 } from '../types/jwt.types'
+import { STEP_UP_TOKEN_TTL_MINUTES } from '../constants/auth.constant'
+import { deriveKey } from '../service/key-derivation'
 import { Inject, Injectable } from '@nestjs/common'
 import { StringValue } from 'ms'
 
@@ -85,5 +89,35 @@ export class TokenService {
     return this.jwtService.verifyAsync(token, {
       secret: configEnv.REFRESH_TOKEN_SECRET,
     })
+  }
+  /**
+   * Vé nhập-lại-mật-khẩu (step-up) cho một thao tác nhạy cảm — xem `StepUpGuard`.
+   *
+   * Ký bằng khoá DẪN XUẤT RIÊNG chứ không dùng thẳng `ACCESS_TOKEN_SECRET`: dùng chung khoá thì
+   * một lỗi ở phía verify (quên kiểm `typ`, đảo thứ tự tham số) là đủ để một vé 5 phút sống thành
+   * một access token. Ở đây hai khoá khác nhau, nên kể cả khi guard kiểm sai thì chữ ký vẫn không
+   * khớp — hai lớp chắn độc lập.
+   */
+  async createStepUpToken(payload: StepUpTokenPayloadCreate): Promise<string> {
+    return this.jwtService.sign(
+      { ...payload, typ: 'STEP_UP', uuid: uuidv4() },
+      {
+        secret: this.stepUpSecret(),
+        expiresIn: `${STEP_UP_TOKEN_TTL_MINUTES}m` as StringValue,
+        algorithm: 'HS256',
+      },
+    )
+  }
+  async VerifyStepUpToken(token: string): Promise<StepUpTokenPayload> {
+    return this.jwtService.verifyAsync(token, {
+      secret: this.stepUpSecret(),
+    })
+  }
+  private stepUpSecret(): string {
+    return deriveKey({
+      material: configEnv.ACCESS_TOKEN_SECRET,
+      salt: 'res-mana-step-up',
+      info: 'step-up-token-v1',
+    }).toString('hex')
   }
 }

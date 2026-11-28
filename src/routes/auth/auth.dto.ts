@@ -10,6 +10,8 @@ import {
   RefreshTokenBodySchema,
   registerBodySchema,
   registerResSchema,
+  reauthenticateBodySchema,
+  reauthenticateResSchema,
   twoFactorSetupResSchema,
 } from '@/routes/auth/auth.model'
 import { createZodDto } from 'nestjs-zod'
@@ -26,3 +28,5 @@ export class LogoutBodyDTO extends createZodDto(LogoutBodySchema) {}
 export class EnableTwoFactorBodyDTO extends createZodDto(enableTwoFactorBodySchema) {}
 export class DisableTwoFactorBodyDTO extends createZodDto(disableTwoFactorBodySchema) {}
 export class TwoFactorSetupResDTO extends createZodDto(twoFactorSetupResSchema) {}
+export class ReauthenticateBodyDTO extends createZodDto(reauthenticateBodySchema) {}
+export class ReauthenticateResDTO extends createZodDto(reauthenticateResSchema) {}
