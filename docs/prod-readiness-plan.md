@@ -43,10 +43,10 @@ nhau giữa hai repo sẽ làm nút thu tiền ở FE gọi sai.
 | `tsc --noEmit` BE | PASS |
 | `tsc --noEmit` FE | PASS |
 | `prisma validate` | PASS (schema + 3 migration mới) |
-| Unit test BE | **259 passed / 40 suite** |
-| E2E BE | 4 suite (`finance`, `inventory`, `stock-receipt`, `table-open`) — **52/52**, chạy 3 lần liên tiếp trên DB dựng lại từ đầu; CI cũng xanh trên Postgres+Redis mới |
+| Unit test BE | **279 passed / 42 suite** |
+| E2E BE | 4 suite (`finance`, `inventory`, `stock-receipt`, `table-open`) — **52/52**, chạy lại sau mỗi đợt sửa auth (3 lần liên tiếp trên DB dựng lại từ đầu ở đợt trước); CI cũng xanh trên Postgres+Redis mới |
 | `npm audit --omit=dev` | BE: 35 lỗ hổng (1 critical) · FE: 18 (1 critical) |
-| Lỗi chặn production đã **sửa** | 30 (danh sách §0.1) |
+| Lỗi chặn production đã **sửa** | 31 (danh sách §0.1) |
 | Lỗi chặn production **còn lại** | 2 nhóm — 1 BLOCKER + 1 HIGH (danh sách §0.2) |
 
 ### 0.1 Đã sửa (có test chứng minh)
@@ -83,13 +83,14 @@ nhau giữa hai repo sẽ làm nút thu tiền ở FE gọi sai.
 | 28 | Đối soát gán bút toán cho payment **chỉ theo `refId`**, bỏ qua chi nhánh ⇒ một bút toán thu tiền ở chi nhánh khác trùng `refId` (bút toán giả của test báo cáo dùng `refId` 1,2,3,9,11; hoặc DB bị reset/import làm sequence id Payment đếm lại) bị quy cho payment thật ⇒ báo lệch giả `DUPLICATE`, `MATCHED = 0` | `src/routes/reconciliation/reconciliation-check.ts` (`selectEntriesForPayment`), `reconciliation.service.ts` | `reconciliation-check.spec.ts` (4 ca) + e2e trên DB dựng mới |
 | 29 | Mức cọc reservation do **client** quyết: `depositAmount` nằm trong body tạo reservation nên con số đó đi vào `Payment.amount`, số VNPay thu và bút toán quyết toán cọc | `src/routes/reservation/reservation.model.ts` (bỏ `depositAmount` khỏi `reservationBodySchema`), `reservation.repo.ts`, `src/shared/service/deposit-policy.ts` | `reservation-deposit-input.spec.ts`, `deposit-policy.spec.ts` |
 | 30 | `/auth/login` không đếm lần sai ⇒ dò mật khẩu không giới hạn; chỉ có throttler 40 request/phút/IP vừa chặn nhầm nhiều chi nhánh dùng chung một IP văn phòng, vừa không chặn được kẻ đổi IP | `prisma/migrations/20261128020000_login_lockout`, `src/routes/auth/login-lockout.ts`, `auth.service.ts`, `auth.repo.ts`, `auth.error.ts`, `audit-log.service.ts` | `login-lockout.spec.ts`, `auth.service.lockout.spec.ts` |
+| 31 | OTP: mã lưu **plaintext**, không đếm lượt nhập sai, mã cũ vẫn sống sau khi phát mã mới (mỗi mã là dòng vô danh nên không có chỗ gắn bộ đếm); `createVerificationCode` còn nuốt lỗi vì `try { return promise } catch` thiếu `await` ⇒ trả `undefined` mà không ném | `prisma/migrations/20261128030000_otp_hash_and_attempts`, `src/routes/auth/otp-policy.ts`, `auth.service.ts`, `auth.repo.ts`, `auth.model.ts`, `auth.error.ts` | `otp-policy.spec.ts` (10 ca), `auth.service.otp.spec.ts` (10 ca) |
 
 ### 0.2 Còn lại, xếp theo mức chặn production
 
 | # | Lỗi | Mức | Module xử lý |
 |---|---|---|---|
 | 1 | Không có hoá đơn (điện tử), không có MST/tên pháp nhân; VAT 1 mức cho toàn chi nhánh thay vì theo món | BLOCKER (pháp lý) — schema + tích hợp nhà cung cấp | M10 |
-| 2 | OTP/2FA khi đăng nhập; PII & consent; media chứng từ lưu ra nước ngoài (refresh token đã xong — mục 23; khoá đăng nhập tạm đã xong — mục 30) | HIGH (pháp lý) | M1, M9 |
+| 2 | 2FA khi đăng nhập (`totpCode` khai trong schema mà không kiểm); PII & consent; media chứng từ lưu ra nước ngoài (refresh token đã xong — mục 23; khoá đăng nhập tạm — mục 30; OTP — mục 31) | HIGH (pháp lý) | M1, M9 |
 
 **Cọc reservation — đã làm (mục 24–27), mức cọc do BE chốt đã xong (mục 29).** Quyết định schema đã phác
 lúc lập kế hoạch (thêm bảng `OrderPayment`) **không dùng**: chỉ thêm `Payment.orderId` (nullable,
@@ -107,7 +108,19 @@ ngay khi khoá — để nguyên ở ngưỡng thì lần gõ sai đầu tiên s
 khoá vĩnh viễn. Đăng nhập đúng thì xoá dấu vết sai; mỗi lần khoá ghi `AuditLog` với action `LOGIN_LOCKED`;
 trả **423** kèm `minutes` còn lại để FE phân biệt "gõ sai, thử lại được" với "đang bị khoá".
 
-**Refresh token nhân viên — đã làm (mục 23); phần còn lại của nhóm (2) là OTP/2FA, PII & consent,
+**OTP — đã làm (mục 31).** Mã chỉ 6 số và sống 5 phút, nên ba lỗ cũ cộng lại là dò được: không đếm
+lượt sai, mã cũ vẫn sống sau khi phát mã mới, và mã nằm plaintext trong bảng. Nay DB chỉ giữ
+`sha256(code)`; tra theo `(email, type)` để lấy mã đang sống rồi so hash bằng `timingSafeEqual` —
+đổi khoá tra cứu là cái giá phải trả để gắn được bộ đếm vào đúng dòng mã, vì trước đây mỗi mã là một
+dòng vô danh không có chỗ ghi "đã bị nhập sai bao nhiêu lần". Nhập sai 5 lần ⇒ mã bị vô hiệu và trả
+**429**, khác 422 "gõ lại mã này" — FE phải phân biệt được hai tình huống. Phát mã mới thì mã cũ cùng
+`(email, type)` bị vô hiệu trong cùng transaction; claim lượt dùng nằm ngay trong bước kiểm nên hai
+request song song không cùng đi qua một mã. Gửi quá 5 lượt/15 phút cho một email ⇒ **429**, và gửi
+email hỏng thì dòng vừa tạo bị xoá để trả lại lượt — nếu không, khách tự khoá mình khỏi luồng đăng ký
+chỉ vì nhà cung cấp email trục trặc. Backfill migration đổi mã đang bay sang hash (thử trên DB có sẵn
+một mã sống: `sha256('123456') = 8d969eef…`), nên deploy giữa lúc khách đang chờ mã không làm hỏng gì.
+
+**Refresh token nhân viên — đã làm (mục 23); phần còn lại của nhóm (2) là 2FA, PII & consent,
 media chứng từ.** Thiết kế đã chốt lúc lập kế hoạch giữ nguyên: `tokenHash @unique` (sha256), `familyId`,
 `usedAt`, `revokedAt`; refresh = claim nguyên tử, `count = 0` thì revoke cả family; login tạo family mới;
 logout/đổi mật khẩu/xoá user revoke toàn bộ family của user. Migration backfill bằng
@@ -767,8 +780,9 @@ dữ liệu kế toán" khi bị kiểm tra.
    lý do (kèm biện pháp bù).
 2. **CSP + security headers** ở FE (hiện chưa có CSP) — cần trước khi bỏ `localStorage` để giảm hệ
    quả XSS.
-3. **Rate limit theo tài khoản** cho OTP/forgot-password (hiện chỉ theo IP). Đăng nhập đã có khoá
-   tạm theo tài khoản (§0.1 mục 30) nên phần còn lại là OTP và luồng gửi lại mã.
+3. **Rate limit theo tài khoản** cho OTP/gửi lại mã — đã xong (§0.1 mục 31: 5 lượt gửi/15 phút cho
+   một email, 5 lượt nhập sai cho một mã); đăng nhập đã có khoá tạm theo tài khoản (§0.1 mục 30).
+   Còn lại: chuyển throttler toàn cục từ khoá IP sang khoá user/chi nhánh.
 4. **Rà `dangerouslySetInnerHTML`, log lộ token/PII**, `console.log` chứa payload thanh toán.
 5. **Quét bí mật**: `git log -p -- .env`; rotate toàn bộ key từng nằm trên máy dev
    (`ACCESS_TOKEN_SECRET`, `VNPAY_SECRET_KEY`, `RESEND_API_KEY`, Cloudinary).

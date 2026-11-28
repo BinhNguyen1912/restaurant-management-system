@@ -703,14 +703,19 @@ model CategoryTranslation {
 }
 
 model VerificationCode {
-  id        Int                  @id @default(autoincrement())
-  email     String               @db.VarChar(500)
-  code      String               @db.VarChar(1000)
-  type      VerificationCodeType
-  expiresAt DateTime
-  createdAt DateTime             @default(now())
+  id     Int                  @id @default(autoincrement())
+  email  String               @db.VarChar(500)
+  /// sha256 hex của mã OTP — DB không giữ plaintext (prod-readiness M1)
+  codeHash String             @db.VarChar(64)
+  type   VerificationCodeType
+  /// Số lượt nhập sai của chính mã này; chạm ngưỡng thì mã bị vô hiệu, phải xin mã mới
+  attempts   Int              @default(0)
+  /// Mã đã dùng, hoặc đã bị mã mới thay thế. Giữ dòng để đếm lượt gửi trong cửa sổ 15 phút
+  consumedAt DateTime?
+  expiresAt  DateTime
+  createdAt  DateTime         @default(now())
 
-  @@unique([email, code, type])
+  @@index([email, type, createdAt])
   @@index([expiresAt])
 }
 

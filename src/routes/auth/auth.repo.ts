@@ -4,14 +4,14 @@ import {
   RegisterBodyType,
   RegisterResRepoType,
   RegisterResType,
-  VerificationCodeType,
+  VerificationCodeRecordType,
 } from '@/routes/auth/auth.model'
 import { TypeOfVerificationType } from '@/shared/constants/auth.constant'
-import { isUniqueConstraintPrisma } from '@/shared/helper'
 import { RoleType } from '@/shared/models/shared-role.model'
 import { UserType } from '@/shared/models/shared-user.model'
 import { PrismaService } from '@/shared/service/prisma.service'
 import { Injectable } from '@nestjs/common'
+import { subDays } from 'date-fns'
 
 export type RefreshTokenWithUserRole = RefreshTokenResType & {
   user: Omit<UserType, 'password' | 'totpSecret'> & { role: RoleType }
@@ -27,6 +27,13 @@ export type ClaimRefreshTokenResult =
   | { status: 'CLAIMED'; record: RefreshTokenWithUserRole }
   | { status: 'REUSE'; familyId: string }
   | { status: 'NOT_FOUND' }
+
+/**
+ * Kết quả phát OTP:
+ * - `RATE_LIMITED`: đã gửi quá ngưỡng trong cửa sổ 15 phút — không tạo mã, không gửi email;
+ * - `ISSUED`: dòng mã vừa tạo (mã cũ cùng `(email, type)` đã bị vô hiệu trong cùng transaction).
+ */
+export type IssueVerificationCodeResult = { status: 'RATE_LIMITED' } | { status: 'ISSUED'; record: VerificationCodeRecordType }
 
 @Injectable()
 export class AuthRepo {
@@ -44,33 +51,90 @@ export class AuthRepo {
     })
     return user
   }
-  createVerificationCode(data: VerificationCodeType) {
-    try {
-      return this.prismaService.verificationCode.create({
-        data,
+  /**
+   * Phát một mã OTP mới.
+   *
+   * Ba việc trong MỘT transaction, vì tách ra là có khe:
+   * - đếm lượt gửi trong cửa sổ 15 phút (chặn việc biến server thành máy bắn email);
+   * - vô hiệu mã cũ cùng `(email, type)` — để hai mã cùng sống là cấp cho kẻ dò hai vé thay vì một;
+   * - tạo dòng mới, chỉ ghi `sha256(code)`.
+   *
+   * `deleteMany` dọn dòng quá cũ của chính `(email, type)` này: bảng chỉ phục vụ cửa sổ 15 phút,
+   * giữ mãi thì mỗi lượt đăng ký của khách để lại một dòng rác vĩnh viễn.
+   */
+  async issueVerificationCode(input: {
+    email: string
+    type: TypeOfVerificationType
+    codeHash: string
+    expiresAt: Date
+    windowStart: Date
+    maxSends: number
+  }): Promise<IssueVerificationCodeResult> {
+    const now = new Date()
+    return this.prismaService.$transaction(async (tx) => {
+      const sentInWindow = await tx.verificationCode.count({
+        where: { email: input.email, type: input.type, createdAt: { gte: input.windowStart } },
       })
-    } catch (error) {
-      console.log('Error creating verification code:', error)
+      if (sentInWindow >= input.maxSends) return { status: 'RATE_LIMITED' as const }
 
-      if (isUniqueConstraintPrisma(error)) {
-        //Xử lý lỗi trùng code
-        // return this.createVerificationCode(data)
-      }
-    }
-  }
-  findVerificationCode(
-    where: { email_code_type: { email: string; code: string; type: TypeOfVerificationType } } | { id: number },
-  ): Promise<VerificationCodeType | null> {
-    return this.prismaService.verificationCode.findUnique({
-      where,
+      await tx.verificationCode.deleteMany({
+        where: { email: input.email, type: input.type, createdAt: { lt: subDays(now, 1) } },
+      })
+      await tx.verificationCode.updateMany({
+        where: { email: input.email, type: input.type, consumedAt: null },
+        data: { consumedAt: now },
+      })
+      const record = await tx.verificationCode.create({
+        data: {
+          email: input.email,
+          type: input.type,
+          codeHash: input.codeHash,
+          expiresAt: input.expiresAt,
+        },
+      })
+      return { status: 'ISSUED' as const, record }
     })
   }
-  deleteVerificationCode(
-    where: { id: number } | { email_code_type: { email: string; code: string; type: TypeOfVerificationType } },
-  ): Promise<VerificationCodeType> {
-    return this.prismaService.verificationCode.delete({
-      where,
+
+  /** Mã đang sống (chưa dùng, chưa bị mã mới thay thế) mới nhất của `(email, type)` */
+  findActiveVerificationCode(where: {
+    email: string
+    type: TypeOfVerificationType
+  }): Promise<VerificationCodeRecordType | null> {
+    return this.prismaService.verificationCode.findFirst({
+      where: { ...where, consumedAt: null },
+      orderBy: { createdAt: 'desc' },
     })
+  }
+
+  /** Cộng một lượt nhập sai, trả tổng số lượt sau khi cộng */
+  async incrementVerificationAttempt(id: number): Promise<number> {
+    const { attempts } = await this.prismaService.verificationCode.update({
+      where: { id },
+      data: { attempts: { increment: 1 } },
+      select: { attempts: true },
+    })
+    return attempts
+  }
+
+  /**
+   * Đánh dấu mã đã dùng; trả số dòng vừa claim.
+   *
+   * `updateMany({ consumedAt: null })` là điểm chốt một-lần-dùng: hai request cùng trình một mã
+   * thì chỉ một request nhận `count = 1`, request còn lại không có vé thứ hai.
+   */
+  async consumeVerificationCode(id: number): Promise<number> {
+    const { count } = await this.prismaService.verificationCode.updateMany({
+      where: { id, consumedAt: null },
+      data: { consumedAt: new Date() },
+    })
+    return count
+  }
+
+  /** Xoá dòng mã — chỉ dùng khi gửi email hỏng, để lượt gửi không bị đốt oan */
+  async deleteVerificationCode(id: number): Promise<number> {
+    const { count } = await this.prismaService.verificationCode.deleteMany({ where: { id } })
+    return count
   }
   createRefreshToken(data: CreateRefreshTokenType): Promise<RefreshTokenResType> {
     return this.prismaService.refreshToken.create({

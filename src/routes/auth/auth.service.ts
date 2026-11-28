@@ -2,10 +2,12 @@ import {
   AccountLockedException,
   EmailNotFoundException,
   InvalidPasswordException,
+  OtpTooManyRequestsException,
   RefreshTokenAlreadyUsedException,
   RefreshTokenNotFoundOrExpiredException,
   VerificationCodeExpiredException,
   VerificationCodeNotFoundException,
+  VerificationCodeTooManyAttemptsException,
 } from '@/routes/auth/auth.error'
 import {
   ForgotPasswordType,
@@ -21,6 +23,13 @@ import {
   MAX_FAILED_ATTEMPTS,
   registerFailedAttempt,
 } from '@/routes/auth/login-lockout'
+import {
+  hashOtpCode,
+  isOtpCodeMatch,
+  MAX_OTP_SENDS,
+  otpSendWindowStart,
+  registerOtpMismatch,
+} from '@/routes/auth/otp-policy'
 import envConfig from '@/shared/config'
 import { TypeOfVerification, TypeOfVerificationType } from '@/shared/constants/auth.constant'
 import { EmailAlreadyExistsException, InvalidEmailException } from '@/shared/error'
@@ -53,16 +62,38 @@ export class AuthService {
     private readonly auditLogService: AuditLogService,
   ) {}
 
+  /**
+   * Kiểm mã OTP và claim luôn lượt dùng (prod-readiness M1).
+   *
+   * Không còn tra mã bằng plaintext: DB chỉ giữ `sha256(code)`, nên lấy mã đang sống của
+   * `(email, type)` rồi so hash. Nhờ tra theo cặp đó mới gắn được bộ đếm lượt sai vào đúng dòng
+   * mã — trước đây mỗi mã là một dòng vô danh, nhập sai bao nhiêu lần cũng không ai đếm.
+   *
+   * Claim một lần dùng ở đây thay cho `delete` ở nơi gọi: trước kia nơi gọi kiểm xong mới xoá, nên
+   * hai request song song cùng một mã đều đi qua được cửa kiểm.
+   */
   async verificationCode(payload: { email: string; code: string; type: TypeOfVerificationType }) {
-    const record = await this.authRepo.findVerificationCode({
-      email_code_type: payload,
-    })
+    const record = await this.authRepo.findActiveVerificationCode({ email: payload.email, type: payload.type })
     if (!record) {
       throw VerificationCodeNotFoundException
     }
     //Xét điều kiện còn hạn hay hết hạn
-    if (new Date(record.expiresAt) < new Date()) {
+    if (record.expiresAt.getTime() < Date.now()) {
       throw VerificationCodeExpiredException
+    }
+    if (!isOtpCodeMatch(record.codeHash, payload.code)) {
+      const outcome = registerOtpMismatch(record.attempts)
+      await this.authRepo.incrementVerificationAttempt(record.id)
+      if (outcome.exhausted) {
+        // Hết lượt thì vô hiệu luôn: để mã sống tiếp chỉ kéo dài cuộc dò tới lúc hết hạn.
+        await this.authRepo.consumeVerificationCode(record.id)
+        throw VerificationCodeTooManyAttemptsException
+      }
+      throw VerificationCodeNotFoundException
+    }
+    if ((await this.authRepo.consumeVerificationCode(record.id)) === 0) {
+      // Request khác vừa dùng đúng mã này xong — mã một lần, không có vé thứ hai.
+      throw VerificationCodeNotFoundException
     }
     return record
   }
@@ -103,16 +134,26 @@ export class AuthService {
       throw InvalidEmailException
     }
 
+    const now = new Date()
     const code = generateCode()
-    const verificationCode = await this.authRepo.createVerificationCode({
+    const issued = await this.authRepo.issueVerificationCode({
       email: payload.email,
-      code,
       type: payload.type,
-      expiresAt: addMinutes(new Date(), ms(envConfig.OTP_EXPIRES_IN as StringValue)),
+      codeHash: hashOtpCode(code),
+      expiresAt: addMinutes(now, ms(envConfig.OTP_EXPIRES_IN as StringValue)),
+      windowStart: otpSendWindowStart(now),
+      maxSends: MAX_OTP_SENDS,
     })
+    // Chặn trước khi gọi nhà cung cấp email: đã quá ngưỡng thì không có mã nào để gửi.
+    if (issued.status === 'RATE_LIMITED') {
+      throw OtpTooManyRequestsException
+    }
 
     const { error } = await this.emailService.sendEmail({ email: payload.email, code })
     if (error) {
+      // Gửi hỏng thì trả lại lượt: khách chưa nhận được mã mà vẫn bị tính một lượt thì sau 5 lần
+      // thử lại họ tự khoá mình khỏi luồng đăng ký.
+      await this.authRepo.deleteVerificationCode(issued.record.id)
       throw error
     }
     return { message: 'Send OTP Success. Please Check OTP In Your Email' }
@@ -125,12 +166,10 @@ export class AuthService {
     if (checkEmail) {
       throw EmailAlreadyExistsException
     }
-    //Xác thực mã otp
+    //Xác thực mã otp — mã bị claim (đánh dấu đã dùng) ngay trong bước kiểm
     await this.verificationCode({ email, code, type: TypeOfVerification.REGISTER })
 
-    //Xoa mã otp đã sử dụng
     const hashPassword = await this.hashingService.hashPassword(password)
-    await this.authRepo.deleteVerificationCode({ email_code_type: { email, code, type: TypeOfVerification.REGISTER } })
     const user = await this.authRepo.register({
       email,
       name,
@@ -224,15 +263,11 @@ export class AuthService {
     const checkEmail = await this.sharedUserRepo.findUniqueUser({ email })
     if (!checkEmail) throw EmailNotFoundException
 
+    // Mã đã bị claim ngay trong bước kiểm nên ở đây không còn dòng nào để xoá.
     await this.verificationCode({ email, code, type: TypeOfVerification.FORGOT_PASSWORD })
-    const [user] = await Promise.all([
-      this.sharedUserRepo.update(checkEmail.id, {
-        password: await this.hashingService.hashPassword(data.newPassword),
-      }),
-      this.authRepo.deleteVerificationCode({
-        email_code_type: { email, code, type: TypeOfVerification.FORGOT_PASSWORD },
-      }),
-    ])
+    await this.sharedUserRepo.update(checkEmail.id, {
+      password: await this.hashingService.hashPassword(data.newPassword),
+    })
     // Đổi mật khẩu phải cắt mọi phiên cũ: kẻ đã chiếm được refresh token thì đổi mật khẩu
     // không còn ý nghĩa gì nếu phiên cũ vẫn sống tiếp
     await this.sharedRefreshTokenRepo.revokeUserRefreshTokens(checkEmail.id)
