@@ -39,19 +39,32 @@ export class TokenService {
       },
     )
   }
+  /**
+   * `uuid` ở đây không phải trang trí: payload chỉ có `userId/roleId/roleName` + `iat/exp`, nên hai
+   * lần cấp token cho cùng một người trong cùng một GIÂY sinh ra chuỗi y hệt nhau — và
+   * `RefreshToken.tokenHash` có unique constraint, nên lần thứ hai là 500 "Unique constraint failed"
+   * ngay giữa luồng đăng nhập (bấm đăng nhập hai lần liên tiếp là gặp).
+   */
   async createRefreshToken(payload: RefreshTokenPayloadCreate) {
-    return this.jwtService.sign(payload, {
-      secret: configEnv.REFRESH_TOKEN_SECRET,
-      expiresIn: configEnv.REFRESH_TOKEN_EXPIRES_IN as StringValue,
-      algorithm: 'HS256',
-    })
+    return this.jwtService.sign(
+      { ...payload, uuid: uuidv4() },
+      {
+        secret: configEnv.REFRESH_TOKEN_SECRET,
+        expiresIn: configEnv.REFRESH_TOKEN_EXPIRES_IN as StringValue,
+        algorithm: 'HS256',
+      },
+    )
   }
+  /** Cùng lý do `createRefreshToken`: thiếu `uuid` là hai phiên trong cùng một giây đụng unique key */
   async createGuestRefreshToken(payload: GuestRefreshTokenPayloadCreate) {
-    return this.jwtService.sign(payload, {
-      secret: configEnv.REFRESH_TOKEN_SECRET,
-      expiresIn: configEnv.REFRESH_TOKEN_EXPIRES_IN as StringValue,
-      algorithm: 'HS256',
-    })
+    return this.jwtService.sign(
+      { ...payload, uuid: uuidv4() },
+      {
+        secret: configEnv.REFRESH_TOKEN_SECRET,
+        expiresIn: configEnv.REFRESH_TOKEN_EXPIRES_IN as StringValue,
+        algorithm: 'HS256',
+      },
+    )
   }
   async VerifyAccessToken(token: string): Promise<AccessTokenPayload> {
     return this.jwtService.verifyAsync(token, {

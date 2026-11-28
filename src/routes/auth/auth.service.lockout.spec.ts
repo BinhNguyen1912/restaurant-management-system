@@ -2,6 +2,9 @@ import { AccountLockedException } from '@/routes/auth/auth.error'
 import { emailFingerprint } from '@/routes/auth/login-attempt'
 import { LOCK_MINUTES, MAX_FAILED_ATTEMPTS } from '@/routes/auth/login-lockout'
 import { AuthService } from '@/routes/auth/auth.service'
+import { deriveTotpKey, encryptTotpSecret, TOTP_DIGITS, TOTP_PERIOD_SECONDS } from '@/routes/auth/two-factor'
+import envConfig from '@/shared/config'
+import * as OTPAuth from 'otpauth'
 
 /**
  * Khoá đăng nhập tạm ở tầng service (prod-readiness §0.2 #3).
@@ -23,6 +26,8 @@ function makeService(options: {
   lockedUntil?: Date | null
   isPasswordValid?: boolean
   noUser?: boolean
+  twoFactorEnabled?: boolean
+  totpSecret?: string | null
 }) {
   const user = {
     id: USER_ID,
@@ -33,6 +38,8 @@ function makeService(options: {
     branchId: null,
     failedAttempts: options.failedAttempts ?? 0,
     lockedUntil: options.lockedUntil ?? null,
+    twoFactorEnabled: options.twoFactorEnabled ?? false,
+    totpSecret: options.totpSecret ?? null,
     roleId: 2,
     role: { name: 'KE_TOAN', permissions: [] },
   }
@@ -207,6 +214,121 @@ describe('AuthService.login - nhật ký thử đăng nhập', () => {
     authRepo.recordLoginAttempt.mockRejectedValueOnce(new Error('không ghi được'))
 
     await expect(service.login(loginBody as any)).rejects.toMatchObject({ status: 422 })
+  })
+})
+
+/** Bí mật TOTP thô dùng chung cho nhóm test 2FA (base32, như ứng dụng xác thực nhận) */
+const TOTP_SECRET = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP'
+
+/** Cùng khoá mà service dẫn xuất từ `ACCESS_TOKEN_SECRET` — mock phải mã hoá bằng đúng khoá đó */
+const TOTP_KEY = deriveTotpKey(envConfig.ACCESS_TOKEN_SECRET)
+const encryptedTotpSecret = () => encryptTotpSecret(TOTP_SECRET, TOTP_KEY)
+
+/** Mã hiện tại của `TOTP_SECRET`, sinh bằng đúng tham số production dùng */
+const currentTotpCode = () =>
+  new OTPAuth.TOTP({
+    algorithm: 'SHA1',
+    digits: TOTP_DIGITS,
+    period: TOTP_PERIOD_SECONDS,
+    secret: OTPAuth.Secret.fromBase32(TOTP_SECRET),
+  }).generate()
+
+/**
+ * 2FA ở tầng login (prod-readiness §M9 mục 5).
+ *
+ * Bốn điều kiện phải giữ, và cả bốn đều hỏng theo hướng im lặng nếu sai:
+ * (a) đã bật 2FA mà request không có mã thì KHÔNG được cấp token — nhưng cũng không phải lần thử
+ *     sai (mật khẩu đã đúng), nếu không người dùng thật tự khoá mình bằng một request thiếu trường;
+ * (b) mã đúng thì qua và ghi SUCCESS;
+ * (c) mã sai thì tính vào CÙNG bộ đếm khoá với mật khẩu — 6 chữ số chỉ có 10^6 khả năng;
+ * (d) bí mật hỏng trong DB (khoá mã hoá đã đổi) là từ chối, không phải cho qua.
+ */
+describe('AuthService.login - 2FA', () => {
+  const loginBody = { email: 'ketoan@nhahang.vn', password: 'dung-mat-khau' }
+
+  it('đã bật 2FA mà không gửi mã: 401, không cấp token, không tính lần sai', async () => {
+    const { service, authRepo, tokenService } = makeService({
+      isPasswordValid: true,
+      twoFactorEnabled: true,
+      totpSecret: encryptedTotpSecret(),
+    })
+
+    await expect(service.login(loginBody as any)).rejects.toMatchObject({ status: 401 })
+
+    expect(tokenService.createAcessToken).not.toHaveBeenCalled()
+    expect(authRepo.recordLoginFailure).not.toHaveBeenCalled()
+    expect(authRepo.recordLoginAttempt).not.toHaveBeenCalled()
+  })
+
+  it('mã TOTP đúng thì cấp token và ghi SUCCESS', async () => {
+    const { service, authRepo, tokenService } = makeService({
+      isPasswordValid: true,
+      twoFactorEnabled: true,
+      totpSecret: encryptedTotpSecret(),
+    })
+
+    const result = await service.login({ ...loginBody, totpCode: currentTotpCode() } as any)
+
+    expect(result.accessToken).toBe('access.token')
+    expect(tokenService.createAcessToken).toHaveBeenCalled()
+    const attempts = authRepo.recordLoginAttempt.mock.calls as unknown as [any][]
+    expect(attempts[attempts.length - 1][0]).toMatchObject({ actorId: USER_ID, outcome: 'SUCCESS' })
+  })
+
+  it('mã sai: 422, đếm một lần sai và ghi FAILED', async () => {
+    const { service, authRepo } = makeService({
+      isPasswordValid: true,
+      failedAttempts: 2,
+      twoFactorEnabled: true,
+      totpSecret: encryptedTotpSecret(),
+    })
+
+    await expect(service.login({ ...loginBody, totpCode: '000000' } as any)).rejects.toMatchObject({ status: 422 })
+
+    expect(authRepo.recordLoginFailure).toHaveBeenCalledWith(USER_ID, { failedAttempts: 3, lockedUntil: null })
+    expect((authRepo.recordLoginAttempt.mock.calls as unknown as [any][])[0][0]).toMatchObject({
+      actorId: USER_ID,
+      outcome: 'FAILED',
+    })
+  })
+
+  it('sai mã 2FA chạm ngưỡng thì khoá tài khoản, không có cửa riêng để dò', async () => {
+    const { service, authRepo, auditLogService } = makeService({
+      isPasswordValid: true,
+      failedAttempts: MAX_FAILED_ATTEMPTS - 1,
+      twoFactorEnabled: true,
+      totpSecret: encryptedTotpSecret(),
+    })
+
+    await expect(service.login({ ...loginBody, totpCode: '000000' } as any)).rejects.toMatchObject({ status: 423 })
+
+    expect((auditLogService.record.mock.calls as unknown as [any][])[0][0]).toMatchObject({
+      action: 'LOGIN_LOCKED',
+      entityId: USER_ID,
+    })
+    expect(authRepo.recordLoginFailure).toHaveBeenCalled()
+  })
+
+  it('bí mật hỏng trong DB thì từ chối, không cho qua', async () => {
+    const { service, tokenService } = makeService({
+      isPasswordValid: true,
+      twoFactorEnabled: true,
+      totpSecret: 'v1:aaaa:bbbb:cccc',
+    })
+
+    await expect(service.login({ ...loginBody, totpCode: currentTotpCode() } as any)).rejects.toMatchObject({
+      status: 422,
+    })
+    expect(tokenService.createAcessToken).not.toHaveBeenCalled()
+  })
+
+  it('tài khoản chưa bật 2FA thì mã gửi kèm bị bỏ qua', async () => {
+    const { service, tokenService } = makeService({ isPasswordValid: true, twoFactorEnabled: false })
+
+    const result = await service.login({ ...loginBody, totpCode: '000000' } as any)
+
+    expect(result.accessToken).toBe('access.token')
+    expect(tokenService.createAcessToken).toHaveBeenCalled()
   })
 })
 
