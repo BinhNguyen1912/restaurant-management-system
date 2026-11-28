@@ -9,6 +9,7 @@ import {
   CustomerListResDTO,
   CustomerNoteBodyDTO,
   CustomerNoteResDTO,
+  CustomerOpenOrdersResDTO,
   CustomerPointsResDTO,
   CustomerRedeemPointsBodyDTO,
   CustomerRedeemPointsResDTO,
@@ -50,6 +51,13 @@ export class CustomerController {
   @ZodSerializerDto(CustomerPointsResDTO)
   async points(@Param('id', ParseIntPipe) id: number) {
     return await this.customerService.points(id)
+  }
+
+  /** Đơn còn trừ được điểm (chưa thu tiền, có dòng món) — danh sách để chọn khi đổi điểm. */
+  @Get(':id/open-orders')
+  @ZodSerializerDto(CustomerOpenOrdersResDTO)
+  async openOrders(@Param('id', ParseIntPipe) id: number, @ActiveUser() user: AccessTokenPayload) {
+    return await this.customerService.openOrders(id, user)
   }
 
   /**

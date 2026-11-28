@@ -236,6 +236,44 @@ describe('Customer (e2e)', () => {
     expect(detail.body.data.points).toMatchObject({ earned: EARNED_FROM_PAID_ORDER, balance: EARNED_FROM_PAID_ORDER })
   })
 
+  it('danh sách đơn chưa thu tiền: đúng đơn đổi được điểm, kèm trần điểm của từng đơn', async () => {
+    const { orderId: openOrderId } = await createOpenOrder(100_000)
+
+    // đơn có thanh toán PENDING nhưng KHÔNG có dòng món: trừ điểm sẽ tính lại tiền đơn thành 0
+    const emptyPayment = await prisma.payment.create({
+      data: { status: 'PENDING', amount: 50_000, branchId },
+      select: { id: true },
+    })
+    const emptyOrder = await prisma.order.create({
+      data: {
+        customerId,
+        paymentId: emptyPayment.id,
+        status: 'PENDING',
+        branchId,
+        subtotal: 50_000,
+        grandTotal: 50_000,
+        taxRate: 0,
+        serviceChargeRate: 0,
+      },
+      select: { id: true },
+    })
+    createdOpenOrders.push({ orderId: emptyOrder.id, paymentId: emptyPayment.id })
+
+    const res = await api().get(`/customers/${customerId}/open-orders`).set(auth()).expect(200)
+    const ids = res.body.data.map((item: { id: number }) => item.id)
+
+    expect(ids).toContain(openOrderId)
+    // đơn đã thu tiền và đơn rỗng dòng món đều KHÔNG phải lựa chọn hợp lệ
+    expect(ids).not.toContain(orderId)
+    expect(ids).not.toContain(emptyOrder.id)
+    expect(res.body.data.find((item: { id: number }) => item.id === openOrderId)).toMatchObject({
+      id: openOrderId,
+      status: 'PENDING',
+      payable: 100_000,
+      maxRedeemPoints: 100,
+    })
+  })
+
   it('đổi quá số dư hoặc dưới mức tối thiểu đều bị chặn', async () => {
     const { orderId: openOrderId } = await createOpenOrder(100_000)
 

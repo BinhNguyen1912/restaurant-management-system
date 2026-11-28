@@ -17,6 +17,7 @@ import {
 import {
   checkRedeemable,
   earnedPointsForOrder,
+  maxRedeemablePoints,
   MIN_REDEEM_POINTS,
   POINT_VALUE_VND,
   redeemableBalance,
@@ -26,6 +27,7 @@ import {
 const TOP_CUSTOMERS = 10
 const RECENT_ORDERS = 10
 const RECENT_RESERVATIONS = 10
+const OPEN_ORDERS = 20
 const POINT_HISTORY = 30
 
 const NotFoundCustomerException = new NotFoundException({ message: 'Error.NotFoundCustomer', path: 'id' })
@@ -258,6 +260,35 @@ export class CustomerService {
   }
 
   /**
+   * Đơn còn trừ được điểm của khách — nguồn cho danh sách chọn khi đổi điểm.
+   *
+   * Không lọc từ "10 đơn gần nhất" của hồ sơ: khách ăn nhiều thì đơn đang mở đã rơi khỏi danh sách
+   * đó và nhân viên không còn gì để chọn, dù hệ thống vẫn cho đổi.
+   */
+  async openOrders(customerId: number, actor: AccessTokenPayload) {
+    const row = await this.repo.findById(customerId)
+    if (!row) throw NotFoundCustomerException
+    const branchId = await this.scopeBranch({}, actor)
+    const orders = await this.repo.openOrders(customerId, branchId, OPEN_ORDERS)
+    return {
+      message: 'Success.CustomerOpenOrders',
+      data: orders.map((order) => {
+        const payable = order.subtotal.minus(order.discountTotal)
+        return {
+          id: order.id,
+          status: order.status,
+          grandTotal: order.grandTotal,
+          payable,
+          maxRedeemPoints: maxRedeemablePoints(payable),
+          branchName: order.branch.name,
+          tableName: order.tableNode?.name ?? null,
+          createdAt: order.createdAt,
+        }
+      }),
+    }
+  }
+
+  /**
    * Số dư điểm + lịch sử (kiếm và đổi trộn theo thời gian).
    *
    * Điểm KHÔNG cắt theo chi nhánh như tiền: một khách một số dư, đổi ở chi nhánh nào cũng trừ
@@ -335,9 +366,7 @@ export class CustomerService {
       if (payable.lessThanOrEqualTo(0) || value.greaterThan(payable)) {
         throw new BadRequestException({
           message: 'Error.PointsExceedOrderTotal',
-          maxPoints: payable.lessThanOrEqualTo(0)
-            ? 0
-            : payable.div(POINT_VALUE_VND).toDecimalPlaces(0, Prisma.Decimal.ROUND_DOWN).toNumber(),
+          maxPoints: maxRedeemablePoints(payable),
         })
       }
 
