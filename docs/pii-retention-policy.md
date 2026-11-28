@@ -125,19 +125,27 @@ không trả lời được vì nó chỉ ghi thao tác **GHI**, nên có thêm 
 
 | Chỗ | Nội dung |
 |---|---|
-| `AccessLogInterceptor` + `@LogAccess('GET /customers/:id')` | ghi sau guard, chỉ với route được đánh dấu: đọc danh sách, hồ sơ, điểm, đơn chưa thu tiền, trạng thái đồng ý |
-| `AccessLog` | `actorId`, `actorRole`, `route`, `customerId`, `resultCount`, `ip`, `createdAt` — append-only (trigger chặn `UPDATE`) |
+| `AccessLogInterceptor` + `@LogAccess({ route, subject? })` | ghi sau guard, chỉ với route được đánh dấu; đăng ký toàn cục (`APP_INTERCEPTOR`) nên module chỉ cần khai báo |
+| `AccessLog` | `actorId`, `actorRole`, `route`, `subjectType`+`subjectId`, `resultCount`, `ip`, `createdAt` — append-only (trigger chặn `UPDATE`), CHECK cấm nửa cặp chủ thể |
 | `access-log-plan.ts` | phần quyết định "ghi gì" tách riêng, có unit test: sai ở đây thì nhật ký nói dối mà vẫn xanh |
+
+Đang phủ: khách (danh sách, hồ sơ, điểm, đơn chưa thu tiền, trạng thái đồng ý), nhân viên (hồ sơ,
+danh sách), đặt bàn (2 route danh sách), đơn hàng (chi tiết + danh sách), khách của bàn. `subjectType`
+cho biết `subjectId` là id của bảng nào (`CUSTOMER` / `USER`) — đọc hồ sơ nhân viên mà ghi thành khách
+thì nhật ký buộc tội nhầm người và mất luôn dấu vết thật.
 
 Ba giới hạn phải biết (đừng đọc bảng này như log toàn diện):
 
 1. **Không lưu query string.** Tra khách bằng SĐT/tên, chép query vào nhật ký là nhân bản PII ra thêm
-   một bảng nữa. Hệ quả: không biết *tìm từ khoá gì*, chỉ biết *đã tra và ra bao nhiêu kết quả*.
+   một bảng nữa. Hệ quả: không biết *tìm từ khoá gì*, chỉ biết *đã tra và ra bao nhiêu kết quả*. Route
+   danh sách vì thế cũng không gắn chủ thể: trả lời chính xác "tôi có bị xem không" cho từng dòng
+   trong một trang 20 người sẽ là 20 dòng mỗi lần bấm — thiết kế khác, chưa ai yêu cầu.
 2. **Chỉ ghi lần đọc thành công.** Request bị guard chặn (401/403) không vào bảng vì chưa đọc được
    dòng nào. Đăng nhập sai đã có `AuditLog` (`LOGIN_LOCKED`) lo, nhưng **`LOGIN_SUCCESS`/`LOGIN_FAILED`
-   chưa được ghi** — mục 2 của §M9 mới làm phần đọc PII.
-3. **Không có khoá ngoại tới `Customer`.** Xoá hồ sơ khách không được làm biến mất bằng chứng "đã có
-   người đọc hồ sơ này"; `customerId` còn lại chỉ là một con số, không phải PII.
+   chưa được ghi** — còn chờ quyết định lưu định danh nào cho lần đăng nhập sai (IP / hash email /
+   email thô), vì đó là PII của người *chưa* đăng nhập được.
+3. **Không có khoá ngoại tới `Customer`/`User`.** Xoá hồ sơ không được làm biến mất bằng chứng "đã có
+   người đọc hồ sơ này"; `subjectId` còn lại chỉ là một con số, không phải PII.
 
 Bảng này chứa IP của nhân viên — cũng là dữ liệu cá nhân, nên cần thời hạn lưu riêng. Trigger chỉ
 chặn `UPDATE` (không chặn `DELETE`) đúng để còn dọn được; **job dọn `AccessLog` chưa viết**, chờ con
@@ -149,8 +157,9 @@ số đã ký như §3.
    chạy `--apply` với con số thật.
 2. ~~Script ẩn danh hoá~~ — **đã có** (§4), đã chạy thật trên DB dev và có e2e
    (`test/customer-anonymize.e2e-spec.ts`). Còn lại: chọn lịch chạy (cron) sau khi có con số đã ký.
-3. ~~`AccessLog` cho route nhạy cảm~~ — **đã có cho phần đọc PII khách** (§5). Còn lại: `AccessLog`
-   cho `reservation`, `orders`, `reports`, `users`, `ledger` + `LOGIN_SUCCESS`/`LOGIN_FAILED`.
+3. ~~`AccessLog` cho route nhạy cảm~~ — **đã có** (§5): khách, nhân viên, đặt bàn, đơn hàng, khách của
+   bàn. Còn lại `LOGIN_SUCCESS`/`LOGIN_FAILED` (chờ chốt lưu định danh nào, §5 giới hạn 2); `reports`
+   chỉ trả số tổng hợp nên không có PII từng người để ghi.
 4. 2FA cho ADMIN/KE_TOAN — §M9 mục 5.
 5. Media chứng từ (ảnh biên nhận) đang ở Cloudinary nước ngoài — §M9 mục 4, cần đánh giá chuyển dữ
    liệu ra nước ngoài (NĐ 53/2022).

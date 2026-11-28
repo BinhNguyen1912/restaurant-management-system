@@ -17,6 +17,7 @@ import { AuthModule } from '@/routes/auth/auth.module'
 import { RefreshTokenCleanupService } from '@/job/RefreshTokenCleanup.service'
 import { ZodSerializerInterceptor, ZodValidationPipe } from 'nestjs-zod'
 import { HttpExceptionFilter } from '@/filter/http-exception.filter'
+import { AccessLogInterceptor } from '@/interceptor/access-log.interceptor'
 import { AuthenticationGuard } from '@/shared/guard/authentication.guard'
 import { CategoryModule } from '@/routes/categories/category.module'
 import { CategoryTranslationModule } from '@/routes/categories/category-translation/category-translation.module'
@@ -122,6 +123,13 @@ import { ReservationModule } from './routes/reservation/reservation.module';
     {
       provide: 'APP_INTERCEPTOR',
       useClass: ZodSerializerInterceptor,
+    },
+    // Đăng ký toàn cục để mọi module chỉ cần `@LogAccess(...)` là có nhật ký truy cập PII, không phải
+    // nhớ thêm interceptor vào `providers` của từng module. Interceptor tự bỏ qua handler không khai
+    // báo, và đứng SAU serializer nên đọc được giá trị thật của handler trả về.
+    {
+      provide: 'APP_INTERCEPTOR',
+      useClass: AccessLogInterceptor,
     },
     {
       provide: 'APP_FILTER',

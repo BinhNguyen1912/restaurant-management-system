@@ -11,6 +11,7 @@ import { Request } from 'express'
 import { ReservationUnionSchema } from './reservation.model'
 import { ReservationCustomerService } from './reservation-customer.service'
 import { AccessTokenPayload } from '@/shared/types/jwt.types'
+import { LogAccess } from '@/shared/decorators/access-log.decorator'
 
 @Controller('reservation')
 export class ReservationController {
@@ -26,6 +27,7 @@ export class ReservationController {
     })
   }
   @Get('listReservation')
+  @LogAccess({ route: 'GET /reservation/listReservation' })
   async getReservationCustomer(@Query() query: ReservationCustomerQueryDTO, @ActiveUser() user: AccessTokenPayload) {
     return await this.reservationCustomerService.list(query, user)
   }

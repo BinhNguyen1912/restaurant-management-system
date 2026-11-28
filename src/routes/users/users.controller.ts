@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query } from '@nestjs/common'
 import { UsersService } from './users.service'
 import { ZodSerializerDto } from 'nestjs-zod'
+import { AccessSubject } from '@prisma/client'
 import {
   getListUsersDTO,
   GetParamsUserDTO,
@@ -11,6 +12,7 @@ import {
 } from '@/routes/users/user.dto'
 import { ActiveUser } from '@/shared/decorators/active-user.decorator'
 import { ActiveRole } from '@/shared/decorators/active-role.decorator'
+import { LogAccess } from '@/shared/decorators/access-log.decorator'
 import { CreateGuestDTO, CreateGuestResDTO, GetProfileDetailResDTO } from '@/shared/dtos/shared-users.dto'
 import { MessageResDto } from '@/shared/dtos/respone.dto'
 
@@ -30,6 +32,7 @@ export class UsersController {
   }
 
   @Get(':userId')
+  @LogAccess({ route: 'GET /users/:userId', subject: { type: AccessSubject.USER, param: 'userId' } })
   @ZodSerializerDto(GetProfileDetailResDTO)
   async getUser(@Param() param: GetParamsUserDTO) {
     const user = await this.usersService.getUser(param.userId)
@@ -49,6 +52,7 @@ export class UsersController {
   }
 
   @Get('')
+  @LogAccess({ route: 'GET /users' })
   @ZodSerializerDto(getListUsersDTO)
   async getListUsers(@Query() pagination: getUsersQueryDTO) {
     const users = await this.usersService.getList(pagination)

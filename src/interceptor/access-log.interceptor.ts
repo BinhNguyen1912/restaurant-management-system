@@ -1,4 +1,4 @@
-import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nestjs/common'
+import { CallHandler, ExecutionContext, Injectable, Logger, NestInterceptor } from '@nestjs/common'
 import { Reflector } from '@nestjs/core'
 import { mergeMap, Observable } from 'rxjs'
 import { REQUEST_USER_KEY } from '@/shared/constants/auth.constant'
@@ -23,6 +23,8 @@ import { planAccessLog } from '@/interceptor/access-log-plan'
  */
 @Injectable()
 export class AccessLogInterceptor implements NestInterceptor {
+  private readonly logger = new Logger(AccessLogInterceptor.name)
+
   constructor(
     private readonly reflector: Reflector,
     private readonly accessLog: AccessLogService,
@@ -38,7 +40,13 @@ export class AccessLogInterceptor implements NestInterceptor {
 
     return next.handle().pipe(
       mergeMap(async (body) => {
-        const plan = planAccessLog({ route: meta.route, params: request?.params, body })
+        const plan = planAccessLog({ meta, params: request?.params, body })
+        // Đăng ký toàn cục nghĩa là interceptor này chạy ở MỌI route; chỉ route có metadata mới ghi.
+        // Route khai có chủ thể mà đọc không ra id là lỗi khai báo param — rơi vào đây thì im lặng
+        // mới là thứ nguy hiểm, vì nhật ký vẫn ghi mà thiếu đúng thứ cần truy.
+        if (meta.subject && plan.subjectId == null) {
+          this.logger.warn(`Nhật ký truy cập ${meta.route}: không đọc được param "${meta.subject.param}"`)
+        }
         await this.accessLog.recordSafe({
           ...plan,
           actorId: user?.userId ?? null,

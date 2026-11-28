@@ -9,13 +9,15 @@ import { PrismaService } from '../src/shared/service/prisma.service'
  *
  * Điều phải chứng minh không phải "đã thêm bảng" mà là:
  *  - đọc hồ sơ nào thì nhật ký ghi ĐÚNG hồ sơ đó (kèm người đọc), đọc cả trang danh sách thì không
- *    gắn bừa cho một khách nào;
+ *    gắn bừa cho một người nào;
+ *  - chủ thể không chỉ có khách: đọc hồ sơ NHÂN VIÊN phải ghi `USER`, không nhầm sang `CUSTOMER` —
+ *    nhầm thì nhật ký buộc tội sai người và cùng lúc mất dấu vết thật;
  *  - request hỏng (404) không sinh dòng rác, và thao tác GHI không bị ghi thành "truy cập";
- *  - nhật ký không sửa được (trigger DB), tức vẫn là bằng chứng;
+ *  - nhật ký không sửa được (trigger DB) và không có nửa cặp (CHECK), tức vẫn là bằng chứng;
  *  - nội dung ghi chú KHÔNG bị chép vào `AuditLog`: nếu chép thì script ẩn danh hoá thành vô nghĩa,
  *    vì bản sao PII nằm ở một bảng không xoá được.
  */
-describe('Customer access log & note audit (e2e)', () => {
+describe('Access log PII & note audit (e2e)', () => {
   let app: INestApplication
   let prisma: PrismaService
   let token: string
@@ -28,6 +30,9 @@ describe('Customer access log & note audit (e2e)', () => {
 
   const api = () => request(app.getHttpServer())
   const auth = () => ({ Authorization: `Bearer ${token}` })
+
+  /** đếm số dòng của một route để so trước/sau, không phụ thuộc dữ liệu cũ trong DB dev */
+  const countRoute = (route: string) => prisma.accessLog.count({ where: { route } })
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile()
@@ -58,16 +63,18 @@ describe('Customer access log & note audit (e2e)', () => {
   it('đọc một hồ sơ thì nhật ký ghi đúng hồ sơ, người đọc và IP', async () => {
     await api().get(`/customers/${customerId}`).set(auth()).expect(200)
 
-    const rows = await prisma.accessLog.findMany({ where: { customerId, route: 'GET /customers/:id' } })
-    expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({
+    const rows = await prisma.accessLog.findMany({ where: { subjectType: 'CUSTOMER', subjectId: customerId } })
+    const detailRows = rows.filter((row) => row.route === 'GET /customers/:id')
+    expect(detailRows).toHaveLength(1)
+    expect(detailRows[0]).toMatchObject({
       route: 'GET /customers/:id',
-      customerId,
+      subjectType: 'CUSTOMER',
+      subjectId: customerId,
       actorId: adminId,
       actorRole: 'ADMIN',
       resultCount: 1,
     })
-    expect(rows[0].ip).toBeTruthy()
+    expect(detailRows[0].ip).toBeTruthy()
   })
 
   it('đọc cả trang danh sách thì ghi số bản ghi, KHÔNG gắn cho một khách nào', async () => {
@@ -79,19 +86,19 @@ describe('Customer access log & note audit (e2e)', () => {
     // ghi bằng combination route + số bản ghi.
     const rows = await prisma.accessLog.findMany({ where: { route: 'GET /customers', resultCount: returned } })
     expect(rows.length).toBeGreaterThan(0)
-    expect(rows.every((row) => row.customerId === null)).toBe(true)
+    expect(rows.every((row) => row.subjectType === null && row.subjectId === null)).toBe(true)
     expect(rows.every((row) => row.actorId === adminId)).toBe(true)
   })
 
   it('request hỏng không sinh dòng nhật ký', async () => {
     const missingId = 99_999_999
     await api().get(`/customers/${missingId}`).set(auth()).expect(404)
-    expect(await prisma.accessLog.count({ where: { customerId: missingId } })).toBe(0)
+    expect(await prisma.accessLog.count({ where: { subjectId: missingId } })).toBe(0)
   })
 
   it('sửa ghi chú KHÔNG bị ghi thành một lần truy cập', async () => {
     await api().patch(`/customers/${customerId}/note`).set(auth()).send({ note: NOTE }).expect(200)
-    expect(await prisma.accessLog.count({ where: { customerId, route: 'PATCH /customers/:id/note' } })).toBe(0)
+    expect(await prisma.accessLog.count({ where: { subjectId: customerId, route: 'PATCH /customers/:id/note' } })).toBe(0)
   })
 
   it('audit sửa ghi chú chỉ giữ độ dài, không chép nội dung (PII)', async () => {
@@ -116,9 +123,58 @@ describe('Customer access log & note audit (e2e)', () => {
   })
 
   it('nhật ký truy cập là append-only: không UPDATE được', async () => {
-    const row = await prisma.accessLog.findFirstOrThrow({ where: { customerId }, select: { id: true } })
+    const row = await prisma.accessLog.findFirstOrThrow({ where: { subjectId: customerId }, select: { id: true } })
     await expect(
       prisma.accessLog.update({ where: { id: row.id }, data: { route: 'GET /khong-phai-toi' } }),
     ).rejects.toThrow(/append-only/)
+  })
+
+  it('DB không cho nửa cặp chủ thể (có type mà thiếu id)', async () => {
+    // Code đã cố ý không set nửa cặp; test này chứng minh nếu có ai viết sai thì DB chặn, chứ không
+    // phải tin vào việc "code nhớ set đủ hai cột"
+    await expect(prisma.accessLog.create({ data: { route: 'GET /x', subjectType: 'CUSTOMER' } })).rejects.toThrow(
+      /AccessLog_subject_pair_check/,
+    )
+  })
+
+  describe('route đọc PII ngoài module khách', () => {
+    it('hồ sơ NHÂN VIÊN ghi chủ thể USER, không lẫn sang khách', async () => {
+      const before = await prisma.accessLog.count({ where: { route: 'GET /users/:userId', subjectId: adminId } })
+      await api().get(`/users/${adminId}`).set(auth()).expect(200)
+
+      const rows = await prisma.accessLog.findMany({
+        where: { route: 'GET /users/:userId', subjectType: 'USER', subjectId: adminId },
+        orderBy: { id: 'desc' },
+      })
+      expect(rows).toHaveLength(before + 1)
+      expect(rows[0]).toMatchObject({ actorId: adminId, actorRole: 'ADMIN', resultCount: 1 })
+    })
+
+    it('danh sách nhân viên ghi route nhưng không gắn chủ thể', async () => {
+      const before = await countRoute('GET /users')
+      await api().get('/users').set(auth()).expect(200)
+      expect(await countRoute('GET /users')).toBe(before + 1)
+      const row = await prisma.accessLog.findFirstOrThrow({ where: { route: 'GET /users' }, orderBy: { id: 'desc' } })
+      expect(row.subjectType).toBeNull()
+      expect(row.resultCount).toBeGreaterThan(0)
+    })
+
+    it('danh sách đặt bàn (tên + SĐT khách) được ghi', async () => {
+      const before = await countRoute('GET /reservation/listReservation')
+      await api().get('/reservation/listReservation').set(auth()).expect(200)
+      expect(await countRoute('GET /reservation/listReservation')).toBe(before + 1)
+    })
+
+    it('đọc bằng POST vẫn là một lần đọc: /orders/lists được ghi', async () => {
+      const before = await countRoute('POST /orders/lists')
+      await api().post('/orders/lists').set(auth()).send({}).expect(201)
+      expect(await countRoute('POST /orders/lists')).toBe(before + 1)
+    })
+
+    it('danh sách khách của bàn (tên người ngồi) được ghi', async () => {
+      const before = await countRoute('GET /guest/listGuests')
+      await api().get('/guest/listGuests').set(auth()).expect(200)
+      expect(await countRoute('GET /guest/listGuests')).toBe(before + 1)
+    })
   })
 })
