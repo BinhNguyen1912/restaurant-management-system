@@ -13,6 +13,7 @@ import { LedgerPostingService } from '@/shared/service/ledger-posting.service'
 import { LedgerIntegrityService } from '@/shared/service/ledger-integrity.service'
 import { RedisService } from '@/shared/service/redis.service'
 import { AuditLogService } from '@/shared/service/audit-log.service'
+import { AccessLogService } from '@/shared/service/access-log.service'
 import { VoucherService } from '@/shared/service/voucher.service'
 import { CogsService } from '@/shared/service/cogs.service'
 import { TokenService } from '@/shared/service/token.service'
@@ -49,6 +50,7 @@ const sharedService = [
   CloudinaryService,
   RedisService,
   AuditLogService,
+  AccessLogService,
   VoucherService,
   CogsService,
   SharedSkuRecipeIngredientRepo,

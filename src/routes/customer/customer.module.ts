@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common'
 import { CustomerController } from '@/routes/customer/customer.controller'
 import { CustomerService } from '@/routes/customer/customer.service'
+import { AccessLogInterceptor } from '@/interceptor/access-log.interceptor'
 
 /**
  * `CustomerRepo` nằm trong `SharedModule` (global) vì luồng đặt bàn/đơn hàng cũng phải gắn hồ sơ
@@ -8,6 +9,6 @@ import { CustomerService } from '@/routes/customer/customer.service'
  */
 @Module({
   controllers: [CustomerController],
-  providers: [CustomerService],
+  providers: [CustomerService, AccessLogInterceptor],
 })
 export class CustomerModule {}

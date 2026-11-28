@@ -617,9 +617,9 @@ Test: `usageLimit = 1`, 10 request song song ⇒ 1 thành công, `usedCount = 1`
 1. **`deleteUser(isHard)` bị đảo nghĩa**: `isHard: true` đang soft-delete. Đổi thành
    `mode: 'SOFT' | 'HARD'`, hard = `prisma.user.delete` (sau khi chuyển tham chiếu), soft =
    `deletedAt` + revoke token.
-2. **Audit log truy cập**: bảng `AccessLog{at, actorType, actorId, ip, userAgent, method, path,
-   statusCode, entityType, entityId}` qua interceptor cho route nhạy cảm (auth, reservation, orders,
-   reports, users, ledger). Ghi `LOGIN_SUCCESS/LOGIN_FAILED`.
+2. **Audit log truy cập** — **đã làm phần ĐỌC PII khách** (`AccessLog` + `AccessLogInterceptor` +
+   `@LogAccess`), xem ghi chú dưới. **Chưa làm**: `AccessLog` cho `reservation`, `orders`, `reports`,
+   `users`, `ledger`, và `LOGIN_SUCCESS`/`LOGIN_FAILED`.
 3. **PII** — **đã làm (xem ghi chú dưới)**: `ConsentLog` append-only + ẩn danh hoá hồ sơ. Bản phác
    trong kế hoạch (`subjectType/subjectId`, `grantedAt/revokedAt`, job `anonymizeExpiredReservations`)
    đã đổi khi làm, lý do ở dưới.
@@ -641,12 +641,33 @@ Test: `usageLimit = 1`, 10 request song song ⇒ 1 thành công, `usedCount = 1`
   Nay `npm run pii:anonymize -- --months=N [--apply]` quét theo *lần hoạt động cuối*, giữ chứng từ kế
   toán, và có thêm `--customer=ID` cho yêu cầu xoá của từng khách. `--months` không có mặc định.
 
+**Nhật ký truy cập — đã làm nửa ĐỌC (mục 2).** `AccessLog` ghi *lượt đọc* PII khách, bảng riêng chứ
+không nhét vào `AuditLog`: `AuditLog` là nhật ký thao tác GHI, còn ở đây đọc 100 lần cũng không đổi
+một byte dữ liệu mà vẫn phải giải trình được. Bốn chỗ khác bản phác:
+
+- `route` khai tay (`@LogAccess('GET /customers/:id')`) thay cho `method + path + statusCode`: mẫu
+  route của express đổi theo phiên bản, còn dòng nhật ký phải đọc lại được sau vài năm; và interceptor
+  chạy sau guard nên chỉ có request đã ĐỌC ĐƯỢC mới vào bảng — `statusCode` chỉ có một giá trị.
+- **Không lưu query string.** Tra khách là gõ SĐT/tên, tức query chính là PII; chép vào nhật ký là
+  nhân bản PII sang một bảng append-only nữa. Đổi lại chỉ biết "đã tra, ra N kết quả".
+- Bỏ `entityType/entityId` đa hình, dùng thẳng `customerId` **không có khoá ngoại**: xoá hồ sơ khách
+  không được làm biến mất bằng chứng đã có người đọc hồ sơ đó.
+- Chờ ghi xong mới trả response (không "bắn rồi quên"): đây là bằng chứng, mất một dòng vì tiến trình
+  chết đúng lúc đó là mất thật. Lỗi ghi thì vẫn không làm hỏng việc đọc (`recordSafe`).
+- Bỏ `userAgent`: không dùng để quyết định gì, và thêm một trường tự do nữa là thêm chỗ giấu PII.
+
 Chi tiết và các ⚠ cần kế toán/luật sư: `docs/pii-retention-policy.md`.
 
-**Đo lường**: test login sai 3 lần ⇒ 3 dòng `LOGIN_FAILED` có IP; test `GET /reservation/list` ⇒ có
-`AccessLog`; test ẩn danh (`test/customer-anonymize.e2e-spec.ts`) ⇒ hồ sơ hết hạn mất SĐT/tên/email/
+**Đo lường**: test ẩn danh (`test/customer-anonymize.e2e-spec.ts`) ⇒ hồ sơ hết hạn mất SĐT/tên/email/
 ghi chú + lượt đặt bàn cũng mất, khách **còn đơn chưa thu tiền thì không bị đụng**, chạy lại không làm
-gì, và `AuditLog` của lần ẩn danh **không chứa** PII cũ.
+gì, và `AuditLog` của lần ẩn danh **không chứa** PII cũ. Nhật ký truy cập
+(`test/customer-access-log.e2e-spec.ts`) ⇒ đọc một hồ sơ sinh **đúng một** dòng với đúng `customerId`,
+`actorId`, `resultCount`, IP; đọc cả trang danh sách **không** gắn cho khách nào; 404 không sinh dòng;
+sửa ghi chú **không** bị tính là một lần truy cập; audit sửa ghi chú **không chứa** nội dung/SĐT trong
+ghi chú; `UPDATE` trên `AccessLog` bị trigger DB chặn.
+
+**Chưa có phép đo** (vì code chưa có, đừng đọc như đã xong): login sai 3 lần ⇒ 3 dòng `LOGIN_FAILED`
+có IP; `GET /reservation/list` ⇒ có `AccessLog`.
 
 **Pháp lý**: NĐ 13/2023/NĐ-CP (đồng ý, quyền xoá, hồ sơ đánh giá tác động, log truy cập), NĐ
 53/2022/NĐ-CP (lưu log, dữ liệu tại VN — **cần luật sư xác định phạm vi**), Luật Kế toán (giữ chứng
