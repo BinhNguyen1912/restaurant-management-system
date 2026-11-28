@@ -56,6 +56,7 @@ import { ThrottlerBehindProxyGuard } from '@/shared/guard/throttler-behind-proxy
 import { AppGateway } from '@/webSockets/app.gateway'
 import { RemindersModule } from './routes/reminders/reminders.module'
 import { ReminderCronService } from '@/job/reminder-cron.service'
+import { LogRetentionCronService } from '@/job/log-retention-cron.service'
 import { ReservationModule } from './routes/reservation/reservation.module';
 @Module({
   imports: [
@@ -116,6 +117,7 @@ import { ReservationModule } from './routes/reservation/reservation.module';
     AppService,
     RefreshTokenCleanupService,
     ReminderCronService,
+    LogRetentionCronService,
     {
       provide: 'APP_PIPE',
       useClass: ZodValidationPipe,

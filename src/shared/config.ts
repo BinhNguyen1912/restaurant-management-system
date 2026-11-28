@@ -69,6 +69,15 @@ const configSchema = z.object({
   VNPAY_RETURN_URL: z.string(),
   FRONTEND_URL: z.string(),
   VNPAY_API_URL: z.string(),
+  /**
+   * Thời hạn lưu của HAI BẢNG NHẬT KÝ (`AccessLog`, `LoginAttempt`), tính theo tháng.
+   *
+   * Cố ý `optional()` và **không có giá trị mặc định**: đây là con số do người ký chính sách đặt
+   * (docs/pii-retention-policy.md §3), không phải do code chọn. Thiếu biến ⇒ job dọn tự bỏ qua và
+   * ghi log lý do; app vẫn khởi động bình thường — thiếu một con số pháp lý không phải lý do để hệ
+   * thống không lên được.
+   */
+  LOG_RETENTION_MONTHS: z.string().optional(),
 })
 
 const configServer = configSchema.safeParse(process.env)

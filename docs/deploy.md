@@ -69,6 +69,31 @@ báo ngay dưới).
 > Nếu quên chạy: API vẫn lên nhưng **route mới trả 403 cho mọi vai trò**. Container sẽ in cảnh báo
 > ngay lúc khởi động: `⚠️ Có N route CHƯA có permission…`.
 
+## Job dọn nhật ký (tự động, hằng tháng)
+
+`LogRetentionCronService` chạy trong chính app: **03:00 ngày 1 mỗi tháng**, xoá `AccessLog` +
+`LoginAttempt` cũ hơn `LOG_RETENTION_MONTHS` tháng. Con số nằm ở `.env.production`, **không** nằm
+trong code — sửa một dòng rồi `restart be`, không cần build lại. Để trống biến này thì job tự bỏ qua
+và ghi log lý do (app vẫn chạy bình thường).
+
+Kiểm tra sau lần chạy đầu tiên:
+
+```
+docker compose --env-file .env.production logs be | grep "Dọn nhật ký"
+```
+
+Dòng log có dạng `Dọn nhật ký: mốc 2025-11-28 (12 tháng), đã xoá 0 dòng — AccessLog 0/0, LoginAttempt 0/0`.
+Số `xoá/quá hạn` lệch nhau nghĩa là chạm trần 5000 dòng/bảng một lượt: chạy tay để dọn tiếp (trong
+container chỉ có `dist`, không có `ts-node`, nên dùng file đã build):
+
+```
+docker compose --env-file .env.production exec be node dist/scripts/ScriptOfSystem/prune-logs.js --months=12 --apply
+```
+
+> ⚠️ Việc dọn **không** ghi `AuditLog` (lý do ở `docs/pii-retention-policy.md` §4b): dấu vết duy nhất
+> là log của container, mà `docker compose logs` bị rotate. Muốn giữ lịch sử các lần dọn thì phải
+> đẩy log ra ngoài container — chưa có trong repo này.
+
 ## ⚠️ Mật khẩu trong bộ dữ liệu mẫu
 `npm run data:vn` tạo tài khoản với mật khẩu **`123456`**, **kể cả admin**. Đó là dữ liệu cho
 máy dev/demo — trước khi mở staging ra Internet phải:

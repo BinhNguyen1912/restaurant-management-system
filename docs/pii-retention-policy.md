@@ -145,9 +145,21 @@ Bốn chốt trong code:
    nhật ký thao tác vận hành riêng (không phải `AuditLog` của nghiệp vụ) — **chưa làm**, và đó là
    quyết định đã ghi lại, không phải thiếu sót.
 
-Chạy tự động: hiện là **lệnh tay**. Khi đặt cron thì (a) `--apply` với `--months` đã ký, (b) giữ log
-của cron (đó là dấu vết duy nhất), (c) chạy ngoài giờ cao điểm, (d) chạy thử trước một lần mỗi lần
-đổi con số. Repo này chưa cấu hình cron.
+Chạy tự động: **đã đặt lịch trong app** — `LogRetentionCronService`, `03:00 ngày 1 mỗi tháng` theo
+`SYSTEM_TIME_ZONE`. Bốn điểm:
+
+- **Con số nằm ở `.env.production`** (`LOG_RETENTION_MONTHS`), không nằm trong code: đổi con số là
+  sửa một dòng + `restart be`, không phải build lại bản mới. Để trống ⇒ job **bỏ qua và ghi log lý
+  do**, app vẫn chạy — thiếu một con số pháp lý không phải lý do để hệ thống không lên được.
+- **Không chạy trong test** (`NODE_ENV=test`): cron thật trong lúc e2e sẽ xoá dòng của chính suite
+  đang chạy, biến một cổng xanh thành đỏ ngẫu nhiên.
+- **Không chạy chồng**: có cờ `isRunning`; lượt sau bỏ qua và ghi WARN. Lỗi DB thì nuốt + log ERROR
+  (cron không được làm sập app), lượt sau thử lại.
+- **Dấu vết là log của app**, dòng `Dọn nhật ký: mốc …, đã xoá N dòng — AccessLog x/y, …`. Log của
+  container bị rotate, nên nếu cần giữ lịch sử vài năm thì phải đẩy log ra ngoài — **chưa có**.
+
+Trước khi đổi con số: chạy tay `npm run logs:prune -- --months=<số mới>` (chạy thử) để xem nó sẽ xoá
+bao nhiêu dòng, rồi mới sửa `.env.production`.
 
 ## 5. Kiểm soát truy cập
 
