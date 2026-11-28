@@ -199,4 +199,25 @@ export const CustomerRedeemPointsResSchema = z.object({
   }),
 })
 
+/**
+ * Một đơn còn trừ được điểm — nguồn cho danh sách chọn khi đổi điểm.
+ * `maxRedeemPoints` tính sẵn từ `payable` để client không cho chọn số điểm vượt hoá đơn.
+ */
+export const CustomerOpenOrderSchema = z.object({
+  id: z.number(),
+  status: z.string(),
+  grandTotal: moneyOutputSchema,
+  /** còn phải trả = subtotal − discountTotal: trần của lần đổi điểm */
+  payable: moneyOutputSchema,
+  maxRedeemPoints: z.number(),
+  branchName: z.string(),
+  tableName: z.string().nullable(),
+  createdAt: z.date(),
+})
+
+export const CustomerOpenOrdersResSchema = z.object({
+  message: z.string(),
+  data: z.array(CustomerOpenOrderSchema),
+})
+
 export type CustomerRedeemPointsType = z.infer<typeof CustomerRedeemPointsBodySchema>

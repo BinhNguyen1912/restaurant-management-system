@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common'
 import { Prisma } from '@prisma/client'
 import { PrismaService } from '@/shared/service/prisma.service'
-import { OrderStatus } from '@/shared/constants/order.constant'
+import { OrderStatus, PaymentStatus } from '@/shared/constants/order.constant'
 import { roleName } from '@/shared/constants/role.constant'
 import { CustomerListQueryType } from '@/routes/customer/customer.model'
 import { buildCustomerUpsert, normalizeCustomerPhone } from '@/routes/customer/customer.identity'
@@ -120,6 +120,36 @@ export class CustomerRepo {
       select: {
         id: true,
         status: true,
+        grandTotal: true,
+        createdAt: true,
+        branch: { select: { name: true } },
+        tableNode: { select: { name: true } },
+      },
+    })
+  }
+
+  /**
+   * Đơn **còn trừ được điểm** của khách: chưa thu tiền, chưa huỷ, có dòng món (tiền đơn chỉ tính
+   * lại được từ `items`). Điều kiện phải KHỚP với `openOrderForPoints` — lệch nhau thì client hiện
+   * một đơn mà lúc bấm đổi điểm lại bị từ chối.
+   */
+  openOrders(customerId: number, branchId: number | undefined, take: number) {
+    return this.prismaService.order.findMany({
+      where: {
+        customerId,
+        deletedAt: null,
+        status: { notIn: [OrderStatus.PAID, OrderStatus.COMPLETED, OrderStatus.CANCELLED] },
+        payment: { status: PaymentStatus.PENDING },
+        items: { some: {} },
+        ...(branchId ? { branchId } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      take,
+      select: {
+        id: true,
+        status: true,
+        subtotal: true,
+        discountTotal: true,
         grandTotal: true,
         createdAt: true,
         branch: { select: { name: true } },

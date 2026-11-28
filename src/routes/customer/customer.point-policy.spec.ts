@@ -1,9 +1,8 @@
 import {
   checkRedeemable,
   earnedPointsForOrder,
+  maxRedeemablePoints,
   MIN_REDEEM_POINTS,
-  POINT_VOUCHER_VALID_DAYS,
-  pointVoucherEndAt,
   pointsToVnd,
   redeemableBalance,
   totalEarnedPoints,
@@ -86,11 +85,14 @@ describe('checkRedeemable', () => {
   })
 })
 
-describe('pointVoucherEndAt', () => {
-  it('cộng đúng số ngày, không đổi giờ', () => {
-    const from = new Date('2026-11-28T10:15:30.000Z')
-    const end = pointVoucherEndAt(from)
-    expect(end.toISOString()).toBe('2026-12-28T10:15:30.000Z')
-    expect(end.getTime() - from.getTime()).toBe(POINT_VOUCHER_VALID_DAYS * 24 * 60 * 60 * 1000)
+describe('maxRedeemablePoints', () => {
+  it('trần = số tiền còn phải trả chia giá trị một điểm, làm tròn xuống', () => {
+    expect(maxRedeemablePoints(200_000)).toBe(200)
+    expect(maxRedeemablePoints('199999')).toBe(199)
+  })
+
+  it('hoá đơn đã giảm hết (payable <= 0) thì không đổi được điểm nào', () => {
+    expect(maxRedeemablePoints(0)).toBe(0)
+    expect(maxRedeemablePoints(-50_000)).toBe(0)
   })
 })
