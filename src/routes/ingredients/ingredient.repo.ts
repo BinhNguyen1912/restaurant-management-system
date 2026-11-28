@@ -194,7 +194,11 @@ export class IngredientRepo {
       const updated = await tx.ingredient.update({
         where: { id: ingredientId },
         data: {
-          stock: newStock,
+          /**
+           * `increment` chứ KHÔNG ghi `newStock` tuyệt đối: hai phiếu nhập đồng thời cùng đọc
+           * `oldStock` rồi ghi đè thì một phiếu biến mất. `stock` trả về là số sau khi cộng.
+           */
+          stock: { increment: quantity },
           unitCost: new Prisma.Decimal(Math.round(newUnitCost * 100) / 100),
         },
         select: { id: true, name: true, stock: true, unitCost: true, unitId: true, minStock: true },
