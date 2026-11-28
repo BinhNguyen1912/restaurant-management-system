@@ -2,6 +2,14 @@ export interface AccessTokenPayloadCreate {
   userId: number
   roleId: number
   roleName: string
+  /**
+   * Phiên "phải bật 2FA trước" (§M9 mục 5): vai trò bắt buộc 2FA mà tài khoản chưa bật.
+   *
+   * Nằm trong token chứ không tra DB mỗi request, và được TÍNH LẠI mỗi lần cấp token (login và
+   * refresh) — nhờ vậy bật 2FA xong là thoát trạng thái này bằng một lần refresh, không phải đăng
+   * nhập lại. Thiếu trường (token cũ) = phiên bình thường.
+   */
+  enrolmentRequired?: boolean
 }
 export interface AccessTokenPayload extends AccessTokenPayloadCreate {
   iat: number

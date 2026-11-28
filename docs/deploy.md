@@ -138,3 +138,35 @@ file + giữ 14 ngày/8 tuần/12 tháng) và `restore-postgres.sh`, kèm khuy�
 
 Tóm tắt: **chỉ Postgres cần backup** (sổ cái là nguồn sự thật; Redis và projection báo cáo dựng lại
 được). Redis chạy `--appendonly yes` để restart không mất tồn kho đang dùng.
+
+## Bắt buộc 2FA cho ADMIN/KE_TOAN (quyết định rollout, không phải bước deploy)
+
+Cơ chế đã có sẵn trong mã. Đặt `TWO_FACTOR_ENFORCEMENT=on` thì phiên của ADMIN/KE_TOAN chưa bật
+2FA **vẫn đăng nhập được** nhưng chỉ gọi được `POST /auth/2fa/setup`, `POST /auth/2fa/enable`,
+`POST /auth/logout`; mọi route khác trả 403 `Error.TwoFactorEnrolmentRequired`. Không đặt biến (hoặc
+`off`) = không ai bị chặn — mặc định như vậy là cố ý: bật rào chắn lên hệ thống đang chạy phải là
+hành động có chủ ý, không phải hệ quả của một lần deploy.
+
+Bật theo đúng ba bước, không bỏ bước nào:
+
+1. **Đo trước**: `npm run security:2fa-status` (trong container:
+   `docker compose --env-file .env.production exec be node dist/scripts/ScriptOfSystem/two-factor-status.js`)
+   in ra từng tài khoản thuộc diện, ai còn thiếu, kèm ghi chú "đã quét QR nhưng CHƯA xác nhận" —
+   những tài khoản đó bật bắt buộc lên vẫn bị chặn.
+2. **Cho người ta đường tự mở**: FE phải có màn hình enrolment gọi `POST /auth/2fa/setup` →
+   `POST /auth/2fa/enable` → `POST /auth/refresh-token` để bỏ cờ. Chưa có màn hình đó mà làm bước 3
+   là khoá cửa mọi quản trị viên của hệ thống.
+3. **Bật**: thêm `TWO_FACTOR_ENFORCEMENT=on` vào `.env.production`, `restart be`. Token đã cấp
+   trước đó giữ nguyên hiệu lực tới khi hết hạn (cờ nằm trong token) — bật rào chắn không đá ai ra
+   giữa ca làm việc.
+
+Người đã mất thiết bị (không tự bật được):
+
+```
+npm run security:2fa-reset -- --email=<email tài khoản> --actor=<email người làm> --reason="mất điện thoại, đã xác minh CCCD" --apply
+```
+
+Thiếu `--apply` thì chỉ in ra sẽ làm gì. Lệnh xoá bí mật 2FA, thu hồi **mọi** refresh token của tài
+khoản và ghi `AuditLog` `TWO_FACTOR_RESET` **trong cùng transaction** — tháo rào chắn bảo vệ cao nhất
+trong hệ thống phải để lại dấu "ai xoá, của ai, vì sao", nếu không thì lần sau không ai trả lời được.
+

@@ -17,6 +17,7 @@ import {
 import { loginResSchema } from '@/routes/auth/auth.model'
 import { AuthService } from '@/routes/auth/auth.service'
 import { ActiveUser } from '@/shared/decorators/active-user.decorator'
+import { AllowDuringEnrolment } from '@/shared/decorators/allow-during-enrolment.decorator'
 import { IsPublic } from '@/shared/decorators/auth.decorator'
 import { MessageResDto } from '@/shared/dtos/respone.dto'
 import { AccessTokenGuard } from '@/shared/guard/access-token.guard'
@@ -87,12 +88,14 @@ export class AuthController {
    * bật/tắt xác thực hai lớp của chính mình thì phải đang đăng nhập, và người dùng lấy từ token
    * chứ không từ body — nhận `userId` từ body là cho phép tắt 2FA của người khác.
    */
+  @AllowDuringEnrolment()
   @Post('2fa/setup')
   @ZodSerializerDto(TwoFactorSetupResDTO)
   setupTwoFactor(@ActiveUser('userId') userId: number) {
     return this.authService.setupTwoFactor(userId)
   }
 
+  @AllowDuringEnrolment()
   @Post('2fa/enable')
   @ZodSerializerDto(MessageResDto)
   enableTwoFactor(@Body() body: EnableTwoFactorBodyDTO, @ActiveUser('userId') userId: number) {
@@ -105,6 +108,7 @@ export class AuthController {
     return this.authService.disableTwoFactor(userId, body)
   }
 
+  @AllowDuringEnrolment()
   @Post('logout')
   @ZodSerializerDto(MessageResDto)
   async logout(@Body() body: LogoutBodyDTO) {

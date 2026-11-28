@@ -35,3 +35,10 @@ export const STEP_UP_REQUIRED_KEY = 'StepUpRequired'
  * tham số bảo mật, đổi được bằng biến môi trường nghĩa là một lần cấu hình sai là tắt tác dụng.
  */
 export const STEP_UP_TOKEN_TTL_MINUTES = 5
+
+/**
+ * Route vẫn gọi được khi phiên đang ở trạng thái "phải bật 2FA trước" (xem
+ * `TwoFactorEnrolmentGuard`). Đánh dấu bằng metadata chứ không bằng danh sách path trong guard:
+ * danh sách path phải sửa ở hai chỗ mỗi lần thêm route, và không ai nhớ.
+ */
+export const ALLOW_DURING_ENROLMENT_KEY = 'AllowDuringEnrolment'

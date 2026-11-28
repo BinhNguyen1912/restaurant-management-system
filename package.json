@@ -30,6 +30,8 @@
     "tables:close-stale": "ts-node -r tsconfig-paths/register src/scripts/ScriptOfSystem/close-stale-tables.ts",
     "pii:anonymize": "ts-node -r tsconfig-paths/register src/scripts/ScriptOfSystem/anonymize-customers.ts",
     "logs:prune": "ts-node -r tsconfig-paths/register src/scripts/ScriptOfSystem/prune-logs.ts",
+    "security:2fa-status": "ts-node -r tsconfig-paths/register src/scripts/ScriptOfSystem/two-factor-status.ts",
+    "security:2fa-reset": "ts-node -r tsconfig-paths/register src/scripts/ScriptOfSystem/two-factor-reset.ts",
     "seed:demo:clear": "ts-node -r tsconfig-paths/register src/scripts/ScriptOfSystem/clear-demo-seed.ts",
     "seed:demo": "npx ts-node -r tsconfig-paths/register src/scripts/ScriptOfSystem/demo-data.seed.ts",
     "db:dump": "npx ts-node -r tsconfig-paths/register src/scripts/ScriptOfSystem/dump-data.ts",

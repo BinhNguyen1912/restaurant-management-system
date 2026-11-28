@@ -78,6 +78,17 @@ const configSchema = z.object({
    * thống không lên được.
    */
   LOG_RETENTION_MONTHS: z.string().optional(),
+  /**
+   * Bắt buộc bật 2FA cho ADMIN/KE_TOAN (prod-readiness §M9 mục 5).
+   *
+   * `on` = phiên của tài khoản chưa bật 2FA chỉ gọi được `/auth/2fa/*` và `/auth/logout`; mọi route
+   * khác trả 403 `Error.TwoFactorEnrolmentRequired`. Thiếu biến hoặc `off` = không ai bị chặn.
+   *
+   * Mặc định KHÔNG bật, và đây là **quyết định rollout** chứ không phải một dòng code: bật khi FE
+   * chưa có màn hình enrolment là chặn mọi quản trị viên của hệ thống đang chạy. Chạy
+   * `npm run security:2fa-status` trước để biết bật sẽ chặn ai.
+   */
+  TWO_FACTOR_ENFORCEMENT: z.enum(['off', 'on']).optional(),
 })
 
 const configServer = configSchema.safeParse(process.env)
