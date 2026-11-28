@@ -80,9 +80,39 @@ export const CustomerReservationSchema = z.object({
   tableName: z.string().nullable(),
 })
 
+export const CustomerConsentPurposeSchema = z.enum(['SERVICE', 'MARKETING'])
+
+/**
+ * Trạng thái đồng ý của MỘT mục đích. `active` là câu trả lời duy nhất client được dùng để quyết
+ * định "có được gửi ưu đãi hay không" — `granted` chỉ là điều khách nói lần cuối, còn `stale` bắt
+ * client phải hỏi lại khi chính sách đổi.
+ */
+export const CustomerConsentStateSchema = z.object({
+  purpose: CustomerConsentPurposeSchema,
+  granted: z.boolean(),
+  /** null = chưa từng hỏi khách */
+  at: z.date().nullable(),
+  version: z.string().nullable(),
+  stale: z.boolean(),
+  active: z.boolean(),
+})
+
+export const CustomerConsentBodySchema = z.object({
+  purpose: CustomerConsentPurposeSchema,
+  granted: z.boolean(),
+  note: z.string().trim().max(255, 'Ghi chú tối đa 255 ký tự').optional(),
+})
+
+export const CustomerConsentResSchema = z.object({
+  message: z.string(),
+  data: z.array(CustomerConsentStateSchema),
+})
+
 export const CustomerDetailSchema = CustomerSchema.extend({
   recentOrders: z.array(CustomerOrderSchema),
   recentReservations: z.array(CustomerReservationSchema),
+  /** đồng ý xử lý dữ liệu cá nhân theo từng mục đích (NĐ 13/2023) */
+  consents: z.array(CustomerConsentStateSchema),
 })
 
 export const CustomerListResSchema = z.object({
@@ -146,6 +176,7 @@ export const CustomerReportResSchema = z.object({
 
 export type CustomerListQueryType = z.infer<typeof CustomerListQuerySchema>
 export type CustomerReportQueryType = z.infer<typeof CustomerReportQuerySchema>
+export type CustomerConsentType = z.infer<typeof CustomerConsentBodySchema>
 
 /**
  * Một dòng lịch sử điểm. Hai loại KHÁC hình dạng nên dùng union phân biệt theo `type` — client

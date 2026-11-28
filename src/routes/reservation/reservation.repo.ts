@@ -22,6 +22,7 @@ import { SharedTableNodeRepo } from '@/shared/shared-repository/shared-tableNode
 import { TableNodeNotFoundException } from './reservation.error'
 import { CustomerRepo } from '@/routes/customer/customer.repo'
 import { normalizeCustomerPhone } from '@/routes/customer/customer.identity'
+import { CONSENT_POLICY_VERSION, currentConsents } from '@/routes/customer/customer.consent-policy'
 
 @Injectable()
 export class ReservationRepo {
@@ -41,11 +42,43 @@ export class ReservationRepo {
    */
   private async resolveCustomerId(
     tx: Prisma.TransactionClient | PrismaService,
-    input: { phone: string; name: string; userId: number },
+    input: { phone: string; name: string; userId: number; marketingConsent?: boolean },
   ): Promise<number | null> {
     const phone = normalizeCustomerPhone(input.phone)
     if (!phone) return null
-    return await this.customerRepo.upsertProfile(tx, { phone, name: input.name, userId: input.userId })
+    const customerId = await this.customerRepo.upsertProfile(tx, { phone, name: input.name, userId: input.userId })
+    await this.recordMarketingConsent(tx, customerId, input.marketingConsent, input.userId)
+    return customerId
+  }
+
+  /**
+   * Ghi nhận đồng ý nhận ưu đãi ngay lúc thu SĐT (NĐ 13/2023: đồng ý theo từng mục đích).
+   *
+   * Chỉ ghi khi khách ĐÃ ĐƯỢC HỎI (`marketingConsent !== undefined`) và câu trả lời KHÁC lần trước —
+   * không tự ghi "đồng ý" thay khách, và không sinh một dòng mỗi lần đặt bàn.
+   */
+  private async recordMarketingConsent(
+    tx: Prisma.TransactionClient | PrismaService,
+    customerId: number,
+    marketingConsent: boolean | undefined,
+    actorId: number,
+  ): Promise<void> {
+    if (marketingConsent === undefined) return
+    const current = currentConsents(await this.customerRepo.consents(customerId, tx)).find(
+      (state) => state.purpose === 'MARKETING',
+    )
+    if (current && current.granted === marketingConsent && !current.stale) return
+    await this.customerRepo.appendConsent(
+      {
+        customerId,
+        purpose: 'MARKETING',
+        version: CONSENT_POLICY_VERSION,
+        granted: marketingConsent,
+        note: 'Ghi nhận khi đặt bàn',
+        createdById: actorId,
+      },
+      tx,
+    )
   }
 
   private async calculatePreOrderTotal(preOrderItems: CreateNewOrderType): Promise<{
@@ -141,6 +174,7 @@ export class ReservationRepo {
       reservationTime,
       customerName,
       note,
+      marketingConsent,
     } = body
 
     try {
@@ -171,6 +205,7 @@ export class ReservationRepo {
             phone: customerPhone,
             name: customerName,
             userId,
+            marketingConsent,
           })
           const newReservation = await tx.reservation.create({
             data: {
@@ -242,6 +277,7 @@ export class ReservationRepo {
         phone: customerPhone,
         name: customerName,
         userId,
+        marketingConsent,
       })
       const [newReservation] = await Promise.all([
         this.prismaService.reservation.create({

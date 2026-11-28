@@ -10,10 +10,16 @@ import { AuditLogService } from '@/shared/service/audit-log.service'
 import { OrderStatus, PaymentStatus } from '@/shared/constants/order.constant'
 import { CustomerRepo } from '@/routes/customer/customer.repo'
 import {
+  CustomerConsentType,
   CustomerListQueryType,
   CustomerRedeemPointsType,
   CustomerReportQueryType,
 } from '@/routes/customer/customer.model'
+import {
+  CONSENT_POLICY_VERSION,
+  currentConsents,
+
+} from '@/routes/customer/customer.consent-policy'
 import {
   checkRedeemable,
   earnedPointsForOrder,
@@ -145,11 +151,12 @@ export class CustomerService {
     const row = await this.repo.findById(id)
     if (!row) throw NotFoundCustomerException
 
-    const [{ orders, reservationCounts }, recentOrders, recentReservations, points] = await Promise.all([
+    const [{ orders, reservationCounts }, recentOrders, recentReservations, points, consentRows] = await Promise.all([
       this.repo.stats([id], branchId),
       this.repo.recentOrders(id, branchId, RECENT_ORDERS),
       this.repo.recentReservations(id, branchId, RECENT_RESERVATIONS),
       this.repo.pointBalance(id),
+      this.repo.consents(id),
     ])
     const orderRow = orders.find((item) => item.customerId === id)
     const customer = this.toCustomer(
@@ -186,6 +193,8 @@ export class CustomerService {
           branchName: reservation.branch.name,
           tableName: reservation.tableNode?.name ?? null,
         })),
+        // Đồng ý dữ liệu cá nhân là chuyện của KHÁCH, không cắt theo chi nhánh như tiền.
+        consents: currentConsents(consentRows),
       },
     }
   }
@@ -257,6 +266,60 @@ export class CustomerService {
     if (!row) throw NotFoundCustomerException
     const updated = await this.repo.updateNote(id, note)
     return { message: 'Success.CustomerNoteUpdated', data: updated }
+  }
+
+  /** Trạng thái đồng ý xử lý dữ liệu cá nhân của khách, theo từng mục đích. */
+  async consents(customerId: number) {
+    const row = await this.repo.findById(customerId)
+    if (!row) throw NotFoundCustomerException
+    const rows = await this.repo.consents(customerId)
+    return { message: 'Success.CustomerConsents', data: currentConsents(rows) }
+  }
+
+  /**
+   * Ghi nhận khách ĐỒNG Ý hoặc RÚT ĐỒNG Ý cho một mục đích (NĐ 13/2023).
+   *
+   * Nhân viên là người hỏi khách nên STAFF có quyền ghi ở đây; IP lấy từ request để còn giải trình.
+   * Chỉ ghi khi câu trả lời KHÁC lần ghi nhận trước (hoặc khi khách đã đồng ý theo bản chính sách
+   * cũ): nhật ký chỉ nên dài thêm khi có chuyện thật xảy ra, không phải mỗi lần bấm lưu.
+   */
+  async recordConsent(customerId: number, body: CustomerConsentType, actor: AccessTokenPayload, ip?: string) {
+    const row = await this.repo.findById(customerId)
+    if (!row) throw NotFoundCustomerException
+
+    const before = await this.repo.consents(customerId)
+    const current = currentConsents(before).find((state) => state.purpose === body.purpose)
+    const unchanged = current != null && current.granted === body.granted && !current.stale
+
+    if (!unchanged) {
+      await this.repo.appendConsent({
+        customerId,
+        purpose: body.purpose,
+        version: CONSENT_POLICY_VERSION,
+        granted: body.granted,
+        ip: ip ?? null,
+        note: body.note?.trim() || null,
+        createdById: actor.userId,
+      })
+      await this.auditLog.record({
+        actorId: actor.userId,
+        actorRole: actor.roleName,
+        action: 'CONSENT_RECORDED',
+        entityType: 'CUSTOMER',
+        entityId: customerId,
+        before: {
+          purpose: body.purpose,
+          granted: current?.granted ?? null,
+          version: current?.version ?? null,
+          at: current?.at?.toISOString() ?? null,
+        },
+        after: { purpose: body.purpose, granted: body.granted, version: CONSENT_POLICY_VERSION },
+        branchId: null,
+      })
+    }
+
+    const rows = await this.repo.consents(customerId)
+    return { message: 'Success.CustomerConsentRecorded', data: currentConsents(rows) }
   }
 
   /**

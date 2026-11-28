@@ -1,9 +1,12 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common'
+import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query, Req } from '@nestjs/common'
+import { Request } from 'express'
 import { ZodSerializerDto } from 'nestjs-zod'
 import { ActiveUser } from '@/shared/decorators/active-user.decorator'
 import { AccessTokenPayload } from '@/shared/types/jwt.types'
 import { CustomerService } from '@/routes/customer/customer.service'
 import {
+  CustomerConsentBodyDTO,
+  CustomerConsentResDTO,
   CustomerDetailResDTO,
   CustomerListQueryDTO,
   CustomerListResDTO,
@@ -58,6 +61,28 @@ export class CustomerController {
   @ZodSerializerDto(CustomerOpenOrdersResDTO)
   async openOrders(@Param('id', ParseIntPipe) id: number, @ActiveUser() user: AccessTokenPayload) {
     return await this.customerService.openOrders(id, user)
+  }
+
+  /** Trạng thái đồng ý xử lý dữ liệu cá nhân theo từng mục đích (NĐ 13/2023/NĐ-CP). */
+  @Get(':id/consent')
+  @ZodSerializerDto(CustomerConsentResDTO)
+  async consents(@Param('id', ParseIntPipe) id: number) {
+    return await this.customerService.consents(id)
+  }
+
+  /**
+   * Ghi nhận khách đồng ý / rút đồng ý. Nhân viên quầy là người hỏi khách nên STAFF có quyền POST;
+   * IP lấy từ request để nhật ký có bằng chứng.
+   */
+  @Post(':id/consent')
+  @ZodSerializerDto(CustomerConsentResDTO)
+  async recordConsent(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: CustomerConsentBodyDTO,
+    @ActiveUser() user: AccessTokenPayload,
+    @Req() req: Request,
+  ) {
+    return await this.customerService.recordConsent(id, body, user, req.ip)
   }
 
   /**
