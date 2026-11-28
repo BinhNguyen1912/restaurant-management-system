@@ -19,6 +19,7 @@ import { ZodSerializerInterceptor, ZodValidationPipe } from 'nestjs-zod'
 import { HttpExceptionFilter } from '@/filter/http-exception.filter'
 import { AccessLogInterceptor } from '@/interceptor/access-log.interceptor'
 import { AuthenticationGuard } from '@/shared/guard/authentication.guard'
+import { StepUpGuard } from '@/shared/guard/step-up.guard'
 import { CategoryModule } from '@/routes/categories/category.module'
 import { CategoryTranslationModule } from '@/routes/categories/category-translation/category-translation.module'
 import { ProfileModule } from '@/routes/profile/profile.module'
@@ -140,6 +141,15 @@ import { ReservationModule } from './routes/reservation/reservation.module';
     {
       provide: 'APP_GUARD',
       useClass: AuthenticationGuard,
+    },
+    /**
+     * Đăng ký SAU `AuthenticationGuard` vì nó đọc `request.user` đã gắn từ access token — vé
+     * step-up phải thuộc đúng người đang gọi. Guard không làm gì với route không gắn
+     * `@RequireStepUp()` (chỉ một lần đọc metadata).
+     */
+    {
+      provide: 'APP_GUARD',
+      useClass: StepUpGuard,
     },
 
     {

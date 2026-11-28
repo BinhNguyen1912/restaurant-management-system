@@ -16,6 +16,7 @@ describe('Finance (e2e)', () => {
   let app: INestApplication
   let prisma: PrismaService
   let token: string
+  let stepUpToken: string
   let loginUserId: number
   /** id admin, dùng để ghi `openedById` khi test mở bàn */
   let adminUserId: number
@@ -111,7 +112,8 @@ describe('Finance (e2e)', () => {
   }
 
   const api = () => request(app.getHttpServer())
-  const auth = () => ({ Authorization: `Bearer ${token}` })
+  /** Thao tác tạo/sửa/xoá tài khoản và vai trò đòi vé nhập-lại-mật-khẩu (M9 mục 6). */
+  const auth = () => ({ Authorization: `Bearer ${token}`, 'x-step-up-token': stepUpToken })
 
   /**
    * Bàn để test: ưu tiên bàn đang AVAILABLE; hết bàn (test trước để lại OCCUPIED) thì
@@ -179,6 +181,14 @@ describe('Finance (e2e)', () => {
       .send({ email: 'admin@order.com', password: '123456' })
       .expect(201)
     token = login.body.accessToken
+    // Vé step-up cho các request đụng tài khoản/vai trò trong suite này (sống 5 phút, suite chạy ~15s).
+    stepUpToken = (
+      await api()
+        .post('/auth/reauth')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ password: '123456' })
+        .expect(201)
+    ).body.stepUpToken
     // actorId trong nhật ký = user đang đăng nhập; lấy một lần để assert cho chắc
     loginUserId = login.body.user.id as number
     adminUserId = loginUserId

@@ -1,5 +1,6 @@
-import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from 'node:crypto'
+import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
 import * as OTPAuth from 'otpauth'
+import { deriveKey } from '@/shared/service/key-derivation'
 
 /**
  * 2FA bằng ứng dụng xác thực (TOTP) — phần thuần, không chạm DB, không đọc config.
@@ -90,7 +91,7 @@ export function verifyTotpCode(secret: string, code: string, timestamp: number =
  * dùng phải setup lại. Ghi ở docs/prod-readiness-plan.md.
  */
 export function deriveTotpKey(material: string): Buffer {
-  return Buffer.from(hkdfSync('sha256', material, 'res-mana-2fa', 'totp-secret-v1', 32))
+  return deriveKey({ material, salt: 'res-mana-2fa', info: 'totp-secret-v1' })
 }
 
 /** Mã hoá bí mật TOTP để lưu DB. AES-256-GCM: có xác thực, sửa một byte là giải mã hỏng. */

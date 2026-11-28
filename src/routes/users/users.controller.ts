@@ -15,12 +15,14 @@ import { ActiveRole } from '@/shared/decorators/active-role.decorator'
 import { LogAccess } from '@/shared/decorators/access-log.decorator'
 import { CreateGuestDTO, CreateGuestResDTO, GetProfileDetailResDTO } from '@/shared/dtos/shared-users.dto'
 import { MessageResDto } from '@/shared/dtos/respone.dto'
+import { RequireStepUp } from '@/shared/decorators/step-up.decorator'
 
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
   @Post()
+  @RequireStepUp()
   @ZodSerializerDto(UserResDTO)
   async create(
     @Body() body: UserBodyDTO,
@@ -40,6 +42,7 @@ export class UsersController {
   }
 
   @Put(':userId')
+  @RequireStepUp()
   @ZodSerializerDto(UserResDTO)
   async update(
     @Param() param: GetParamsUserDTO,
@@ -60,6 +63,7 @@ export class UsersController {
   }
 
   @Delete(':userId')
+  @RequireStepUp()
   @ZodSerializerDto(UserResDTO)
   async delete(
     @Param() param: GetParamsUserDTO,

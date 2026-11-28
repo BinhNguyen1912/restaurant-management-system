@@ -7,6 +7,8 @@ import {
   LoginResDTO,
   LogoutBodyDTO,
   OTPBodyDto,
+  ReauthenticateBodyDTO,
+  ReauthenticateResDTO,
   RefreshTokenBodyDTO,
   RegisterBodyDTO,
   RegisterResDTO,
@@ -19,6 +21,7 @@ import { IsPublic } from '@/shared/decorators/auth.decorator'
 import { MessageResDto } from '@/shared/dtos/respone.dto'
 import { AccessTokenGuard } from '@/shared/guard/access-token.guard'
 import { Body, Controller, Ip, Post, Res, UseGuards } from '@nestjs/common'
+import { Throttle } from '@nestjs/throttler'
 import { Response } from 'express'
 import { ZodSerializerDto } from 'nestjs-zod'
 
@@ -59,6 +62,24 @@ export class AuthController {
   @ZodSerializerDto(GetAccessTokenDTO)
   async provideAccessTokenByRefreshToken(@Body() body: RefreshTokenBodyDTO, @ActiveUser('userId') userId: number) {
     return await this.authService.provideAccessTokenByRefreshToken(body)
+  }
+
+  /**
+   * Nhập lại mật khẩu để mở khoá một thao tác nhạy cảm (step-up).
+   *
+   * Trả **vé ngắn hạn** (5 phút) chứ không phải token phiên — xem `StepUpGuard`. FE gọi route này
+   * khi nhận 401 `Error.StepUpRequired`, rồi gắn vé vào header `x-step-up-token` cho request vừa
+   * hỏng và các request nhạy cảm tiếp theo tới khi hết hạn.
+   *
+   * `@Throttle` chặt hơn ngưỡng toàn cục (40/phút): đây là chỗ dò mật khẩu có thể xảy ra từ bên
+   * trong một phiên đã bị chiếm. Trong test nới ra như ngưỡng toàn cục, nếu không chính suite
+   * step-up sẽ ăn 429.
+   */
+  @Throttle({ default: { limit: process.env.NODE_ENV === 'test' ? 10_000 : 10, ttl: 60_000 } })
+  @Post('reauth')
+  @ZodSerializerDto(ReauthenticateResDTO)
+  reauthenticate(@Body() body: ReauthenticateBodyDTO, @ActiveUser('userId') userId: number, @Ip() ip: string) {
+    return this.authService.reauthenticate(userId, body, { ip })
   }
 
   /**

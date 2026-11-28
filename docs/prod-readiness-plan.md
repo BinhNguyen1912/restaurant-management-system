@@ -632,6 +632,8 @@ Test: `usageLimit = 1`, 10 request song song ⇒ 1 thành công, `usedCount = 1`
 5. **2FA cho ADMIN/KE_TOAN** — **đã làm phần cơ chế, chưa bật bắt buộc** (xem ghi chú dưới):
    TOTP verify, ba endpoint setup/enable/disable, đường khôi phục bằng OTP email. Việc còn lại của
    mục này là *bắt buộc* mọi tài khoản ADMIN/KE_TOAN phải bật — chờ màn hình enrolment ở FE.
+6. **Nhập lại mật khẩu cho thao tác nhạy cảm (step-up)** — **đã làm** (xem ghi chú dưới):
+   `POST /auth/reauth` cấp vé 5 phút, `@RequireStepUp()` gắn ở 7 route đổi quyền / đổi tài khoản.
 
 **Đồng ý & ẩn danh hoá — đã làm (mục 3).** Ba chỗ khác bản phác, đều vì lý do cụ thể:
 
@@ -731,6 +733,32 @@ hai lần đăng nhập song song.
 
 Chi tiết và các ⚠ cần kế toán/luật sư: `docs/pii-retention-policy.md`.
 
+**Nhập lại mật khẩu cho thao tác nhạy cảm — đã làm (mục 6).** `POST /auth/reauth` (đúng mật khẩu,
+cộng yếu tố thứ hai nếu tài khoản đã bật 2FA) đổi lấy một **vé** sống 5 phút; request thao tác nhạy
+cảm phải mang vé ở header `x-step-up-token`. Năm quyết định:
+
+- **Vé, không phải mật khẩu trong từng request.** Gửi mật khẩu kèm mỗi thao tác là để nó nằm trong
+  log proxy/history ở mọi lần, và không có cách nào hết hạn nó sau một lần gõ. Vé gắn với đúng
+  `userId` và tự chết sau 5 phút.
+- **Khoá ký TÁCH RIÊNG** (`deriveKey` — HKDF từ `ACCESS_TOKEN_SECRET`, salt/info riêng): dùng chung
+  khoá thì một lỗi ở phía verify (quên kiểm `typ`) là đủ biến vé 5 phút thành access token. Vé cũng
+  không có `roleId`/`roleName`, nên đem đi làm Bearer thì `AccessTokenGuard` từ chối — hai lớp chắn
+  độc lập, không phải một.
+- **401 chứ không 403.** 403 là "không có quyền"; ở đây quyền đủ, thiếu là *xác thực lại*. FE dựa
+  vào đúng mã đó để hiện hộp thoại mật khẩu thay vì báo "bạn không có quyền".
+- **Sai mật khẩu KHÔNG cộng vào bộ đếm khoá đăng nhập** (khác `login`): người gọi đã có phiên hợp
+  lệ, nên khoá tài khoản từ đây là tặng kẻ chiếm phiên một nút DoS. Bù lại hai thứ: `@Throttle` 10
+  lần/phút (ngưỡng toàn cục là 40), và mỗi lần sai để lại `LoginAttempt` FAILED.
+- **Chỉ gắn ở 7 route**: tạo/sửa/xoá vai trò, ghi đè quyền của vai trò, tạo/sửa/xoá tài khoản.
+  **Không** gắn cho việc hằng ngày (sửa giá, huỷ đơn, ghi chú khách, tạo tài khoản khách ngồi bàn):
+  hỏi mật khẩu ở mọi màn là cách nhanh nhất để người dùng gõ theo phản xạ mà không đọc hộp thoại —
+  lúc đó lớp bảo vệ chỉ còn là thao tác, còn chi phí thì thật.
+
+**Hợp đồng với FE** (repo này chỉ có BE, nên phần này là việc còn lại): gọi thao tác nhạy cảm → nhận
+401 `Error.StepUpRequired` → hiện hộp thoại mật khẩu → `POST /auth/reauth` → gắn `x-step-up-token`
+và **gọi lại request vừa hỏng**; các request nhạy cảm tiếp theo dùng chung vé tới khi hết hạn. Quên
+bước "gọi lại" là người dùng phải gõ mật khẩu hai lần cho một việc.
+
 **Dọn nhật ký — đã có cơ chế VÀ đã đặt lịch.** Hai đường: script
 `npm run logs:prune -- --months=N [--apply]` (chạy thử là mặc định, `--months` bắt buộc, không có
 mặc định), và job `LogRetentionCronService` chạy **03:00 ngày 1 mỗi tháng** với con số lấy từ
@@ -775,6 +803,13 @@ hoá `v1:...` (không chứa bí mật); chưa xác nhận mã thì `twoFactorEn
 mới có token; OTP qua email vẫn đăng nhập được khi mất điện thoại; tắt cần cả mật khẩu và mã, để lại
 `TWO_FACTOR_DISABLED`; ba route 2FA không phải route công khai (401 khi không có token); hai lần đăng
 nhập trong cùng một giây đều 201 và ra hai refresh token khác nhau.
+
+Step-up (`test/step-up.e2e-spec.ts`) ⇒ tạo vai trò chỉ với access token là **401
+`Error.StepUpRequired`** (không phải 403) và **không** có vai trò nào được tạo; route thường vẫn 200;
+`/auth/reauth` sai mật khẩu là 422 và không cấp vé; đúng thì vé có hạn ≤ 5 phút; vé mở khoá được đúng
+thao tác đó; vé rác là 401 `StepUpInvalid`; **vé của người khác** là 401; vé step-up đem làm Bearer
+token là 401; tài khoản bật 2FA thì reauth thiếu mã là 401 `TwoFactorRequired`, mã sai là 422, đủ mã
+mới cấp vé.
 
 Dọn nhật ký (`test/log-retention-prune.e2e-spec.ts`) ⇒ chạy thử chỉ đếm và **không** xoá dòng nào;
 `--apply` xoá đúng số dòng đã đếm (bằng `overdue` của lần chạy thử) và **giữ nguyên** dòng còn hạn;

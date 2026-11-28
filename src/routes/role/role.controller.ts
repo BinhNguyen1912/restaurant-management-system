@@ -25,12 +25,14 @@ import {
 import { ActiveUser } from '@/shared/decorators/active-user.decorator'
 import { ActiveRole } from '@/shared/decorators/active-role.decorator'
 import { MessageResDto } from '@/shared/dtos/respone.dto'
+import { RequireStepUp } from '@/shared/decorators/step-up.decorator'
 
 @Controller('role')
 export class RoleController {
   constructor(private readonly roleService: RoleService) {}
 
   @Post()
+  @RequireStepUp()
   @ZodSerializerDto(RoleBodyResDTO)
   async create(@Body() body: RoleBodyDTO, @ActiveUser('userId') userId: number) {
     const result = await this.roleService.create({ ...body, createdById: userId })
@@ -60,6 +62,7 @@ export class RoleController {
 
   /** Ghi đè toàn bộ quyền của role; ADMIN bị khoá (luôn full quyền) */
   @Put(':id/permissions')
+  @RequireStepUp()
   async updatePermissions(
     @Param() params: GetRoleParamsDTO,
     @Body() body: UpdateRolePermissionsBodyDTO,
@@ -71,6 +74,7 @@ export class RoleController {
   }
 
   @Put(':id')
+  @RequireStepUp()
   @ZodSerializerDto(RoleTypeDTO)
   async update(
     @Param() param: GetRoleParamsDTO,
@@ -82,6 +86,7 @@ export class RoleController {
   }
 
   @Delete(':id')
+  @RequireStepUp()
   @ZodSerializerDto(MessageResDto)
   async delete(@Param() param: GetRoleParamsDTO) {
     return await this.roleService.delete(param.id)
