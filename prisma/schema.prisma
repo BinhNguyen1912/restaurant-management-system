@@ -118,66 +118,66 @@ model LedgerLine {
 }
 
 model Branch {
-  id        Int      @id @default(autoincrement())
-  code      String   @unique @db.VarChar(50)
-  name      String   @db.VarChar(255)
-  address   String   @default("")
-  timezone  String   @default("Asia/Ho_Chi_Minh") @db.VarChar(64)
-  isActive  Boolean  @default(true)
+  id                Int      @id @default(autoincrement())
+  code              String   @unique @db.VarChar(50)
+  name              String   @db.VarChar(255)
+  address           String   @default("")
+  timezone          String   @default("Asia/Ho_Chi_Minh") @db.VarChar(64)
+  isActive          Boolean  @default(true)
   /// VAT (%) áp cho hoá đơn của chi nhánh — 0 = không tính thuế
-  taxRate          Decimal @default(0) @db.Decimal(5, 2)
+  taxRate           Decimal  @default(0) @db.Decimal(5, 2)
   /// Phí phục vụ (%) tính trên tiền món sau giảm giá
-  serviceChargeRate Decimal @default(0) @db.Decimal(5, 2)
+  serviceChargeRate Decimal  @default(0) @db.Decimal(5, 2)
   /// Giá trên menu đã bao gồm VAT chưa (VN: thường là ĐÃ gồm) — quyết định VAT cộng thêm hay trích ra
-  pricesIncludeTax Boolean @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  pricesIncludeTax  Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
-  tables        Table[]
-  areas         Area[]
-  tableNodes    TableNode[]
-  orders        Order[]
-  payments      Payment[]
-  reservations  Reservation[]
-  users         User[]
-  ledgerEntries LedgerEntry[]
-  cashShifts    CashShift[]
-  cashMovements CashMovement[]
-  dailySummaries DailyBranchSummary[]
+  tables             Table[]
+  areas              Area[]
+  tableNodes         TableNode[]
+  orders             Order[]
+  payments           Payment[]
+  reservations       Reservation[]
+  users              User[]
+  ledgerEntries      LedgerEntry[]
+  cashShifts         CashShift[]
+  cashMovements      CashMovement[]
+  dailySummaries     DailyBranchSummary[]
   reconciliationRuns ReconciliationRun[]
-  auditLogs AuditLog[]
+  auditLogs          AuditLog[]
 }
 
 /// Projection doanh thu theo (ngày, chi nhánh, tiền tệ) — đọc từ SỔ CÁI, không cộng Order.status.
 /// Bảng dẫn xuất: sai thì TÍNH LẠI (job recompute), không sửa tay (ADR 0001 D8).
 model DailyBranchSummary {
-  id            Int      @id @default(autoincrement())
+  id       Int      @id @default(autoincrement())
   /// ngày theo timezone của chi nhánh (Asia/Ho_Chi_Minh), 00:00 local
-  date          DateTime @db.Date
-  branchId      Int
-  branch        Branch   @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  currency      String   @default("VND") @db.VarChar(3)
+  date     DateTime @db.Date
+  branchId Int
+  branch   Branch   @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  currency String   @default("VND") @db.VarChar(3)
 
   /// tiền món trước giảm giá (Σ Có REVENUE_FOOD + Σ Nợ DISCOUNT)
-  gross         Decimal  @default(0) @db.Decimal(14, 2)
-  discount      Decimal  @default(0) @db.Decimal(14, 2)
-  serviceCharge Decimal  @default(0) @db.Decimal(14, 2)
-  tip           Decimal  @default(0) @db.Decimal(14, 2)
-  tax           Decimal  @default(0) @db.Decimal(14, 2)
+  gross         Decimal @default(0) @db.Decimal(14, 2)
+  discount      Decimal @default(0) @db.Decimal(14, 2)
+  serviceCharge Decimal @default(0) @db.Decimal(14, 2)
+  tip           Decimal @default(0) @db.Decimal(14, 2)
+  tax           Decimal @default(0) @db.Decimal(14, 2)
   /// doanh thu thuần = gross − discount + serviceCharge (không gồm thuế, không gồm tip)
-  net           Decimal  @default(0) @db.Decimal(14, 2)
+  net           Decimal @default(0) @db.Decimal(14, 2)
   /// tiền khách thực trả = net + tip + tax + chênh lệch làm tròn
-  grandTotal    Decimal  @default(0) @db.Decimal(14, 2)
+  grandTotal    Decimal @default(0) @db.Decimal(14, 2)
 
-  cashIn        Decimal  @default(0) @db.Decimal(14, 2)
-  vnpayIn       Decimal  @default(0) @db.Decimal(14, 2)
+  cashIn     Decimal @default(0) @db.Decimal(14, 2)
+  vnpayIn    Decimal @default(0) @db.Decimal(14, 2)
   /// tiền đã hoàn cho khách trong ngày (ghi dương, trừ vào doanh thu)
-  refund        Decimal  @default(0) @db.Decimal(14, 2)
-  cogs          Decimal  @default(0) @db.Decimal(14, 2)
+  refund     Decimal @default(0) @db.Decimal(14, 2)
+  cogs       Decimal @default(0) @db.Decimal(14, 2)
   /// số đơn có bút toán thu tiền trong ngày
-  orderCount    Int      @default(0)
+  orderCount Int     @default(0)
 
-  updatedAt     DateTime @updatedAt
+  updatedAt DateTime @updatedAt
 
   @@unique([date, branchId, currency])
   @@index([branchId, date])
@@ -205,9 +205,10 @@ model User {
   createdAt                   DateTime              @default(now())
   updatedAt                   DateTime              @updatedAt
   deletedAt                   DateTime?
-  point                       Int                   @default(0)
   /// hồ sơ khách hàng gắn với tài khoản này (nếu người dùng là khách, không phải nhân viên)
   customer                    Customer?
+  /// các lần trừ điểm khách do tài khoản này thực hiện (ai bấm nút đổi điểm)
+  pointRedemptions            PointRedemption[]     @relation("PointRedemptionCreatedBy")
   createdAreas                Area[]                @relation("AreaCreatedBy")
   deletedAreas                Area[]                @relation("AreaDeletedBy")
   updatedAreas                Area[]                @relation("AreaUpdatedBy")
@@ -238,7 +239,6 @@ model User {
   createdPermissions          Permission[]          @relation("PermissionCreateBy")
   deletedPermissions          Permission[]          @relation("PermissionDeleteBy")
   updatedPermissions          Permission[]          @relation("PermissionUpdateBy")
-  pointLogs                   PointLog[]
   createdProducts             Product[]             @relation("ProductCreateBy")
   deletedProducts             Product[]             @relation("ProductDeleteBy")
   updatedProducts             Product[]             @relation("ProductUpdateBy")
@@ -318,13 +318,29 @@ model UserTranslation {
   @@index([deletedAt])
 }
 
-model PointLog {
-  id        Int      @id @default(autoincrement())
-  userId    Int
-  change    Int
-  reason    String?
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id])
+model PointRedemption {
+  id          Int       @id @default(autoincrement())
+  customerId  Int
+  /// số điểm đã trừ (luôn dương)
+  points      Int
+  /// giá trị quy ra tiền đã giảm trên hoá đơn — CHỐT tại lúc đổi, không tính lại theo tỉ giá hiện
+  /// hành, để đổi chính sách sau này không làm sai hoá đơn cũ
+  valueVnd    Decimal   @db.Decimal(14, 2)
+  /// đơn được trừ điểm
+  orderId     Int?
+  /// đơn bị huỷ/hoàn tiền => điểm được trả lại (voidedAt khác null) nhưng dòng vẫn còn để đối soát
+  voidedAt    DateTime?
+  reason      String?   @db.VarChar(255)
+  createdById Int?
+  createdAt   DateTime  @default(now())
+
+  customer  Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  order     Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  createdBy User?    @relation("PointRedemptionCreatedBy", fields: [createdById], references: [id])
+
+  @@index([customerId, createdAt])
+  @@index([orderId])
+  @@index([voidedAt])
 }
 
 model Language {
@@ -568,6 +584,8 @@ model Order {
   customer            Customer?            @relation(fields: [customerId], references: [id])
   items               ProductSKUSnapshot[]
   products            Product[]            @relation("OrderToProduct")
+  /// điểm khách đã dùng để giảm giá đơn này (huỷ đơn thì các dòng bị void, điểm về lại)
+  pointRedemptions    PointRedemption[]
   branchId            Int
   branch              Branch               @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
@@ -688,9 +706,11 @@ model Customer {
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
-  user         User?         @relation(fields: [userId], references: [id])
+  user         User?             @relation(fields: [userId], references: [id])
   orders       Order[]
   reservations Reservation[]
+  /// các lần đổi điểm thành giảm giá (nửa "đã dùng" của số dư điểm)
+  redemptions  PointRedemption[]
 
   @@index([deletedAt, createdAt])
 }
@@ -739,17 +759,17 @@ model CategoryTranslation {
 }
 
 model VerificationCode {
-  id     Int                  @id @default(autoincrement())
-  email  String               @db.VarChar(500)
+  id         Int                  @id @default(autoincrement())
+  email      String               @db.VarChar(500)
   /// sha256 hex của mã OTP — DB không giữ plaintext (prod-readiness M1)
-  codeHash String             @db.VarChar(64)
-  type   VerificationCodeType
+  codeHash   String               @db.VarChar(64)
+  type       VerificationCodeType
   /// Số lượt nhập sai của chính mã này; chạm ngưỡng thì mã bị vô hiệu, phải xin mã mới
-  attempts   Int              @default(0)
+  attempts   Int                  @default(0)
   /// Mã đã dùng, hoặc đã bị mã mới thay thế. Giữ dòng để đếm lượt gửi trong cửa sổ 15 phút
   consumedAt DateTime?
   expiresAt  DateTime
-  createdAt  DateTime         @default(now())
+  createdAt  DateTime             @default(now())
 
   @@index([email, type, createdAt])
   @@index([expiresAt])
@@ -926,19 +946,19 @@ model Voucher {
 }
 
 model VoucherSnapshot {
-  id            Int         @id @default(autoincrement())
-  voucherId     Int
-  code          String
-  discountType  VoucherType
-  discountValue Decimal     @db.Decimal(14, 2)
+  id              Int         @id @default(autoincrement())
+  voucherId       Int
+  code            String
+  discountType    VoucherType
+  discountValue   Decimal     @db.Decimal(14, 2)
   /// Số tiền THỰC SỰ đã giảm cho đơn này (khác `discountValue`: PERCENT 10% của 100k = 10k).
   /// Không có cột này thì đối soát/audit chỉ biết "voucher 10%" mà không biết đã trừ bao nhiêu tiền.
-  appliedDiscount Decimal  @default(0) @db.Decimal(14, 2)
-  startAt       DateTime
-  endAt         DateTime
-  createdAt     DateTime    @default(now())
-  orders        Order[]
-  voucher       Voucher     @relation(fields: [voucherId], references: [id])
+  appliedDiscount Decimal     @default(0) @db.Decimal(14, 2)
+  startAt         DateTime
+  endAt           DateTime
+  createdAt       DateTime    @default(now())
+  orders          Order[]
+  voucher         Voucher     @relation(fields: [voucherId], references: [id])
 }
 
 /// *
@@ -950,24 +970,24 @@ model VoucherSnapshot {
 /// Tồn kho KHÔNG ghi đè mà CỘNG dồn (`stock = stock + quantity`), nên không thể "nhập 5 mà mất 10".
 /// `unitCost` của nguyên liệu được tính lại theo bình quân gia quyền để COGS sát thực tế.
 model StockReceipt {
-  id           Int      @id @default(autoincrement())
+  id           Int        @id @default(autoincrement())
   ingredientId Int
   ingredient   Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   /// số lượng nhập, theo đơn vị của nguyên liệu (Ingredient.unitId)
   quantity     Float
   /// giá nhập cho 1 đơn vị trong lần này
-  unitCost     Decimal  @default(0) @db.Decimal(14, 2)
+  unitCost     Decimal    @default(0) @db.Decimal(14, 2)
   /// nhà cung cấp (chuỗi tự do — chưa có danh mục NCC)
-  supplier     String?  @db.VarChar(255)
-  note         String?  @db.VarChar(500)
+  supplier     String?    @db.VarChar(255)
+  note         String?    @db.VarChar(500)
   /// ảnh bằng chứng (phiếu giao hàng, hàng thực tế) — URL từ /media
   images       String[]
   /// giá trị tồn SAU khi nhập, để đọc lại biết ngay đã cộng đúng
   stockAfter   Float
-  receivedAt   DateTime @default(now())
+  receivedAt   DateTime   @default(now())
   createdById  Int?
-  createdBy    User?    @relation("StockReceiptCreatedBy", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  createdAt    DateTime @default(now())
+  createdBy    User?      @relation("StockReceiptCreatedBy", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  createdAt    DateTime   @default(now())
 
   @@index([ingredientId, receivedAt])
 }
@@ -1085,7 +1105,6 @@ model TableNode {
   @@index([areaId])
 }
 
-
 /// Ca làm việc + két tiền mặt (ADR 0001 D7).
 /// Đối soát cuối ca là nguồn thứ hai để đối chiếu với sổ cái (CASH).
 enum CashShiftStatus {
@@ -1101,31 +1120,31 @@ enum CashMovementType {
 }
 
 model CashShift {
-  id           Int             @id @default(autoincrement())
-  branchId     Int
+  id            Int             @id @default(autoincrement())
+  branchId      Int
   /// Người mở ca
-  staffId      Int
-  status       CashShiftStatus @default(OPEN)
-  openedAt     DateTime        @default(now())
-  closedAt     DateTime?
+  staffId       Int
+  status        CashShiftStatus @default(OPEN)
+  openedAt      DateTime        @default(now())
+  closedAt      DateTime?
   /// Tiền lẻ/tiền mặt có sẵn trong két khi mở ca
-  openingFloat Decimal         @db.Decimal(14, 2)
+  openingFloat  Decimal         @db.Decimal(14, 2)
   /// Số tiền mặt thực đếm khi đóng ca
-  countedCash  Decimal?        @db.Decimal(14, 2)
+  countedCash   Decimal?        @db.Decimal(14, 2)
   /// openingFloat + Σ thu tiền mặt + Σ IN - Σ OUT (chốt tại thời điểm đóng)
-  expectedCash Decimal?        @db.Decimal(14, 2)
+  expectedCash  Decimal?        @db.Decimal(14, 2)
   /// countedCash - expectedCash (>0 thừa, <0 thiếu)
-  variance     Decimal?        @db.Decimal(14, 2)
+  variance      Decimal?        @db.Decimal(14, 2)
   /// Σ Payment CASH đã PAID trong ca (chốt tại thời điểm đóng)
-  cashIn       Decimal         @default(0) @db.Decimal(14, 2)
+  cashIn        Decimal         @default(0) @db.Decimal(14, 2)
   /// Σ CashMovement OUT trong ca
-  cashOut      Decimal         @default(0) @db.Decimal(14, 2)
-  note         String?         @db.VarChar(500)
-  closedById   Int?
+  cashOut       Decimal         @default(0) @db.Decimal(14, 2)
+  note          String?         @db.VarChar(500)
+  closedById    Int?
   /// Bút toán ghi lệch két (thiếu/thừa), null nếu khớp
   ledgerEntryId Int?
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
 
   branch    Branch         @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   staff     User           @relation("CashShiftStaff", fields: [staffId], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -1138,16 +1157,16 @@ model CashShift {
 }
 
 model CashMovement {
-  id          Int              @id @default(autoincrement())
-  shiftId     Int
-  type        CashMovementType
-  reason      String           @db.VarChar(255)
-  amount      Decimal          @db.Decimal(14, 2)
+  id           Int              @id @default(autoincrement())
+  shiftId      Int
+  type         CashMovementType
+  reason       String           @db.VarChar(255)
+  amount       Decimal          @db.Decimal(14, 2)
   /// Ảnh/video chứng từ (hoá đơn, biên nhận) — Cloudinary URL
-  evidenceUrls String[]        @default([])
-  branchId    Int
-  createdById Int?
-  createdAt   DateTime         @default(now())
+  evidenceUrls String[]         @default([])
+  branchId     Int
+  createdById  Int?
+  createdAt    DateTime         @default(now())
 
   shift     CashShift @relation(fields: [shiftId], references: [id], onDelete: Cascade)
   branch    Branch    @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -1345,18 +1364,18 @@ enum ReconciliationRefType {
 }
 
 model ReconciliationRun {
-  id         Int                   @id @default(autoincrement())
+  id         Int                     @id @default(autoincrement())
   /// kỳ theo ngày nghiệp vụ (giờ VN), lưu dạng DATE
-  periodFrom DateTime              @db.Date
-  periodTo   DateTime              @db.Date
+  periodFrom DateTime                @db.Date
+  periodTo   DateTime                @db.Date
   branchId   Int?
-  branch     Branch?               @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  branch     Branch?                 @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   status     ReconciliationRunStatus @default(RUNNING)
   /// đếm theo kind + tổng tiền (Json để thêm loại kiểm mới không phải migrate)
   summary    Json?
   /// lý do run FAILED (không im lặng)
-  error      String?               @db.VarChar(1000)
-  startedAt  DateTime              @default(now())
+  error      String?                 @db.VarChar(1000)
+  startedAt  DateTime                @default(now())
   finishedAt DateTime?
 
   items ReconciliationItem[]
@@ -1366,22 +1385,22 @@ model ReconciliationRun {
 }
 
 model ReconciliationItem {
-  id            Int                     @id @default(autoincrement())
-  runId         Int
-  run           ReconciliationRun        @relation(fields: [runId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  kind          ReconciliationKind
-  refType       ReconciliationRefType
+  id             Int                      @id @default(autoincrement())
+  runId          Int
+  run            ReconciliationRun        @relation(fields: [runId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  kind           ReconciliationKind
+  refType        ReconciliationRefType
   /// Payment.id (hoặc mã giao dịch VNPay) — khoá để tra ngược
-  refId         Int
-  paymentId     Int?
-  ledgerEntryId Int?
-  transactionId String?                 @db.VarChar(128)
-  amountExpected Decimal                @db.Decimal(14, 2)
-  amountActual   Decimal                @db.Decimal(14, 2)
-  amountDelta    Decimal                @default(0) @db.Decimal(14, 2)
-  status        ReconciliationItemStatus @default(OPEN)
-  detail        Json?
-  createdAt     DateTime                @default(now())
+  refId          Int
+  paymentId      Int?
+  ledgerEntryId  Int?
+  transactionId  String?                  @db.VarChar(128)
+  amountExpected Decimal                  @db.Decimal(14, 2)
+  amountActual   Decimal                  @db.Decimal(14, 2)
+  amountDelta    Decimal                  @default(0) @db.Decimal(14, 2)
+  status         ReconciliationItemStatus @default(OPEN)
+  detail         Json?
+  createdAt      DateTime                 @default(now())
 
   @@index([runId, kind])
   @@index([paymentId])
@@ -1405,6 +1424,8 @@ enum AuditAction {
   STOCK_RECEIVED
   /// đăng nhập sai quá ngưỡng => tài khoản bị khoá tạm (prod-readiness §0.2 #3)
   LOGIN_LOCKED
+  /// trừ điểm khách để giảm giá một hoá đơn (kèm số điểm và số tiền đã giảm)
+  POINTS_REDEEMED
 }
 
 enum AuditEntityType {

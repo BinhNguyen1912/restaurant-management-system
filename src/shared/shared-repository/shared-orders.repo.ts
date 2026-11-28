@@ -1206,6 +1206,12 @@ export class SharedOrdersRepo {
               reason: reason?.trim() || 'Huỷ đơn đã thanh toán',
             })
           }
+          // Trả lại điểm khách đã dùng cho đơn này: đơn huỷ mà điểm vẫn bị trừ thì khách mất hai
+          // lần (mất bữa, mất điểm). Không xoá dòng — đánh dấu void để còn đối soát về sau.
+          await tx.pointRedemption.updateMany({
+            where: { orderId, voidedAt: null },
+            data: { voidedAt: new Date() },
+          })
           stockRestore = await this.computeOrderIngredientUsage(tx, nextItems)
         }
 
