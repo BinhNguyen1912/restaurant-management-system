@@ -1534,6 +1534,8 @@ enum AuditAction {
   TWO_FACTOR_ENABLED
   /// tắt 2FA (phải nhập lại mật khẩu + một mã thứ hai) — tắt được 2FA là tắt luôn rào chắn
   TWO_FACTOR_DISABLED
+  /// xoá 2FA của một tài khoản bởi NGƯỜI VẬN HÀNH khi người dùng mất thiết bị (npm run security:2fa-reset)
+  TWO_FACTOR_RESET
 }
 
 enum AuditEntityType {

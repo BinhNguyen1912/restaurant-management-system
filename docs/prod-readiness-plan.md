@@ -90,7 +90,7 @@ nhau giữa hai repo sẽ làm nút thu tiền ở FE gọi sai.
 | # | Lỗi | Mức | Module xử lý |
 |---|---|---|---|
 | 1 | Không có hoá đơn (điện tử), không có MST/tên pháp nhân; VAT 1 mức cho toàn chi nhánh thay vì theo món | BLOCKER (pháp lý) — schema + tích hợp nhà cung cấp | M10 |
-| 2 | Media chứng từ lưu ra nước ngoài; **bắt buộc** bật 2FA cho ADMIN/KE_TOAN (cơ chế 2FA đã xong — M9 mục 5; còn màn hình ở FE và quyết định rollout); PII & consent (M9 mục 2/3 đã xong; refresh token — mục 23; khoá đăng nhập tạm — mục 30; OTP — mục 31; dọn nhật ký đã có cơ chế `logs:prune` — M9 mục 2, chờ con số §3 được ký để đặt lịch) | HIGH (pháp lý) | M1, M9 |
+| 2 | Media chứng từ lưu ra nước ngoài; **bắt buộc** bật 2FA cho ADMIN/KE_TOAN (rào chắn `enrolmentRequired` + hai lệnh vận hành đã xong — M9 mục 5; còn màn hình enrolment ở FE và **quyết định bật** `TWO_FACTOR_ENFORCEMENT`); PII & consent (M9 mục 2/3 đã xong; refresh token — mục 23; khoá đăng nhập tạm — mục 30; OTP — mục 31; dọn nhật ký đã có cơ chế `logs:prune` — M9 mục 2, chờ con số §3 được ký để đặt lịch) | HIGH (pháp lý) | M1, M9 |
 
 **Cọc reservation — đã làm (mục 24–27), mức cọc do BE chốt đã xong (mục 29).** Quyết định schema đã phác
 lúc lập kế hoạch (thêm bảng `OrderPayment`) **không dùng**: chỉ thêm `Payment.orderId` (nullable,
@@ -629,9 +629,11 @@ Test: `usageLimit = 1`, 10 request song song ⇒ 1 thành công, `usedCount = 1`
    đã đổi khi làm, lý do ở dưới.
 4. **Media chứng từ**: ảnh biên nhận/hóa đơn tiền mặt đang lên Cloudinary nước ngoài. Chuyển sang
    object storage trong nước (hoặc tách bucket + đánh giá chuyển dữ liệu ra nước ngoài).
-5. **2FA cho ADMIN/KE_TOAN** — **đã làm phần cơ chế, chưa bật bắt buộc** (xem ghi chú dưới):
-   TOTP verify, ba endpoint setup/enable/disable, đường khôi phục bằng OTP email. Việc còn lại của
-   mục này là *bắt buộc* mọi tài khoản ADMIN/KE_TOAN phải bật — chờ màn hình enrolment ở FE.
+5. **2FA cho ADMIN/KE_TOAN** — **đã làm cả cơ chế và phần bắt buộc** (xem ghi chú dưới): TOTP
+   verify, ba endpoint setup/enable/disable, đường khôi phục bằng OTP email, và rào chắn
+   `enrolmentRequired` trong access token (mặc định **TẮT**, bật bằng `TWO_FACTOR_ENFORCEMENT=on`),
+   kèm hai lệnh vận hành `security:2fa-status` (bật thì chặn ai) và `security:2fa-reset` (cứu người
+   mất thiết bị). Việc còn lại là **quyết định bật**, không phải code.
 6. **Nhập lại mật khẩu cho thao tác nhạy cảm (step-up)** — **đã làm** (xem ghi chú dưới):
    `POST /auth/reauth` cấp vé 5 phút, `@RequireStepUp()` gắn ở 7 route đổi quyền / đổi tài khoản.
 
@@ -720,9 +722,29 @@ xác "tôi có bị xem không" cho từng khách trong một trang 20 dòng th�
   `totpSecret`. Đọc lại được nghĩa là một phiên bị chiếm cũng lấy được bí mật, và 2FA chỉ còn chặn
   người không có phiên.
 
-**Mục 5 còn lại**: *bắt buộc* enrolment cho ADMIN/KE_TOAN. Bật hôm nay là chặn mọi tài khoản ADMIN
-của hệ thống đang chạy — chưa có màn hình enrolment ở FE thì người dùng không có cách nào bật 2FA
-trước khi bị chặn. Việc này phải đi cùng FE và một quyết định rollout, không phải một dòng code.
+**Bắt buộc 2FA cho ADMIN/KE_TOAN — đã làm cơ chế (mục 5).** Sáu quyết định, cái nào cũng có lý do
+ngược lại đáng kể:
+
+- **Chặn ở GUARD, không chặn ở cửa đăng nhập.** Tài khoản chưa bật 2FA mà không đăng nhập được thì
+  cũng không gọi được `/auth/2fa/setup` để bật — tự khoá mình ra ngoài, và đường còn lại duy nhất là
+  sửa DB bằng tay. Nên phiên vẫn mở, nhưng chỉ mở đúng ba cửa: `setup`, `enable`, `logout`.
+- **Cờ nằm trong access token, KHÔNG hỏi DB mỗi request**, và được **tính lại mỗi lần cấp token**
+  (login và refresh). Giá phải trả: phiên cũ mang cờ tới lần cấp token kế tiếp — nên FE gọi
+  `/auth/refresh-token` ngay sau khi bật xong, không phải đăng nhập lại giữa ca làm việc.
+- **Mặc định TẮT** (`TWO_FACTOR_ENFORCEMENT` không đặt = không ai bị chặn). Bật một rào chắn trên hệ
+  thống đang chạy là quyết định của người vận hành, không phải hệ quả của một lần deploy — và hôm nay
+  bật là chặn 4 tài khoản ADMIN/KE_TOAN đang có trong dữ liệu.
+- **403 chứ không 401**: đã biết bạn là ai, chỉ chưa đủ điều kiện đi tiếp. FE dùng đúng mã đó để hiện
+  màn hình enrolment thay vì màn hình đăng nhập.
+- **Danh sách vai trò theo TÊN** (`['ADMIN','KE_TOAN']`), không theo `roleId`: id đổi mỗi lần dựng lại
+  DB, và hệ thống cho tạo vai trò mới — vai trò mới tạo không tự thành diện bắt buộc.
+- **Có đường cứu, và nó để lại dấu.** `security:2fa-reset` (mặc định chỉ in ra, `--apply` mới làm) xoá
+  bí mật, **thu hồi mọi refresh token** của tài khoản, và ghi `AuditLog TWO_FACTOR_RESET` **trong cùng
+  transaction** với bước sửa user. `--actor` và `--reason` bắt buộc: dòng nhật ký thiếu một trong hai
+  thì không trả lời được câu hỏi duy nhất nó tồn tại để trả lời. Không có đường này thì "mất điện
+  thoại" = "mất tài khoản", và lời giải duy nhất còn lại là `UPDATE` tay vào DB — không dấu vết, đúng
+  thứ module này đang chống. Access token đã cấp vẫn sống tới khi hết hạn: hệ thống này không có cơ
+  chế thu hồi access token, và đó là giới hạn đã biết chứ không phải sơ suất.
 
 **Lỗi có sẵn phát hiện khi làm 2FA**: `createRefreshToken` không có `uuid` trong payload, nên hai lần
 đăng nhập của cùng một người trong cùng một GIÂY sinh ra chuỗi token y hệt nhau (payload chỉ có
@@ -804,6 +826,20 @@ mới có token; OTP qua email vẫn đăng nhập được khi mất điện th
 `TWO_FACTOR_DISABLED`; ba route 2FA không phải route công khai (401 khi không có token); hai lần đăng
 nhập trong cùng một giây đều 201 và ra hai refresh token khác nhau.
 
+Bắt buộc bật 2FA (`test/two-factor-enrolment.e2e-spec.ts`) ⇒ chưa đặt biến thì ADMIN chưa có 2FA vẫn
+dùng được hệ thống (mặc định không chặn ai); đặt `on` thì token mang `enrolmentRequired` và mọi route —
+kể cả route nhạy cảm — trả 403 `Error.TwoFactorEnrolmentRequired`, **chặn trước** bước nhập lại mật
+khẩu; `/auth/2fa/setup` và `/auth/logout` vẫn mở (đường tự mở, không phải tự khoá); bật 2FA xong một
+lần `/auth/refresh-token` là hết bị chặn, **không** phải đăng nhập lại; STAFF ngoài diện không đổi gì.
+`security:2fa-status` chạy thật trên dữ liệu hiện tại: **4 tài khoản ADMIN/KE_TOAN thuộc diện, 4 thiếu
+2FA** — bật `on` hôm nay là chặn 4 người, và con số đó chính là lý do biến này mặc định tắt.
+Đường phục hồi cũng có phép đo (cùng file): `--apply` thiếu thì bí mật và `twoFactorEnabled` **giữ
+nguyên**; thiếu `--reason` hoặc `--actor` thì **từ chối trước khi đụng DB**; áp dụng thật thì
+`totpSecret` null, `twoFactorEnabled` false, **0 refresh token còn sống**, một dòng `AuditLog`
+`TWO_FACTOR_RESET` có đủ `actorId` + `reason` + before/after, và tài khoản trở lại đúng trạng thái
+"đăng nhập được nhưng chỉ còn ba cửa". `security:2fa-reset` chạy thật ngoài đời (không `--apply`) in
+đúng tài khoản, trạng thái 2FA, người làm, lý do và danh sách việc sẽ làm — **không** sửa gì.
+
 Step-up (`test/step-up.e2e-spec.ts`) ⇒ tạo vai trò chỉ với access token là **401
 `Error.StepUpRequired`** (không phải 403) và **không** có vai trò nào được tạo; route thường vẫn 200;
 `/auth/reauth` sai mật khẩu là 422 và không cấp vé; đúng thì vé có hạn ≤ 5 phút; vé mở khoá được đúng
@@ -817,8 +853,9 @@ trần mỗi lần chạy xoá đúng `limit` dòng rồi để phần dư cho l
 lại khi đã sạch thì không xoá gì; `--months=0` **ném lỗi** và không xoá dòng nào; trigger chặn
 `UPDATE` vẫn còn sau khi dọn (dọn xong không làm lỏng append-only).
 
-**Chưa có phép đo** (vì code chưa có, đừng đọc như đã xong): *bắt buộc* bật 2FA cho ADMIN/KE_TOAN
-(mục 5 — cơ chế đã xong, xem trên); media chứng từ ra nước ngoài (mục 4). Dọn nhật ký thì **đã có
+**Chưa có phép đo** (vì code chưa có, đừng đọc như đã xong): media chứng từ ra nước ngoài (mục 4).
+Bắt buộc 2FA thì **đã có phép đo** (xem trên), nhưng chưa bật: nó đang chờ màn hình enrolment ở FE và
+một quyết định — bật là chặn 4 tài khoản ADMIN/KE_TOAN hiện có. Dọn nhật ký thì **đã có
 phép đo và đã đặt lịch** (xem trên), nhưng còn hai việc phải do người làm: một là **con số ở §3 phải
 được ký** (hiện `.env.production.example` để 12 tháng — con số chủ hệ thống chấp nhận, chưa phải kết
 luận của kế toán/luật sư), hai là **không ai nhận việc đọc log mỗi lượt cron** — log container bị

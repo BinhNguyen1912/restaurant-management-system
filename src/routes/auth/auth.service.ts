@@ -57,6 +57,7 @@ import { EmailService } from '@/shared/service/email.service'
 import { HashingService } from '@/shared/service/hashing.service'
 import { hashRefreshToken } from '@/shared/service/token-hash'
 import { TokenService } from '@/shared/service/token.service'
+import { needsTwoFactorEnrolment } from '@/shared/service/two-factor-enrolment-policy'
 import { SharedRefreshTokenRepo } from '@/shared/shared-repository/shared-refreshToken'
 import { SharedRoleRepo } from '@/shared/shared-repository/shared-role.repo'
 import { SharedUserRepo } from '@/shared/shared-repository/shared-user.repo'
@@ -150,6 +151,24 @@ export class AuthService {
 
     return { accessToken, refreshToken }
   }
+
+  /**
+   * Phiên này có phải bật 2FA trước khi dùng hệ thống? (§M9 mục 5)
+   *
+   * Đọc `TWO_FACTOR_ENFORCEMENT` tại thời điểm CẤP token, không phải lúc nạp module: người vận hành
+   * bật bắt buộc bằng cách sửa env rồi khởi động lại, và token đã cấp trước đó giữ nguyên hiệu lực
+   * tới khi hết hạn — bật một rào chắn không được đá mọi người ra giữa ca làm việc.
+   */
+  private isTwoFactorEnrolmentPending(input: {
+    roleName: string | null | undefined
+    twoFactorEnabled: boolean | null | undefined
+  }) {
+    return needsTwoFactorEnrolment({
+      ...input,
+      enforcement: envConfig.TWO_FACTOR_ENFORCEMENT === 'on' ? 'on' : 'off',
+    })
+  }
+
   async sendOTP(payload: { email: string; type: TypeOfVerificationType }) {
     const checkEmail = await this.sharedUserRepo.findUniqueUser({ email: payload.email })
     //Kiểm tra các điều kiện
@@ -341,6 +360,10 @@ export class AuthService {
       userId: user.id,
       roleId: user.roleId,
       roleName: user.role.name,
+      enrolmentRequired: this.isTwoFactorEnrolmentPending({
+        roleName: user.role.name,
+        twoFactorEnabled: user.twoFactorEnabled,
+      }),
     })
 
     // Ghi SAU khi đã cấp token: cấp token hỏng thì không phiên nào được mở, ghi SUCCESS lúc đó là
@@ -581,6 +604,12 @@ export class AuthService {
           roleId: claim.record.user.roleId,
           roleName: claim.record.user.role.name,
           userId: claim.record.userId,
+          // Tính lại từ DB mỗi lần xoay vòng, không bê nguyên claim cũ: đây chính là đường để một
+          // phiên vừa bật 2FA xong lấy được token đầy đủ mà không phải đăng nhập lại.
+          enrolmentRequired: this.isTwoFactorEnrolmentPending({
+            roleName: claim.record.user.role.name,
+            twoFactorEnabled: claim.record.user.twoFactorEnabled,
+          }),
         },
         claim.record.familyId,
       )

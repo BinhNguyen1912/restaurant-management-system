@@ -54,6 +54,7 @@ import { BullModule } from '@nestjs/bullmq'
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler'
 import { APP_GUARD } from '@nestjs/core'
 import { ThrottlerBehindProxyGuard } from '@/shared/guard/throttler-behind-proxy.guard'
+import { TwoFactorEnrolmentGuard } from '@/shared/guard/two-factor-enrolment.guard'
 import { AppGateway } from '@/webSockets/app.gateway'
 import { RemindersModule } from './routes/reminders/reminders.module'
 import { ReminderCronService } from '@/job/reminder-cron.service'
@@ -141,6 +142,15 @@ import { ReservationModule } from './routes/reservation/reservation.module';
     {
       provide: 'APP_GUARD',
       useClass: AuthenticationGuard,
+    },
+    /**
+     * Đứng ngay sau `AuthenticationGuard` (cần `request.user`) và TRƯỚC `StepUpGuard`: một phiên
+     * chưa bật 2FA thì chưa được đi tới bước "nhập lại mật khẩu" nào cả. Guard không làm gì với
+     * phiên bình thường (chỉ một lần đọc metadata).
+     */
+    {
+      provide: 'APP_GUARD',
+      useClass: TwoFactorEnrolmentGuard,
     },
     /**
      * Đăng ký SAU `AuthenticationGuard` vì nó đọc `request.user` đã gắn từ access token — vé

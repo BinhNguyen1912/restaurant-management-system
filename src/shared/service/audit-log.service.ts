@@ -41,6 +41,9 @@ export type AuditActionType =
   // việc tắt cũng phải để lại dấu như việc bật
   | 'TWO_FACTOR_ENABLED'
   | 'TWO_FACTOR_DISABLED'
+  // xoá 2FA của một tài khoản bởi người vận hành khi người dùng mất thiết bị. Không có đường
+  // này thì "mất điện thoại" = "mất tài khoản", và lời giải duy nhất còn lại là sửa DB bằng tay
+  | 'TWO_FACTOR_RESET'
 
 export type AuditEntityTypeValue =
   | 'ORDER'
