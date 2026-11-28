@@ -2,6 +2,7 @@ import { reservationStatus } from '@/shared/constants/reservation.constant'
 import { PaginationQuerySchema } from '@/shared/models/request.model'
 import { OrderItemSchema } from '@/shared/models/shared-order.model'
 import { ReservationSchema } from '@/shared/models/shared-reservation.model'
+import { isAllowedDepositPercent } from '@/shared/service/deposit-policy'
 import z from 'zod'
 
 export const reservationBodySchema = ReservationSchema.pick({
@@ -9,7 +10,6 @@ export const reservationBodySchema = ReservationSchema.pick({
   customerPhone: true,
   tableNodeId: true,
   guestCount: true,
-  depositAmount: true,
   depositPercent: true,
   reservationTime: true,
   note: true,
@@ -18,11 +18,13 @@ export const reservationBodySchema = ReservationSchema.pick({
     hasPreOrder: z.boolean(),
     preOrderItems: z.array(OrderItemSchema),
   })
-  .superRefine(({ depositAmount, hasPreOrder, depositPercent, preOrderItems }, cx) => {
-    if (hasPreOrder == false && depositAmount && depositPercent) {
+  // Tiền cọc server luôn tự tính từ depositPercent; client không gửi depositAmount, nên số tiền
+  // không thể đi vòng qua Payment.amount và bút toán quyết toán cọc.
+  .superRefine(({ hasPreOrder, depositPercent, preOrderItems }, cx) => {
+    if (hasPreOrder == false && depositPercent != null && depositPercent !== 0) {
       cx.addIssue({
         code: 'custom',
-        message: 'Trường depositAmount và depositPercent chỉ được phép nhập khi hasPreOrder = true',
+        message: 'Chỉ được phép nhập depositPercent khi hasPreOrder = true',
       })
     }
     if (hasPreOrder == true && (!preOrderItems || preOrderItems.length === 0)) {
@@ -31,10 +33,10 @@ export const reservationBodySchema = ReservationSchema.pick({
         message: 'Phải có ít nhất 1 món trong preOrderItems khi hasPreOrder = true',
       })
     }
-    if (hasPreOrder == true && depositPercent == 0 && depositAmount == 0) {
+    if (hasPreOrder == true && !isAllowedDepositPercent(depositPercent)) {
       cx.addIssue({
         code: 'custom',
-        message: 'Cần phải thanh toán cọc trước khi đặt chỗ',
+        message: 'Cần phải thanh toán cọc trước khi đặt chỗ: depositPercent phải là 30, 50, 70 hoặc 100%',
       })
     }
   })
