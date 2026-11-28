@@ -45,10 +45,12 @@ export class TableService {
     }
   }
 
-  async getListTable(userId?: number) {
+  async getListTable(userId?: number, roleName?: string) {
     try {
-      // READ: ADMIN thấy bàn của mọi chi nhánh (undefined = không lọc)
-      const branchId = await resolveBranchScope(this.prismaService, { userId })
+      // READ: ADMIN thấy bàn của mọi chi nhánh (undefined = không lọc).
+      // `roleName` lấy từ ROLE TRONG DB (`@ActiveRole`), không phải từ payload JWT: nếu thiếu,
+      // ADMIN không có branchId sẽ bị 403 `Error.BranchNotAssigned`.
+      const branchId = await resolveBranchScope(this.prismaService, { userId, roleName })
       const data = await this.tableRepo.getTableList(branchId)
       return {
         message: 'Success.GetTableList',

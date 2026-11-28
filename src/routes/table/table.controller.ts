@@ -7,6 +7,7 @@ import {
 } from '@/routes/table/table.dtos'
 import { TableService } from '@/routes/table/table.service'
 import { ActiveUser } from '@/shared/decorators/active-user.decorator'
+import { ActiveRole } from '@/shared/decorators/active-role.decorator'
 import { EmptyBodyDTO } from '@/shared/dtos/respone.dto'
 import { AccessTokenPayload } from '@/shared/types/jwt.types'
 import { Body, Controller, Delete, Get, Param, Post, Put, Query } from '@nestjs/common'
@@ -24,8 +25,8 @@ export class TableController {
 
   @Get()
   @ZodSerializerDto(TableListResDTO)
-  async getListTable(@ActiveUser('userId') userId: number) {
-    return await this.tableService.getListTable(userId)
+  async getListTable(@ActiveUser('userId') userId: number, @ActiveRole('name') roleName: string) {
+    return await this.tableService.getListTable(userId, roleName)
   }
 
   @Get('/getTableDetail/:number')

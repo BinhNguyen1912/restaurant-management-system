@@ -6,12 +6,14 @@ import {
   WebSocketServer,
   OnGatewayConnection,
   OnGatewayDisconnect,
+  WsException,
 } from '@nestjs/websockets'
 import { Server, Socket } from 'socket.io'
 import { WebSocketRepo } from '@/shared/shared-repository/shared-webSocket'
 import { PrismaService } from '@/shared/service/prisma.service'
 import { ReminderLogRepo } from '@/routes/reminders/remindersLog/remindersLog.repo'
 import { ManagerRoom, WS_EVENTS } from '@/shared/constants/others.constant'
+import { roleName } from '@/shared/constants/role.constant'
 import envConfig from '@/shared/config'
 
 @WebSocketGateway({ cors: true, namespace: '/' })
@@ -27,6 +29,18 @@ export class AppGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly webSocketRepo: WebSocketRepo,
     private readonly prismaService: PrismaService,
   ) {}
+
+  /**
+   * Chỉ nhân viên/quản trị của quán mới được vào các room nội bộ (đơn mới, thanh toán,
+   * cảnh báo tồn kho, tin nhắn khách). Danh tính lấy từ `socket.data` do adapter xác thực JWT
+   * gán vào, KHÔNG lấy từ payload client gửi.
+   */
+  private assertManager(client: Socket) {
+    const role = client.data?.roleName
+    if (role !== roleName.STAFF && role !== roleName.ADMIN) {
+      throw new WsException('Error.PermissionDenied')
+    }
+  }
 
   handleConnection(client: Socket) {
     if (!this.connectedSockets.includes(client.id)) {
@@ -131,8 +145,12 @@ export class AppGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   @SubscribeMessage('join-room')
   handleJoinRoom(@MessageBody() data: { roomId: string }, @ConnectedSocket() client: Socket) {
+    // Chỉ room nội bộ của quán; chặn room tuỳ ý do client tự đặt tên (trước đây join được mọi room).
+    this.assertManager(client)
+    if (data.roomId !== ManagerRoom && !data.roomId.startsWith('branch:')) {
+      throw new WsException('Error.RoomNotAllowed')
+    }
     client.join(data.roomId)
-    console.log(`User ${client.id} joined room ${data.roomId}`)
     client.emit('joined-room', data.roomId)
   }
 
@@ -163,12 +181,19 @@ export class AppGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   @SubscribeMessage('guest-send-message')
   async handleGuestMessage(
-    @MessageBody() data: { guestId: number; content: string; tableName?: string },
+    @MessageBody() data: { guestId?: number; content: string; tableName?: string },
     @ConnectedSocket() client: Socket,
   ) {
     try {
+      // Danh tính khách lấy từ JWT đã xác thực ở handshake, KHÔNG lấy `guestId` do client
+      // gửi: trước đây ai biết id khách khác là gửi tin nhắn/đơn hộ người đó.
+      const guestId: number | undefined = client.data?.roleName === roleName.GUEST ? client.data?.userId : undefined
+      if (!guestId) {
+        throw new WsException('Error.PermissionDenied')
+      }
+
       // Create unique key for this message to prevent duplicates
-      const messageKey = `${data.guestId}_${data.content}`
+      const messageKey = `${guestId}_${data.content}`
       const previousTimestamp = this.messageCache.get(messageKey)
 
       // Check if this message was sent recently (within cache TTL)
@@ -189,13 +214,13 @@ export class AppGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const message = await this.prismaService.message.create({
         data: {
           content: data.content,
-          fromGuestId: data.guestId,
+          fromGuestId: guestId,
         },
       })
 
       // Get guest info for payload
       const guest = await this.prismaService.guest.findUnique({
-        where: { id: data.guestId },
+        where: { id: guestId },
         include: { tableNode: true },
       })
 
@@ -209,7 +234,7 @@ export class AppGateway implements OnGatewayConnection, OnGatewayDisconnect {
         },
         guestName: guest?.name || 'Guest',
         tableName: data.tableName || guest?.tableNode?.name || 'Unknown Table',
-        guestId: data.guestId,
+        guestId: guestId,
         timestamp: new Date(),
       }
 
@@ -236,7 +261,7 @@ export class AppGateway implements OnGatewayConnection, OnGatewayDisconnect {
         success: true,
       })
 
-      console.log(`Guest ${data.guestId} sent message: ${data.content}`)
+      console.log(`Guest ${guestId} sent message: ${data.content}`)
     } catch (error) {
       console.error('Error handling guest message:', error)
       client.emit('message-error', {
@@ -247,8 +272,10 @@ export class AppGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   @SubscribeMessage('join-manager-room')
   handleJoinManagerRoom(@ConnectedSocket() client: Socket) {
+    // Trước đây handler này không kiểm tra gì: socket của KHÁCH chỉ cần emit 'join-manager-room'
+    // là nhận được NEW_ORDER / PAYMENT_SUCCESS / GUEST_MESSAGE_TO_ADMIN của toàn chuỗi.
+    this.assertManager(client)
     client.join(ManagerRoom)
-    console.log(`Client ${client.id} joined ManagerRoom`)
     client.emit('joined-room', ManagerRoom)
   }
 
