@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Query } from '@nestjs/common'
+import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common'
 import { ZodSerializerDto } from 'nestjs-zod'
 import { ActiveUser } from '@/shared/decorators/active-user.decorator'
 import { AccessTokenPayload } from '@/shared/types/jwt.types'
@@ -9,6 +9,9 @@ import {
   CustomerListResDTO,
   CustomerNoteBodyDTO,
   CustomerNoteResDTO,
+  CustomerPointsResDTO,
+  CustomerRedeemPointsBodyDTO,
+  CustomerRedeemPointsResDTO,
   CustomerReportQueryDTO,
   CustomerReportResDTO,
 } from '@/routes/customer/customer.dtos'
@@ -40,6 +43,27 @@ export class CustomerController {
   @ZodSerializerDto(CustomerDetailResDTO)
   async detail(@Param('id', ParseIntPipe) id: number, @ActiveUser() user: AccessTokenPayload) {
     return await this.customerService.detail(id, user)
+  }
+
+  /** Số dư điểm + lịch sử kiếm/đổi điểm của một khách. */
+  @Get(':id/points')
+  @ZodSerializerDto(CustomerPointsResDTO)
+  async points(@Param('id', ParseIntPipe) id: number) {
+    return await this.customerService.points(id)
+  }
+
+  /**
+   * Đổi điểm thành giảm giá trên hoá đơn chưa thu tiền của chính khách đó — quầy thu ngân làm
+   * thay khách, nên STAFF có quyền POST ở đây (xem `create-permissions.ts`).
+   */
+  @Post(':id/points/redeem')
+  @ZodSerializerDto(CustomerRedeemPointsResDTO)
+  async redeemPoints(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: CustomerRedeemPointsBodyDTO,
+    @ActiveUser() user: AccessTokenPayload,
+  ) {
+    return await this.customerService.redeemPoints(id, body, user)
   }
 
   @Patch(':id/note')

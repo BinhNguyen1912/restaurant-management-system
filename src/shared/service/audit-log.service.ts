@@ -29,6 +29,8 @@ export type AuditActionType =
   | 'STOCK_RECEIVED'
   // đăng nhập sai quá ngưỡng => tài khoản bị khoá tạm (prod-readiness §0.2 #3)
   | 'LOGIN_LOCKED'
+  // trừ điểm khách để giảm giá một hoá đơn (động vào tiền của khách nên phải giải trình được)
+  | 'POINTS_REDEEMED'
 
 export type AuditEntityTypeValue = 'ORDER' | 'PRODUCT' | 'SKU' | 'PAYMENT' | 'ROLE' | 'USER' | 'INGREDIENT'
 

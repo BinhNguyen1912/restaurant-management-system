@@ -5,6 +5,10 @@ import { OrderStatus } from '@/shared/constants/order.constant'
 import { roleName } from '@/shared/constants/role.constant'
 import { CustomerListQueryType } from '@/routes/customer/customer.model'
 import { buildCustomerUpsert, normalizeCustomerPhone } from '@/routes/customer/customer.identity'
+import { VND_PER_POINT } from '@/routes/customer/customer.point-policy'
+
+/** Client DB: chạy ngoài transaction hay trong transaction của caller đều dùng được. */
+type Db = Prisma.TransactionClient | PrismaService
 
 /**
  * Đọc/ghi hồ sơ khách. Khách là danh tính **toàn hệ thống** (một người tới chi nhánh nào cũng là
@@ -246,5 +250,115 @@ export class CustomerRepo {
 
   updateNote(id: number, note: string | null) {
     return this.prismaService.customer.update({ where: { id }, data: { note }, select: { id: true, note: true } })
+  }
+
+  /**
+   * Điểm TÍCH LUỸ của một lô khách, đọc thẳng từ đơn đã thu tiền.
+   *
+   * Phải làm tròn XUỐNG THEO TỪNG ĐƠN nên không thể `sum(grandTotal)` rồi chia một lần — và Prisma
+   * không có aggregate `FLOOR`, nên đây là chỗ duy nhất trong module phải viết SQL tay. `client`
+   * để dùng được cả trong transaction đã khoá hồ sơ khách (lúc đổi điểm).
+   */
+  async earnedPoints(customerIds: number[], client: Db = this.prismaService): Promise<Map<number, number>> {
+    if (customerIds.length === 0) return new Map()
+    const rows = await client.$queryRaw<{ customerId: number; points: number }[]>`
+      SELECT "customerId", SUM(FLOOR("grandTotal" / ${VND_PER_POINT}::numeric))::int AS points
+      FROM "Order"
+      WHERE "customerId" IN (${Prisma.join(customerIds)})
+        AND "status" = 'PAID'
+        AND "deletedAt" IS NULL
+      GROUP BY "customerId"`
+    return new Map(rows.map((row) => [Number(row.customerId), Number(row.points)]))
+  }
+
+  /** Điểm ĐÃ DÙNG của một lô khách — chỉ tính các dòng còn hiệu lực (đơn huỷ thì điểm về lại). */
+  async spentPoints(customerIds: number[], client: Db = this.prismaService): Promise<Map<number, number>> {
+    if (customerIds.length === 0) return new Map()
+    const rows = await client.pointRedemption.groupBy({
+      by: ['customerId'],
+      where: { customerId: { in: customerIds }, voidedAt: null },
+      _sum: { points: true },
+    })
+    return new Map(rows.map((row) => [row.customerId, row._sum.points ?? 0]))
+  }
+
+  /** Hai nửa của số dư điểm của MỘT khách. */
+  async pointBalance(customerId: number, client: Db = this.prismaService) {
+    const [earned, spent] = await Promise.all([
+      this.earnedPoints([customerId], client),
+      this.spentPoints([customerId], client),
+    ])
+    return { earned: earned.get(customerId) ?? 0, spent: spent.get(customerId) ?? 0 }
+  }
+
+  /**
+   * Khoá hồ sơ khách trong transaction hiện tại (`SELECT … FOR UPDATE`).
+   *
+   * Số dư điểm được TÍNH chứ không phải counter: hai request đổi điểm đồng thời cùng đọc "còn 30
+   * điểm" rồi cùng tạo dòng trừ → âm điểm. Khoá hồ sơ biến chúng thành tuần tự; không có counter
+   * nào để `UPDATE … WHERE points >= n` nên đây là chỗ duy nhất giữ được ràng buộc.
+   */
+  async lockCustomer(tx: Prisma.TransactionClient, customerId: number): Promise<boolean> {
+    const rows = await tx.$queryRaw<{ id: number }[]>`
+      SELECT "id" FROM "Customer" WHERE "id" = ${customerId} AND "deletedAt" IS NULL FOR UPDATE`
+    return rows.length > 0
+  }
+
+  /**
+   * Đơn của CHÍNH khách đó để trừ điểm. Trả về cả đơn đã thu tiền để service báo lỗi rõ ràng thay
+   * vì im lặng coi như không tìm thấy.
+   */
+  openOrderForPoints(tx: Prisma.TransactionClient, orderId: number, customerId: number, branchId?: number) {
+    return tx.order.findFirst({
+      where: { id: orderId, customerId, deletedAt: null, ...(branchId ? { branchId } : {}) },
+      select: {
+        id: true,
+        status: true,
+        branchId: true,
+        subtotal: true,
+        discountTotal: true,
+        grandTotal: true,
+        taxRate: true,
+        serviceChargeRate: true,
+        paymentId: true,
+        items: { select: { skuPrice: true, quantity: true } },
+        payment: { select: { status: true } },
+        // đơn đặt cọc: Payment đang giữ tiền CỌC, không phải tổng đơn — xem `redeemPoints`
+        reservation: { select: { depositAmount: true } },
+        branch: { select: { pricesIncludeTax: true } },
+      },
+    })
+  }
+
+  /** Đơn đã thu tiền — nguồn của phần "điểm kiếm được" trong lịch sử điểm. */
+  paidOrdersForPoints(customerId: number, take: number) {
+    return this.prismaService.order.findMany({
+      where: { customerId, status: OrderStatus.PAID, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+      take,
+      select: {
+        id: true,
+        grandTotal: true,
+        createdAt: true,
+        branch: { select: { name: true } },
+      },
+    })
+  }
+
+  /** Các lần đổi điểm — nguồn của phần "điểm đã dùng" trong lịch sử điểm. */
+  redemptions(customerId: number, take: number) {
+    return this.prismaService.pointRedemption.findMany({
+      where: { customerId },
+      orderBy: { createdAt: 'desc' },
+      take,
+      select: {
+        id: true,
+        points: true,
+        valueVnd: true,
+        orderId: true,
+        voidedAt: true,
+        createdAt: true,
+      },
+    })
   }
 }

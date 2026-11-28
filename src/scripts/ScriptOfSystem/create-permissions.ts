@@ -51,7 +51,8 @@ const StaffPolicy: RolePolicy = {
   VOUCHERS: [],
   // Hồ sơ khách hàng: nhân viên tra SĐT khi khách tới (chỉ ĐỌC, số liệu cắt theo chi nhánh của
   // mình); ghi chú chăm sóc khách và báo cáo khách mới/quay lại là của ADMIN (không khai báo).
-  CUSTOMERS: ['GET'],
+  // POST = đổi điểm thành giảm giá trên hoá đơn — quầy thu ngân làm thay khách, nên STAFF có.
+  CUSTOMERS: ['GET', 'POST'],
   // Cấu hình thuế/phí của chi nhánh: STAFF chỉ ĐỌC (để FE hiện dòng VAT khi tạo đơn)
   BRANCHES: ['GET'],
   // chi doc: noi dung menu + danh muc role

@@ -29,6 +29,25 @@ export const CustomerStatsSchema = z.object({
   lastVisitAt: z.date().nullable(),
 })
 
+/**
+ * Điểm thưởng của một khách. Cả ba con số đều SUY RA từ dữ liệu đã có (đơn PAID + các lần đổi),
+ * không có cột số dư nào để lệch — xem `customer.point-policy.ts`.
+ */
+export const CustomerPointsSchema = z.object({
+  /** Σ floor(grandTotal / `vndPerPoint`) của các đơn đã thu tiền */
+  earned: z.number(),
+  /** Σ điểm của các lần đổi còn hiệu lực */
+  spent: z.number(),
+  /** earned - spent, không âm */
+  balance: z.number(),
+  /** chi tiêu bao nhiêu đồng được 1 điểm (chính sách hiện hành) */
+  vndPerPoint: z.number(),
+  /** 1 điểm đổi được bao nhiêu đồng */
+  pointValueVnd: z.number(),
+  /** đổi tối thiểu bao nhiêu điểm */
+  minRedeemPoints: z.number(),
+})
+
 export const CustomerSchema = z.object({
   id: z.number(),
   phone: z.string(),
@@ -38,6 +57,7 @@ export const CustomerSchema = z.object({
   /** tài khoản khách đã đăng ký (nếu có) */
   userId: z.number().nullable(),
   stats: CustomerStatsSchema,
+  points: CustomerPointsSchema,
   createdAt: z.date(),
   updatedAt: z.date(),
 })
@@ -126,3 +146,57 @@ export const CustomerReportResSchema = z.object({
 
 export type CustomerListQueryType = z.infer<typeof CustomerListQuerySchema>
 export type CustomerReportQueryType = z.infer<typeof CustomerReportQuerySchema>
+
+/**
+ * Một dòng lịch sử điểm. Hai loại KHÁC hình dạng nên dùng union phân biệt theo `type` — client
+ * buộc phải xử lý đủ hai nhánh thay vì đọc một đống field optional.
+ */
+export const CustomerPointEntrySchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('EARNED'),
+    at: z.date(),
+    points: z.number(),
+    orderId: z.number(),
+    amount: moneyOutputSchema,
+    branchName: z.string(),
+  }),
+  z.object({
+    type: z.literal('REDEEMED'),
+    at: z.date(),
+    points: z.number(),
+    orderId: z.number().nullable(),
+    valueVnd: moneyOutputSchema,
+    /** đơn đã huỷ ⇒ điểm được trả lại (dòng vẫn giữ để đối soát) */
+    voided: z.boolean(),
+  }),
+])
+
+export const CustomerPointsResSchema = z.object({
+  message: z.string(),
+  data: CustomerPointsSchema.extend({
+    history: z.array(CustomerPointEntrySchema),
+  }),
+})
+
+export const CustomerRedeemPointsBodySchema = z.object({
+  points: z.coerce.number().int().positive(),
+  /** đơn của CHÍNH khách đó và CHƯA thu tiền — trừ điểm sau khi đã thu là sửa số liệu đã chốt */
+  orderId: z.coerce.number().int().positive(),
+  reason: z.string().trim().max(255).optional(),
+})
+
+export const CustomerRedeemPointsResSchema = z.object({
+  message: z.string(),
+  data: z.object({
+    redemptionId: z.number(),
+    points: z.number(),
+    valueVnd: moneyOutputSchema,
+    orderId: z.number(),
+    /** tổng tiền đơn SAU khi trừ điểm */
+    orderGrandTotal: moneyOutputSchema,
+    /** số dư điểm còn lại */
+    balance: z.number(),
+  }),
+})
+
+export type CustomerRedeemPointsType = z.infer<typeof CustomerRedeemPointsBodySchema>
