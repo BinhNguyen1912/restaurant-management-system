@@ -17,6 +17,8 @@ import { GuestLoginType } from '@/shared/models/shared-guest.model'
 import { AppGateway } from '@/webSockets/app.gateway'
 import { WS_EVENTS, ManagerRoom } from '@/shared/constants/others.constant'
 import { CreateNewOrderType } from '@/shared/models/shared-order.model'
+import { PrismaService } from '@/shared/service/prisma.service'
+import { resolveBranchScope } from '@/shared/service/branch.resolver'
 
 @Injectable()
 export class GuestService {
@@ -25,6 +27,7 @@ export class GuestService {
     private readonly sharedOrdersRepo: SharedOrdersRepo,
     private readonly sharedGuestRepo: SharedGuestRepo,
     private readonly appGateway: AppGateway,
+    private readonly prismaService: PrismaService,
   ) {}
   async login(data: GuestLoginType) {
     try {
@@ -41,16 +44,14 @@ export class GuestService {
     return 'Đăng xuất thành công'
   }
 
-  async GetNewAccessToken({ guestId, refreshToken }: { guestId: number; refreshToken: string }) {
+  async GetNewAccessToken({ refreshToken }: { refreshToken: string }) {
     try {
-      return await this.guestRepo.createTokenForGuest({
-        guestId,
-        refreshToken,
-      })
+      return await this.guestRepo.createTokenForGuest({ refreshToken })
     } catch (error) {
       if (error instanceof JsonWebTokenError) {
         throw new HttpException(error.message, HttpStatus.UNAUTHORIZED)
       }
+      throw error
     }
   }
 
@@ -104,12 +105,21 @@ export class GuestService {
     }
   }
 
-  async getGuestList(query: GuestListQueryType): Promise<GuestListType> {
-    try {
-      return await this.guestRepo.list(query)
-    } catch (error) {
-      throw error
-    }
+  /**
+   * Danh sách khách — LUÔN lọc theo chi nhánh của người gọi (ADMIN: mọi chi nhánh).
+   *
+   * Trước đây không lọc: STAFF chi nhánh A đọc được tên khách của toàn chuỗi, kèm `token` QR
+   * của bàn (đã bỏ khỏi response ở `guestListSchema`) — đủ để chiếm phiên khách bàn khác.
+   */
+  async getGuestList(
+    query: GuestListQueryType,
+    actor?: { userId?: number | null; roleName?: string | null },
+  ): Promise<GuestListType> {
+    const branchId = await resolveBranchScope(this.prismaService, {
+      userId: actor?.userId,
+      roleName: actor?.roleName,
+    })
+    return await this.guestRepo.list(query, branchId)
   }
 
   async callStaff({ guestId, data }: { guestId: number; data: CallStaffType }): Promise<any> {

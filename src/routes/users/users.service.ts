@@ -13,6 +13,7 @@ import { isForeignKeyPrisma, isNotFoundPrisma, isUniqueConstraintPrisma } from '
 import { CreateGuestType } from '@/shared/models/shared-guest.model'
 import { HashingService } from '@/shared/service/hashing.service'
 import { SharedGuestRepo } from '@/shared/shared-repository/shared-guest.repo'
+import { SharedRefreshTokenRepo } from '@/shared/shared-repository/shared-refreshToken'
 import { SharedRoleRepo } from '@/shared/shared-repository/shared-role.repo'
 import { SharedUserRepo } from '@/shared/shared-repository/shared-user.repo'
 import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common'
@@ -27,6 +28,7 @@ export class UsersService {
     private readonly hashingservice: HashingService,
     private readonly sharedGuestRepo: SharedGuestRepo,
     private readonly auditLog: AuditLogService,
+    private readonly sharedRefreshTokenRepo: SharedRefreshTokenRepo,
   ) {}
 
   /**
@@ -262,7 +264,11 @@ export class UsersService {
       userAgentId: id,
       userTagetId: deletedById as number,
     })
-    return await this.userRepository.deleteUser({ id, deletedById, isHard: true })
+    const deleted = await this.userRepository.deleteUser({ id, deletedById, isHard: true })
+    // Xoá user (nghỉ việc) phải cắt phiên ngay: refresh token còn sống thì họ vẫn đổi được
+    // access token mới. Revoke theo cùng cách với logout — đánh dấu revokedAt, không xoá dòng.
+    await this.sharedRefreshTokenRepo.revokeUserRefreshTokens(id)
+    return deleted
     // return {
     //   message: 'Delete successfully',
     // }

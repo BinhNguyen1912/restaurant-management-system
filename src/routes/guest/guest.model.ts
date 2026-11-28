@@ -103,7 +103,12 @@ export const guestListSchema = z.object({
   data: z.array(
     guestSchema
       .extend({
-        tableNode: tableNodeSchema.nullable(),
+        /**
+         * KHÔNG trả `token` của bàn trong danh sách khách: token QR là thứ dùng để đăng nhập
+         * thành khách của bàn đó (`POST /guest/login`). Ai đọc được token là chiếm được phiên
+         * khách ở bàn ấy. Endpoint này chỉ để nhân viên xem danh sách, không cần token.
+         */
+        tableNode: tableNodeSchema.omit({ token: true }).nullable(),
       })
       .omit({
         refreshToken: true,

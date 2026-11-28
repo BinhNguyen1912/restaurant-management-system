@@ -25,6 +25,7 @@ import {
 } from '@/routes/guest/guest.dtos'
 import { IsPublic } from '@/shared/decorators/auth.decorator'
 import { EmptyBodyDTO } from '@/shared/dtos/respone.dto'
+import { AccessTokenPayload } from '@/shared/types/jwt.types'
 
 @Controller('guest')
 export class GuestController {
@@ -43,10 +44,14 @@ export class GuestController {
     return await this.guestService.logout({ guestId })
   }
 
+  /**
+   * Đổi refresh token lấy access token mới. Public vì đây chính là endpoint dùng khi access
+   * token ĐÃ hết hạn; chỉ dựa vào refresh token (đối chiếu DB trong repo), không dựa vào AT.
+   */
   @Post('refreshToken')
-  async refreshToken(@Body() body: GuestParamsRefeshTokenDTO, @ActiveUser('userId') guestId: number) {
+  @IsPublic()
+  async refreshToken(@Body() body: GuestParamsRefeshTokenDTO) {
     return await this.guestService.GetNewAccessToken({
-      guestId,
       refreshToken: body.refreshToken,
     })
   }
@@ -83,8 +88,8 @@ export class GuestController {
 
   @Get('listGuests')
   @ZodSerializerDto(GuestListDTO)
-  async getGuestList(@Query() query: GuestListQueryDTO) {
-    const result = await this.guestService.getGuestList(query)
+  async getGuestList(@Query() query: GuestListQueryDTO, @ActiveUser() user: AccessTokenPayload) {
+    const result = await this.guestService.getGuestList(query, user)
     return result
   }
 

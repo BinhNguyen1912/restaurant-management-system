@@ -2,7 +2,7 @@ import { CACHE_KEYS } from '@/cache/cache.constant'
 import { CacheService } from '@/cache/services/cache.service'
 import { GetRoleWithPermissionResType } from '@/routes/role/role.model'
 import { REQUEST_USER_KEY } from '@/shared/constants/auth.constant'
-import { REQUEST_ROLE_KEY } from '@/shared/constants/role.constant'
+import { REQUEST_ROLE_KEY, roleName } from '@/shared/constants/role.constant'
 import { PrismaService } from '@/shared/service/prisma.service'
 import { TokenService } from '@/shared/service/token.service'
 import { AccessTokenPayload } from '@/shared/types/jwt.types'
@@ -41,6 +41,18 @@ export class AccessTokenGuard implements CanActivate {
     const method = request.method === 'HEAD' ? 'GET' : request.method
 
     const decodeAT = await this.extractAndValidationTokenFromHeader(request)
+
+    /**
+     * Nhân viên đã bị xoá hoặc bị KHOÁ phải mất quyền ngay, không chờ access token hết hạn
+     * (prod là 1h, cấu hình sai có thể là 1 ngày). Trước đây guard chỉ tra Role theo `roleId`
+     * trong token nên nhân viên đã nghỉ vẫn dùng được hệ thống tới khi token hết hạn.
+     *
+     * GUEST dùng bảng `Guest` (id trùng số với `User`) nên bỏ qua nhánh này.
+     */
+    if (decodeAT.roleName !== roleName.GUEST && !(await this.isStaffAccountAlive(decodeAT.userId))) {
+      throw new HttpException('Error.AccountDisabled', HttpStatus.UNAUTHORIZED)
+    }
+
     const { roleId } = decodeAT
     const cacheRoleKey = CACHE_KEYS.ROLE(roleId)
     let cacheRole = await this.cacheService.get<CacheRole>(cacheRoleKey)
@@ -81,8 +93,25 @@ export class AccessTokenGuard implements CanActivate {
     return true
   }
 
-  extractTokenFromHeader(request: any): string {
-    const accessToken = request.headers.authorization?.split(' ')[1]
+  /**
+   * Tài khoản còn sống? Cache 30 giây để không thêm 1 query DB cho mỗi request.
+   * `INACTIVE` vẫn cho qua (dữ liệu cũ có thể chưa set ACTIVE); chỉ chặn đã xoá và BLOCKED.
+   */
+  private async isStaffAccountAlive(userId: number): Promise<boolean> {
+    const key = `user:alive:${userId}`
+    const cached = await this.cacheService.get<boolean>(key)
+    if (cached !== null && cached !== undefined) return cached
+
+    const user = await this.prismaService.user.findFirst({
+      where: { id: userId, deletedAt: null, status: { not: 'BLOCKED' } },
+      select: { id: true },
+    })
+    const alive = Boolean(user)
+    await this.cacheService.set(key, alive, 30_000)
+    return alive
+  }
+
+  extractTokenFromHeader(request: any): string {    const accessToken = request.headers.authorization?.split(' ')[1]
     if (!accessToken) {
       throw new HttpException('Error.MissingAccessToken', HttpStatus.UNAUTHORIZED)
     }

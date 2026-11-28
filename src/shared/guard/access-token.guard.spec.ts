@@ -1,4 +1,4 @@
-import { ForbiddenException } from '@nestjs/common'
+import { ForbiddenException, HttpException } from '@nestjs/common'
 import { AccessTokenGuard } from './access-token.guard'
 
 /**
@@ -22,12 +22,12 @@ describe('AccessTokenGuard', () => {
       switchToHttp: () => ({ getRequest: () => request }),
     }) as any
 
-  const makeGuard = (opts: { role?: any; cached?: any }) => {
+  const makeGuard = (opts: { role?: any; cached?: any; roleName?: string; userAlive?: boolean }) => {
     const tokenService = {
       VerifyAccessToken: jest.fn().mockResolvedValue({
         userId: 1,
         roleId: 4,
-        roleName: 'GUEST',
+        roleName: opts.roleName ?? 'GUEST',
         iat: 0,
         exp: 0,
       }),
@@ -38,9 +38,15 @@ describe('AccessTokenGuard', () => {
           ? jest.fn().mockResolvedValue(opts.role)
           : jest.fn().mockRejectedValue(new Error('not found')),
       },
+      user: {
+        findFirst: jest.fn().mockResolvedValue(opts.userAlive === false ? null : { id: 1 }),
+      },
     }
     const cacheService = {
-      get: jest.fn().mockResolvedValue(opts.cached ?? null),
+      // Cache role và cache "tài khoản còn sống" dùng chung service: chỉ trả `cached` cho role.
+      get: jest
+        .fn()
+        .mockImplementation((key: string) => Promise.resolve(key.startsWith('user:alive:') ? null : (opts.cached ?? null))),
       set: jest.fn().mockResolvedValue(undefined),
     }
     return new AccessTokenGuard(tokenService as any, prismaService as any, cacheService as any)
@@ -91,5 +97,23 @@ describe('AccessTokenGuard', () => {
   it('HEAD dung chung quyen GET', async () => {
     const guard = makeGuard({ role: { id: 4, name: 'GUEST', permissions: [{ method: 'GET', path: '/users' }] } })
     await expect(guard.canActivate(makeContext(makeRequest('HEAD', '/users')))).resolves.toBe(true)
+  })
+
+  /**
+   * Regression (audit trước prod): token của nhân viên đã bị xoá/khoá vẫn dùng được tới khi hết
+   * hạn, vì guard chỉ tra Role theo `roleId` trong token. Nhân viên nghỉ việc vẫn đọc được sổ cái.
+   */
+  it('chan 401 khi tai khoan STAFF da bi xoa hoac khoa', async () => {
+    const cached = { id: 2, name: 'STAFF', permissions: { 'GET:/orders': { method: 'GET', path: '/orders' } } }
+    const guard = makeGuard({ cached, roleName: 'STAFF', userAlive: false })
+
+    await expect(guard.canActivate(makeContext(makeRequest('GET', '/orders')))).rejects.toBeInstanceOf(HttpException)
+  })
+
+  it('cho phep khi tai khoan STAFF con song', async () => {
+    const cached = { id: 2, name: 'STAFF', permissions: { 'GET:/orders': { method: 'GET', path: '/orders' } } }
+    const guard = makeGuard({ cached, roleName: 'STAFF', userAlive: true })
+
+    await expect(guard.canActivate(makeContext(makeRequest('GET', '/orders')))).resolves.toBe(true)
   })
 })
