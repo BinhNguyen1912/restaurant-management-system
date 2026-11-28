@@ -696,17 +696,19 @@ model Reservation {
 /// lại hay chi bao nhiêu. Một dòng = một người, nhận diện bằng SĐT đã chuẩn hoá
 /// (`src/routes/customer/customer.identity.ts`), nên mọi thứ đọc từ đơn/đặt bàn đều quy về đây.
 model Customer {
-  id        Int       @id @default(autoincrement())
+  id           Int       @id @default(autoincrement())
   /// SĐT chuẩn hoá dạng 0xxxxxxxxx (chỉ chữ số) — khoá nhận diện duy nhất của khách
-  phone     String    @unique @db.VarChar(20)
-  name      String    @db.VarChar(255)
-  email     String?   @db.VarChar(255)
+  phone        String    @unique @db.VarChar(20)
+  name         String    @db.VarChar(255)
+  email        String?   @db.VarChar(255)
   /// Tài khoản khách đã đăng ký (nếu có) — hồ sơ này là cùng một người với tài khoản đó
-  userId    Int?      @unique
-  note      String?
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  deletedAt DateTime?
+  userId       Int?      @unique
+  note         String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+  /// đã ẩn danh hoá PII lúc nào (null = còn dữ liệu thật). Xem customer.anonymize.ts
+  anonymizedAt DateTime?
 
   user         User?             @relation(fields: [userId], references: [id])
   orders       Order[]
@@ -1470,6 +1472,8 @@ enum AuditAction {
   POINTS_REDEEMED
   /// ghi nhận/rút đồng ý xử lý dữ liệu cá nhân của khách (NĐ 13/2023)
   CONSENT_RECORDED
+  /// ẩn danh hoá hồ sơ khách đã hết thời hạn lưu (NĐ 13/2023) — before/after KHÔNG chứa PII
+  CUSTOMER_ANONYMIZED
 }
 
 enum AuditEntityType {

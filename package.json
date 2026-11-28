@@ -28,6 +28,7 @@
     "seed:catalog": "npx ts-node -r tsconfig-paths/register src/scripts/ScriptOfSystem/catalog.seed.ts",
     "seed:landing-products": "ts-node -r tsconfig-paths/register src/scripts/ScriptOfSystem/seed-landing-products.ts",
     "tables:close-stale": "ts-node -r tsconfig-paths/register src/scripts/ScriptOfSystem/close-stale-tables.ts",
+    "pii:anonymize": "ts-node -r tsconfig-paths/register src/scripts/ScriptOfSystem/anonymize-customers.ts",
     "seed:demo:clear": "ts-node -r tsconfig-paths/register src/scripts/ScriptOfSystem/clear-demo-seed.ts",
     "seed:demo": "npx ts-node -r tsconfig-paths/register src/scripts/ScriptOfSystem/demo-data.seed.ts",
     "db:dump": "npx ts-node -r tsconfig-paths/register src/scripts/ScriptOfSystem/dump-data.ts",

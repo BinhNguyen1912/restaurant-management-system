@@ -57,19 +57,49 @@ Cách code thực thi (`src/routes/customer/customer.consent-policy.ts`):
 Cách xử lý đang dùng: hoá đơn giữ số tiền, còn *danh tính* khách trong hoá đơn chỉ còn `customerId`
 trỏ tới hồ sơ đã ẩn danh ⇒ mất liên hệ với con người nhưng vẫn đối soát được sổ.
 
-## 4. Ẩn danh hoá — quy trình, và phần CHƯA làm
+## 4. Ẩn danh hoá — đã có code, cách chạy
 
-Khi hết thời hạn, hồ sơ khách phải thành:
+`src/routes/customer/customer.anonymize.ts` (việc xoá PII) + `customer.anonymize-policy.ts` (luật
+thuần, có unit test) + script `npm run pii:anonymize`.
+
+Hai chế độ:
+
+| Chế độ | Lệnh | Dùng khi |
+|---|---|---|
+| Quét theo thời hạn lưu | `npm run pii:anonymize -- --months=24` (thêm `--apply` để ghi) | định kỳ, mỗi quý |
+| Một khách yêu cầu xoá | `npm run pii:anonymize -- --customer=37 --apply` | khách gọi tới đòi xoá dữ liệu |
+
+**Mặc định là chạy thử**: không có `--apply` thì chỉ in ra sẽ làm gì. `--months` là tham số bắt
+buộc, không có giá trị mặc định — con số ở §3 phải do người chạy nêu rõ, không do code chọn hộ.
+
+Khi hồ sơ hết hạn, dữ liệu thành:
 
 - `Customer.phone` → `anonymized:<id>` (không còn là SĐT, vẫn duy nhất nên không vỡ ràng buộc),
-- `Customer.name` → `"Khách"`, `email` → `NULL`, `note` → `NULL`,
-- `Reservation.customerName` / `customerPhone` của các lượt cũ → cùng cách,
-- **giữ nguyên**: `Order.grandTotal`, `Payment`, `LedgerEntry`, `PointRedemption` (số tiền, ngày),
-- **giữ nguyên** `ConsentLog` cho tới khi xoá hồ sơ (bằng chứng đã có cơ sở xử lý trước đó).
+- `Customer.name` → `"Khách đã ẩn danh"` (⚠ khác bản nháp cũ là `"Khách"`: một cái tên trông như tên
+  thật thì lễ tân sẽ gọi khách bằng nó, còn chuỗi này tự nói nó là gì), `email` → `NULL`, `note` → `NULL`,
+- `Reservation.customerName` / `customerPhone` / `note` của các lượt cũ → cùng cách,
+- `Customer.anonymizedAt` = thời điểm ẩn danh (**dấu duy nhất** để chạy lại không làm gì),
+- **giữ nguyên**: `Order.grandTotal`, `Payment`, `LedgerEntry`, `PointRedemption` (số tiền, ngày) và
+  `Order.customerId` — hoá đơn là chứng từ kế toán, không được đứt,
+- **giữ nguyên** `ConsentLog` cho tới khi xoá hồ sơ (bằng chứng đã có cơ sở xử lý trước đó),
+- **giữ nguyên** `Customer.userId`: tài khoản đăng ký là luồng xoá riêng (§M9.1), xoá ở đây sẽ làm
+  hỏng đăng nhập của một người khác.
 
-> ⚠ **Chưa có code nào chạy việc này.** Chưa có script `anonymize`, chưa có job định kỳ. Viết script
-> trước khi chạy thật, và **không đặt thời hạn mặc định trong code**: script phải nhận tham số thời
-> hạn để người chạy nêu rõ con số đã được ký, tránh việc code tự quyết định thay pháp lý.
+Ba chốt an toàn trong code:
+
+1. **Fail closed**: `--months` ≤ 0 hoặc không phải số ⇒ không ẩn danh gì (cấu hình sai không được
+   biến thành lệnh xoá dữ liệu).
+2. **Khách còn đơn chưa thu tiền ⇒ giữ nguyên** (`openOrders > 0`), kể cả khi đã quá hạn: ẩn danh
+   người đang ăn là phá việc phục vụ.
+3. **Nhật ký ẩn danh không chứa PII**: `AuditLog` là append-only, nên `before`/`after` chỉ ghi
+   `anonymizedAt` và số lượt đặt bàn. Chép SĐT cũ vào nhật ký là tự vô hiệu việc ẩn danh.
+
+Điều kiện "lần hoạt động cuối": muộn nhất trong *tạo hồ sơ, đơn hàng, lượt đặt bàn (cả giờ hẹn — khách
+đặt trước 13 tháng cho hôm nay thì hôm nay vẫn phải phục vụ), lần ghi nhận đồng ý*. **Không** tính
+`Customer.updatedAt`: đó là lúc nhân viên sửa ghi chú, không phải khách hoạt động.
+
+Chạy tự động: hiện là lệnh tay. Nếu đưa vào cron thì phải (a) chạy `--apply` với `--months` đã ký,
+(b) ghi log của cron, (c) không chạy chung với giờ cao điểm. Chưa cấu hình cron trong repo này.
 
 ## 5. Kiểm soát truy cập
 
@@ -87,10 +117,12 @@ ghi chú về rỗng, nhưng **không có audit cho lần sửa ghi chú** (⚠ 
 
 ## 6. Việc còn thiếu trước khi coi là xong (§M9)
 
-1. Chính sách này được kế toán + luật sư sửa và **ký**; các ⚠ ở trên được trả lời.
-2. Script ẩn danh hoá + cách chạy (tay hay cron) + test trên dữ liệu thật.
+1. Chính sách này được kế toán + luật sư sửa và **ký**; các ⚠ ở trên được trả lời. Ký xong mới được
+   chạy `--apply` với con số thật.
+2. ~~Script ẩn danh hoá~~ — **đã có** (§4), đã chạy thật trên DB dev và có e2e
+   (`test/customer-anonymize.e2e-spec.ts`). Còn lại: chọn lịch chạy (cron) sau khi có con số đã ký.
 3. `AccessLog` cho route nhạy cảm (đọc dữ liệu khách cũng là xử lý dữ liệu) — §M9 mục 2.
 4. 2FA cho ADMIN/KE_TOAN — §M9 mục 5.
 5. Media chứng từ (ảnh biên nhận) đang ở Cloudinary nước ngoài — §M9 mục 4, cần đánh giá chuyển dữ
    liệu ra nước ngoài (NĐ 53/2022).
-6. Audit cho việc sửa `Customer.note`.
+6. Audit cho việc sửa `Customer.note` (hiện chỉ `PATCH /customers/:id/note` mà không ghi nhật ký).

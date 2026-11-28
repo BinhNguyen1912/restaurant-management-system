@@ -620,16 +620,33 @@ Test: `usageLimit = 1`, 10 request song song ⇒ 1 thành công, `usedCount = 1`
 2. **Audit log truy cập**: bảng `AccessLog{at, actorType, actorId, ip, userAgent, method, path,
    statusCode, entityType, entityId}` qua interceptor cho route nhạy cảm (auth, reservation, orders,
    reports, users, ledger). Ghi `LOGIN_SUCCESS/LOGIN_FAILED`.
-3. **PII**: `ConsentLog{subjectType, subjectId, purpose, version, grantedAt, revokedAt, ip}`; gắn
-   `consentId` khi thu SĐT khách đặt bàn; job `anonymizeExpiredReservations` (sau N tháng: mask SĐT,
-   tên → "Khách"), **trừ** dữ liệu phải giữ trên hoá đơn/sổ kế toán.
+3. **PII** — **đã làm (xem ghi chú dưới)**: `ConsentLog` append-only + ẩn danh hoá hồ sơ. Bản phác
+   trong kế hoạch (`subjectType/subjectId`, `grantedAt/revokedAt`, job `anonymizeExpiredReservations`)
+   đã đổi khi làm, lý do ở dưới.
 4. **Media chứng từ**: ảnh biên nhận/hóa đơn tiền mặt đang lên Cloudinary nước ngoài. Chuyển sang
    object storage trong nước (hoặc tách bucket + đánh giá chuyển dữ liệu ra nước ngoài).
 5. **2FA cho ADMIN/KE_TOAN**: bắt buộc khi đã bật; `otplib` verify; endpoint setup/enable/disable.
 
+**Đồng ý & ẩn danh hoá — đã làm (mục 3).** Ba chỗ khác bản phác, đều vì lý do cụ thể:
+
+- *Đồng ý theo từng mục đích, append-only* (`ConsentLog{customerId, purpose, version, granted, ip,
+  note, createdById}`, trigger DB chặn `UPDATE`): "đang đồng ý" = **dòng mới nhất**, không có cột
+  `revokedAt` để sửa. Sửa được một dòng đồng ý nghĩa là viết lại được lịch sử, mà thứ duy nhất có giá
+  trị pháp lý ở đây là lịch sử. `subjectType/subjectId` bị bỏ: hôm nay chỉ `Customer` giữ PII (khách
+  quét QR không để lại SĐT), thêm kiểu chủ thể đa hình lúc này là đoán trước.
+- *`DELETE` vẫn cho phép* trên `ConsentLog` (chỉ chặn `UPDATE`): nó chỉ xảy ra qua CASCADE khi xoá hồ
+  sơ khách — đúng quyền xoá dữ liệu. Cái phải chặn là viết lại lịch sử, không phải xoá theo yêu cầu.
+- *Ẩn danh hoá hồ sơ khách chứ không chỉ `Reservation`*: job `anonymizeExpiredReservations` trong bản
+  phác để lại chính hồ sơ khách (SĐT, tên, email, ghi chú) — tức là PII nhiều nhất lại không bị đụng.
+  Nay `npm run pii:anonymize -- --months=N [--apply]` quét theo *lần hoạt động cuối*, giữ chứng từ kế
+  toán, và có thêm `--customer=ID` cho yêu cầu xoá của từng khách. `--months` không có mặc định.
+
+Chi tiết và các ⚠ cần kế toán/luật sư: `docs/pii-retention-policy.md`.
+
 **Đo lường**: test login sai 3 lần ⇒ 3 dòng `LOGIN_FAILED` có IP; test `GET /reservation/list` ⇒ có
-`AccessLog`; test job anonymize; kiểm `SELECT count(*) FROM "Guest" WHERE phone ~ '^\d{10}$'` giảm
-theo chính sách.
+`AccessLog`; test ẩn danh (`test/customer-anonymize.e2e-spec.ts`) ⇒ hồ sơ hết hạn mất SĐT/tên/email/
+ghi chú + lượt đặt bàn cũng mất, khách **còn đơn chưa thu tiền thì không bị đụng**, chạy lại không làm
+gì, và `AuditLog` của lần ẩn danh **không chứa** PII cũ.
 
 **Pháp lý**: NĐ 13/2023/NĐ-CP (đồng ý, quyền xoá, hồ sơ đánh giá tác động, log truy cập), NĐ
 53/2022/NĐ-CP (lưu log, dữ liệu tại VN — **cần luật sư xác định phạm vi**), Luật Kế toán (giữ chứng
