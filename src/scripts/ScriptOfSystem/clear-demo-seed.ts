@@ -58,6 +58,9 @@ async function main() {
   }
 
   await prisma.$transaction(async (tx) => {
+    // Sổ cái là append-only ở tầng DB (trigger chặn UPDATE/DELETE). Script dọn dữ liệu DEMO cần
+    // xoá bút toán seed, nên mở cờ trong ĐÚNG transaction này; production không bao giờ đặt cờ.
+    await tx.$executeRawUnsafe(`SET LOCAL app.allow_ledger_delete = 'on'`)
     // thứ tự xoá theo khoá ngoại: con trước, cha sau
     if (orderIds.length) {
       await tx.productSKUSnapshot.deleteMany({ where: { orderId: { in: orderIds } } })

@@ -7,7 +7,7 @@
   "license": "UNLICENSED",
   "scripts": {
     "deploy:prepare": "npx prisma migrate deploy && npx prisma generate && npm run seed:ledger-accounts && npm run init-seed-data && npm run create-permissions",
-    "deploy:prepare:prod": "prisma migrate deploy && node dist/scripts/ScriptOfSystem/ledger-accounts.seed.js && node dist/scripts/ScriptOfSystem/index.js && node dist/scripts/ScriptOfSystem/create-permissions.js",
+    "deploy:prepare:prod": "prisma migrate deploy && node dist/scripts/ScriptOfSystem/ledger-accounts.seed.js && node dist/scripts/ScriptOfSystem/index.js",
     "init-seed-data": "npx ts-node src/scripts/ScriptOfSystem/index.ts",
     "create-permissions": "npx ts-node src/scripts/ScriptOfSystem/create-permissions.ts",
     "unit-seed": "npx ts-node src/scripts/ScriptOfSystem/unit.seed.ts",
@@ -111,20 +111,24 @@
     "moduleFileExtensions": [
       "js",
       "json",
-      "ts"
+      "ts",
+      "tsx"
     ],
     "rootDir": "src",
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
-      "^.+\\.(t|j)s$": "ts-jest"
+      "^.+\\.(t|j)sx?$": "ts-jest"
     },
     "collectCoverageFrom": [
-      "**/*.(t|j)s"
+      "**/*.(t|j)sx?"
     ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node",
     "moduleNameMapper": {
       "^@/(.*)$": "<rootDir>/$1"
     }
+  },
+  "overrides": {
+    "proxy-addr": "^2.0.8"
   }
 }

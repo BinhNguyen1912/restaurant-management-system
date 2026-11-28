@@ -97,7 +97,10 @@ import { ReservationModule } from './routes/reservation/reservation.module';
       throttlers: [
         {
           ttl: 60000, //1p
-          limit: 40,
+          // e2e bắn vài trăm request từ cùng một IP trong 1 phút nên ngưỡng 40 tự sinh 429 giữa
+          // suite (đã xảy ra với GET /reports/revenue, làm cổng e2e đỏ ngẫu nhiên). Chỉ nới trong
+          // test, giữ nguyên guard để test vẫn thấy nó được wire.
+          limit: process.env.NODE_ENV === 'test' ? 10_000 : 40,
         },
       ],
     }),
