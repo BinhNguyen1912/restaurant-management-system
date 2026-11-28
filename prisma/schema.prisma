@@ -49,6 +49,8 @@ enum LedgerRefType {
   ORDER_COGS
   /// Thu/chi tiền mặt tay trong ca (Nợ CASH / Có OTHER_INCOME, hoặc Nợ OTHER_EXPENSE / Có CASH)
   CASH_MOVEMENT
+  /// Mở ca: tiền lẻ đầu ca vào két (Nợ CASH / Có CASH_FLOAT_SOURCE)
+  SHIFT_OPENING_FLOAT
 }
 
 model LedgerAccount {
@@ -392,13 +394,22 @@ model Permission {
   @@index([deletedAt])
 }
 
+/// Refresh token nhân viên: DB chỉ giữ sha256 hex của token, xoay vòng mỗi lần refresh.
+/// `familyId` = một chuỗi cấp token từ một lần login; phát hiện dùng lại token đã dùng
+/// thì thu hồi cả family (`revokedAt`) chứ không chỉ token đó.
 model RefreshToken {
-  token     String   @unique @db.VarChar(1000)
+  tokenHash String    @unique @db.VarChar(64)
+  familyId  String    @db.VarChar(36)
   userId    Int
   expiresAt DateTime
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  /// thời điểm token được "claim" để đổi lấy cặp token mới; null = chưa dùng
+  usedAt    DateTime?
+  /// thời điểm family/token bị thu hồi (logout, xoá user, phát hiện dùng lại)
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
+  @@index([familyId])
   @@index([expiresAt])
 }
 
@@ -540,6 +551,7 @@ model Order {
   deletedBy           User?                @relation("OrderDeleteBy", fields: [deletedById], references: [id])
   guest               Guest?               @relation(fields: [guestId], references: [id])
   payment             Payment              @relation(fields: [paymentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  settlingPayments    Payment[]            @relation("OrderSettlingPayments")
   reservation         Reservation?         @relation(fields: [reservationId], references: [id])
   tableNode           TableNode?           @relation(fields: [tableNodeId], references: [id])
   updatedBy           User?                @relation("OrderUpdateBy", fields: [updatedById], references: [id])
@@ -749,11 +761,15 @@ model Payment {
   order          Order[]
   branchId       Int
   branch         Branch         @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  orderId        Int?
+  settlingOrder  Order?         @relation("OrderSettlingPayments", fields: [orderId], references: [id], onDelete: SetNull, onUpdate: NoAction)
 
   @@index([transactionId])
   /// đối soát / báo cáo theo kỳ: lọc Payment SUCCESS trong khoảng paidAt
   @@index([status, paidAt])
   @@index([branchId, paidAt])
+  /// lần thu tiền thứ hai (phần còn lại sau cọc) trỏ về đơn của nó.
+  @@index([orderId])
 }
 
 model Message {
@@ -848,6 +864,9 @@ model Voucher {
   startAt          DateTime
   endAt            DateTime
   usageLimit       Int?
+  /// Số lượt đã dùng — counter để CLAIM NGUYÊN TỬ. Trước đây chỉ đếm `VoucherSnapshot` rồi mới
+  /// tạo, nên 2 request đồng thời cùng đọc `usedCount = limit - 1` và cùng vượt hạn mức.
+  usedCount        Int               @default(0)
   status           VoucherStatus     @default(ACTIVE)
   createdById      Int?
   updatedById      Int?
