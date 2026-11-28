@@ -622,7 +622,8 @@ Test: `usageLimit = 1`, 10 request song song ⇒ 1 thành công, `usedCount = 1`
    (2 route), đơn hàng (chi tiết + danh sách), khách của bàn. **Chưa làm**: `reports` (chỉ số tổng
    hợp, không có PII từng người — không đáng ghi), `ledger` (bút toán, không có PII). Đăng nhập
    đúng/sai đã ghi ở bảng riêng `LoginAttempt` — xem ghi chú dưới. Dọn theo thời hạn lưu đã có cơ
-   chế (`npm run logs:prune`, mặc định chạy thử) nhưng **chưa đặt lịch** — xem ghi chú dưới.
+   chế (`logs:prune`) **và đã đặt lịch** (`LogRetentionCronService`, 03:00 ngày 1 hằng tháng; con số
+   ở `LOG_RETENTION_MONTHS`) — xem ghi chú dưới.
 3. **PII** — **đã làm (xem ghi chú dưới)**: `ConsentLog` append-only + ẩn danh hoá hồ sơ. Bản phác
    trong kế hoạch (`subjectType/subjectId`, `grantedAt/revokedAt`, job `anonymizeExpiredReservations`)
    đã đổi khi làm, lý do ở dưới.
@@ -730,8 +731,10 @@ hai lần đăng nhập song song.
 
 Chi tiết và các ⚠ cần kế toán/luật sư: `docs/pii-retention-policy.md`.
 
-**Dọn nhật ký — đã có cơ chế, CHƯA bật lịch.** `npm run logs:prune -- --months=N [--apply]`, cùng
-khuôn với `pii:anonymize` (mặc định chạy thử, `--months` bắt buộc, không có mặc định). Bốn điểm:
+**Dọn nhật ký — đã có cơ chế VÀ đã đặt lịch.** Hai đường: script
+`npm run logs:prune -- --months=N [--apply]` (chạy thử là mặc định, `--months` bắt buộc, không có
+mặc định), và job `LogRetentionCronService` chạy **03:00 ngày 1 mỗi tháng** với con số lấy từ
+`LOG_RETENTION_MONTHS`. Năm điểm:
 
 - **Xoá bằng SQL có `LIMIT`, không dùng `deleteMany`**: `deleteMany` không có giới hạn, nên một lần
   gõ sai `--months` (1 thay vì 12) là một lệnh xoá toàn bảng không có điểm dừng. Trần mặc định 5000
@@ -746,6 +749,10 @@ khuôn với `pii:anonymize` (mặc định chạy thử, `--months` bắt buộ
   lệnh dọn không để lại dấu trong DB — muốn bịt cần một bảng nhật ký thao tác vận hành riêng, chưa làm.
 - Dọn cả hai bảng trong một lần chạy và báo `quá hạn` **tách khỏi** `đã xoá`: hai con số lệch nhau là
   dấu hiệu duy nhất cho biết lần chạy này chưa dọn hết.
+- **Job tự động không tự chọn con số**: `LOG_RETENTION_MONTHS` để trống ⇒ job bỏ qua và ghi log lý do
+  (app vẫn lên); đổi con số là sửa `.env.production` + `restart be`, không phải build lại. Job có cờ
+  chống chạy chồng, nuốt lỗi DB (cron không được làm sập app) và **tự bỏ qua khi `NODE_ENV=test`** —
+  cron thật trong e2e sẽ xoá dòng của chính suite đang chạy.
 
 **Đo lường**: test ẩn danh (`test/customer-anonymize.e2e-spec.ts`) ⇒ hồ sơ hết hạn mất SĐT/tên/email/
 ghi chú + lượt đặt bàn cũng mất, khách **còn đơn chưa thu tiền thì không bị đụng**, chạy lại không làm
@@ -776,9 +783,11 @@ lại khi đã sạch thì không xoá gì; `--months=0` **ném lỗi** và khô
 `UPDATE` vẫn còn sau khi dọn (dọn xong không làm lỏng append-only).
 
 **Chưa có phép đo** (vì code chưa có, đừng đọc như đã xong): *bắt buộc* bật 2FA cho ADMIN/KE_TOAN
-(mục 5 — cơ chế đã xong, xem trên); media chứng từ ra nước ngoài (mục 4). Cơ chế dọn nhật ký **đã
-có và đã đo**, nhưng **chưa nên đặt lịch**: con số ở §3 chưa được ký, và chưa ai nhận việc đọc kết
-quả mỗi lần cron chạy.
+(mục 5 — cơ chế đã xong, xem trên); media chứng từ ra nước ngoài (mục 4). Dọn nhật ký thì **đã có
+phép đo và đã đặt lịch** (xem trên), nhưng còn hai việc phải do người làm: một là **con số ở §3 phải
+được ký** (hiện `.env.production.example` để 12 tháng — con số chủ hệ thống chấp nhận, chưa phải kết
+luận của kế toán/luật sư), hai là **không ai nhận việc đọc log mỗi lượt cron** — log container bị
+rotate nên lịch sử các lần dọn sẽ mất nếu không đẩy log ra ngoài.
 
 **Pháp lý**: NĐ 13/2023/NĐ-CP (đồng ý, quyền xoá, hồ sơ đánh giá tác động, log truy cập), NĐ
 53/2022/NĐ-CP (lưu log, dữ liệu tại VN — **cần luật sư xác định phạm vi**), Luật Kế toán (giữ chứng
