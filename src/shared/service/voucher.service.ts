@@ -103,6 +103,19 @@ export class VoucherService {
     const usable = checkVoucherUsable(voucher as VoucherSource, new Date(), usedCount)
     if (!usable.ok) throw new BadRequestException(usable.message)
 
+    /**
+     * Claim NGUYÊN TỬ một lượt: điều kiện `usedCount < usageLimit` nằm trong chính câu UPDATE,
+     * nên 2 request đồng thời không thể cùng lọt. Đếm snapshot ở trên chỉ để báo lỗi sớm/đẹp,
+     * không phải chốt chặn.
+     */
+    const claimed = await tx.$executeRaw`
+      UPDATE "Voucher"
+      SET "usedCount" = "usedCount" + 1
+      WHERE "id" = ${voucher.id}
+        AND "deletedAt" IS NULL
+        AND ("usageLimit" IS NULL OR "usedCount" < "usageLimit")`
+    if (claimed !== 1) throw new BadRequestException('Error.VoucherExhausted')
+
     const appliedDiscount = computeVoucherDiscount(voucher, subtotal)
     if (appliedDiscount.lessThanOrEqualTo(0)) {
       throw new BadRequestException('Error.VoucherGivesNoDiscount')

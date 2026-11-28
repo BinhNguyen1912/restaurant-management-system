@@ -77,7 +77,11 @@ export const CashShiftDetailSchema = CashShiftSchema.extend({
 })
 
 export const OpenCashShiftSchema = z.object({
-  openingFloat: z.coerce
+  /**
+   * Số tiền két đầu ca. Dùng `z.number()` (KHÔNG coerce): `z.coerce.number()` biến `null`
+   * thành 0, nên client gửi thiếu/không parse được số tiền vẫn được chấp nhận với 0đ.
+   */
+  openingFloat: z
     .number()
     .min(0, 'Tiền lẻ đầu ca không âm')
     .max(1_000_000_000, 'Tiền lẻ đầu ca quá lớn')
@@ -86,7 +90,7 @@ export const OpenCashShiftSchema = z.object({
 })
 
 export const CloseCashShiftSchema = z.object({
-  countedCash: z.coerce
+  countedCash: z
     .number()
     .min(0, 'Tiền đếm được không âm')
     .max(10_000_000_000, 'Tiền đếm được quá lớn')

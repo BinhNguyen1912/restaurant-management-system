@@ -107,15 +107,31 @@ export class GuestRepo {
       data,
     })
   }
-  async createTokenForGuest({ guestId, refreshToken: RT }: { guestId: number; refreshToken: string }): Promise<{
+  /**
+   * Cấp lại access token cho khách bằng refresh token.
+   *
+   * Refresh token phải được đối chiếu với DB (`Guest.refreshToken` + hạn) — trước đây chỉ verify
+   * chữ ký, nên một RT bị lộ dùng lại được tới khi hết hạn, kể cả sau khi khách đã logout.
+   * Cấp xong thì ROTATE: RT cũ bị thay ngay trong DB.
+   */
+  async createTokenForGuest({ refreshToken: RT }: { refreshToken: string }): Promise<{
     accessToken: string
     refreshToken: string
   }> {
-    try {
-      await this.tokenService.VerifyRefreshToken(RT)
-    } catch (error) {
-      throw error
+    const payload = await this.tokenService.VerifyGuestRefreshToken(RT)
+    const guestId = payload.userId
+
+    const guest = await this.prismaService.guest.findFirst({
+      where: { id: guestId, deletedAt: null },
+      select: { refreshToken: true, refreshTokenExpiresAt: true },
+    })
+    if (!guest?.refreshToken || guest.refreshToken !== RT) {
+      throw new HttpException('Error.RefreshTokenNotFoundOrExpired', HttpStatus.UNAUTHORIZED)
     }
+    if (guest.refreshTokenExpiresAt && guest.refreshTokenExpiresAt.getTime() <= Date.now()) {
+      throw new HttpException('Error.RefreshTokenNotFoundOrExpired', HttpStatus.UNAUTHORIZED)
+    }
+
     const roleId = await this.prismaService.role.findFirst({
       where: {
         name: roleName.GUEST,
@@ -126,8 +142,23 @@ export class GuestRepo {
     }
     const [accessToken, refreshToken] = await Promise.all([
       this.tokenService.createAcessToken({ roleId: roleId.id, roleName: roleId.name, userId: guestId }),
-      this.tokenService.createRefreshToken({ roleId: roleId.id, roleName: roleId.name, userId: guestId }),
+      this.tokenService.createGuestRefreshToken({
+        roleId: roleId.id,
+        roleName: roleId.name,
+        userId: guestId,
+        tableNodeId: payload.tableNodeId,
+      }),
     ])
+
+    const decodeRefreshToken = await this.tokenService.VerifyGuestRefreshToken(refreshToken)
+    await this.prismaService.guest.update({
+      where: { id: guestId },
+      data: {
+        refreshToken,
+        refreshTokenExpiresAt: new Date(decodeRefreshToken.exp * 1000),
+      },
+    })
+
     return {
       accessToken,
       refreshToken,
@@ -193,12 +224,15 @@ export class GuestRepo {
     }
   }
 
-  async list(query: GuestListQueryType): Promise<GuestListType> {
+  async list(query: GuestListQueryType, branchId?: number): Promise<GuestListType> {
     const { limit, page } = query
     const take = limit ?? 10
     const skip = (page - 1) * take
+    // `Guest` không có cột `branchId` — chi nhánh suy ra từ bàn mà khách đang ngồi.
+    // Thiếu điều kiện này thì STAFF chi nhánh A đọc được tên khách của mọi chi nhánh.
     const where: Prisma.GuestWhereInput = {
       deletedAt: null,
+      ...(branchId ? { tableNode: { branchId } } : {}),
     }
 
     const [totalItems, data] = await Promise.all([

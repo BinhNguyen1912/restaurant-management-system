@@ -1,6 +1,7 @@
-import { Body, Controller, Post, Res, HttpStatus, Query, Get, Param, Put } from '@nestjs/common'
+import { Body, Controller, Post, Res, HttpStatus, HttpCode, Query, Get, Param, Put } from '@nestjs/common'
 import { OrdersService } from './orders.service'
 import { ActiveUser } from '@/shared/decorators/active-user.decorator'
+import { ActiveRole } from '@/shared/decorators/active-role.decorator'
 import { AccessTokenPayload } from '@/shared/types/jwt.types'
 import {
   GuestIdParamDTO,
@@ -9,6 +10,7 @@ import {
   OrderIdParamDTO,
   UpdateOrderDTO,
   UpdateOrderResDTO,
+  PayGuestOrdersDTO,
 } from '@/routes/orders/orders.dtos'
 import { ZodSerializerDto } from 'nestjs-zod'
 import { OrderIdParamSchema } from '@/routes/orders/orders.model'
@@ -32,12 +34,17 @@ export class OrdersController {
 
   @Put(':id')
   @ZodSerializerDto(UpdateOrderResDTO)
-  async update(@Param() param: OrderIdParamDTO, @Body() body: UpdateOrderDTO, @ActiveUser() user: AccessTokenPayload) {
+  async update(
+    @Param() param: OrderIdParamDTO,
+    @Body() body: UpdateOrderDTO,
+    @ActiveUser('userId') userId: number,
+    @ActiveRole('name') roleName: string,
+  ) {
     return await this.ordersService.update({
       orderId: param.id,
       body,
-      updatedById: user.userId,
-      actorRole: user.roleName,
+      updatedById: userId,
+      actorRole: roleName,
     })
   }
 
@@ -56,11 +63,25 @@ export class OrdersController {
     })
   }
 
-  @Get('pay-orders-by-guest/:guestId')
-  async getOrderByTable(@Param() params: GuestIdParamDTO, @ActiveUser('userId') userId: number) {
+  /**
+   * Thu tiền các đơn đang mở của khách. Là **POST** (trước đây GET — endpoint ghi tiền mà khai báo
+   * GET thì bị prefetch/retry gọi hộ, và không có body để ghi phương thức thu).
+   *
+   * `@HttpCode(200)`: đây là thao tác thu tiền trên đơn đã có, không tạo tài nguyên mới. Để mặc định
+   * 201 thì FE và e2e (và bất kỳ client nào kiểm mã 200) đều hiểu sai kết quả.
+   */
+  @Post('pay-guest/:guestId')
+  @HttpCode(200)
+  async payGuestOrders(
+    @Param() params: GuestIdParamDTO,
+    @Body() body: PayGuestOrdersDTO,
+    @ActiveUser('userId') userId: number,
+  ) {
     return await this.ordersService.payOrdersByGuest({
       guestId: +params.guestId,
       updatedById: userId,
+      method: body.method,
+      note: body.note,
     })
   }
 }

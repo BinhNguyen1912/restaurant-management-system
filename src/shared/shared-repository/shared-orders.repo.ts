@@ -2,7 +2,7 @@ import { toMoneyNumbers } from '@/shared/service/money-serializer'
 import { computeOrderMoney } from '@/shared/service/order-money'
 import { CACHE_KEYS } from '@/cache/cache.constant'
 import { CacheService } from '@/cache/services/cache.service'
-import { deduct_stock } from '@/shared/constants/lua.constant'
+import { deduct_stock, revert_stock } from '@/shared/constants/lua.constant'
 import { OrderStatus, PaymentStatus, TypeToOrderStatus, TypeToOrderStatusType } from '@/shared/constants/order.constant'
 import { Inventory_Queue, ManagerRoom, WS_EVENTS } from '@/shared/constants/others.constant'
 import { SkuStatus } from '@/shared/constants/sku.constant'
@@ -18,6 +18,7 @@ import { PrismaService } from '@/shared/service/prisma.service'
 import { RedisService } from '@/shared/service/redis.service'
 import { AuditLogService } from '@/shared/service/audit-log.service'
 import { VoucherService } from '@/shared/service/voucher.service'
+import { LedgerPostingService } from '@/shared/service/ledger-posting.service'
 import { AppGateway } from '@/webSockets/app.gateway'
 import { InjectQueue } from '@nestjs/bullmq'
 import { BadRequestException } from '@nestjs/common'
@@ -25,6 +26,21 @@ import { Queue } from 'bullmq'
 import { TableNodeType } from '../models/shared-tableNode.model'
 import { Prisma, PrismaClient } from '@prisma/client'
 type PrismaTransaction = Prisma.TransactionClient
+
+/**
+ * Cạnh chuyển trạng thái được phép. Không có `CANCELLED → *` (đơn đã huỷ không "sống lại") và
+ * `PAID` chỉ đi tới `CANCELLED` (huỷ đơn đã thu = hoàn tiền, xử lý trong `updateOrder`).
+ */
+export const ALLOWED_TRANSITIONS: Record<string, readonly string[]> = {
+  [OrderStatus.PENDING]: [OrderStatus.CONFIRMED, OrderStatus.CANCELLED],
+  [OrderStatus.CONFIRMED]: [OrderStatus.PREPARING, OrderStatus.CANCELLED],
+  [OrderStatus.PREPARING]: [OrderStatus.READY, OrderStatus.CANCELLED],
+  [OrderStatus.READY]: [OrderStatus.COMPLETED, OrderStatus.CANCELLED],
+  [OrderStatus.COMPLETED]: [OrderStatus.PAID, OrderStatus.CANCELLED],
+  [OrderStatus.PAID]: [OrderStatus.CANCELLED],
+  [OrderStatus.CANCELLED]: [],
+}
+
 export class SharedOrdersRepo {
   constructor(
     private readonly prismaService: PrismaService,
@@ -33,7 +49,169 @@ export class SharedOrdersRepo {
     private readonly appGateway: AppGateway,
     private readonly auditLogService: AuditLogService,
     private readonly voucherService: VoucherService,
+    private readonly ledgerPosting: LedgerPostingService,
   ) {}
+
+  /**
+   * Trả lại phần tồn kho đã trừ trên Redis khi transaction tạo đơn KHÔNG commit.
+   * Chỉ gọi ở nhánh lỗi, với danh sách `deducted` do Lua trả về nên hoàn đúng số đã trừ.
+   */
+  private async revertDeductedStock(deducted: { ingredientId: number; quantity: number }[]) {
+    if (!deducted.length) return
+    const revertScript = this.redisService.luaScripts.get(revert_stock.split('.')[0])
+    if (!revertScript) return
+    try {
+      await this.redisService.runLuaScript<{ success: boolean }>(revertScript, deducted)
+    } catch (revertError) {
+      console.error('[stock] Không hoàn tác được phần tồn kho đã trừ trên Redis', revertError)
+    }
+  }
+
+  /**
+   * Hoàn tiền cho đơn đã thu: ghi **bút toán đảo** (sự kiện gốc + đảo, không sửa bản gốc),
+   * đảo luôn giá vốn, và đánh dấu `Payment` REFUNDED.
+   *
+   * `idempotencyKey` theo `paymentId` ⇒ huỷ 2 lần chỉ sinh 1 bút toán đảo.
+   */
+  private async refundPaidOrder(
+    tx: PrismaTransaction,
+    args: { orderId: number; paymentId: number; branchId: number; updatedById: number; reason: string },
+  ) {
+    const { orderId, paymentId, branchId, updatedById, reason } = args
+
+    const original = await tx.ledgerEntry.findFirst({
+      where: {
+        branchId,
+        refType: { in: ['ORDER_PAID_CASH', 'ORDER_PAID_VNPAY'] },
+        refId: paymentId,
+        status: 'POSTED',
+      },
+      include: { lines: { include: { account: true } } },
+    })
+
+    if (original) {
+      await this.ledgerPosting.postEntry(
+        {
+          branchId,
+          refType: 'REFUND',
+          refId: paymentId,
+          idempotencyKey: `refund:payment:${paymentId}`,
+          reversalOfId: original.id,
+          memo: reason,
+          lines: original.lines.map((line) => ({
+            accountCode: line.account.code,
+            direction: line.direction === 'DEBIT' ? ('CREDIT' as const) : ('DEBIT' as const),
+            amount: line.amount,
+            orderId,
+            paymentId,
+          })),
+        },
+        tx,
+      )
+    }
+
+    // Đảo giá vốn: đơn bị huỷ thì hàng coi như nhập lại kho, COGS không còn.
+    const cogs = await tx.ledgerEntry.findFirst({
+      where: { branchId, refType: 'ORDER_COGS', refId: orderId, status: 'POSTED' },
+      include: { lines: { include: { account: true } } },
+    })
+    if (cogs) {
+      await this.ledgerPosting.postEntry(
+        {
+          branchId,
+          refType: 'REVERSAL',
+          refId: orderId,
+          idempotencyKey: `reversal:cogs:${orderId}`,
+          reversalOfId: cogs.id,
+          memo: reason,
+          lines: cogs.lines.map((line) => ({
+            accountCode: line.account.code,
+            direction: line.direction === 'DEBIT' ? ('CREDIT' as const) : ('DEBIT' as const),
+            amount: line.amount,
+            orderId,
+          })),
+        },
+        tx,
+      )
+    }
+
+    const payment = await tx.payment.findUnique({ where: { id: paymentId }, select: { amount: true } })
+    await tx.payment.update({
+      where: { id: paymentId },
+      data: { status: PaymentStatus.REFUNDED, refundedAmount: payment?.amount ?? new Prisma.Decimal(0) },
+    })
+
+    await this.auditLogService.record(
+      {
+        actorId: updatedById,
+        actorRole: null,
+        action: 'PAYMENT_REFUNDED',
+        entityType: 'PAYMENT',
+        entityId: paymentId,
+        before: { status: PaymentStatus.SUCCESS, amount: payment?.amount?.toString() ?? null },
+        after: { status: PaymentStatus.REFUNDED, orderId },
+        reason,
+        branchId,
+      },
+      tx,
+    )
+  }
+
+  /**
+   * Nguyên liệu đã dùng cho các dòng đơn — dùng để **hoàn kho khi huỷ đơn**.
+   *
+   * Tính từ dữ liệu DB (`SKURecipeIngredient` + `UnitConversion`) chứ không đọc cache: hoàn kho
+   * phải đúng kể cả khi cache công thức đang cũ. Đơn vị được quy đổi về đơn vị của nguyên liệu.
+   */
+  private async computeOrderIngredientUsage(
+    tx: PrismaTransaction,
+    items: { skuId: number; quantity: number }[],
+  ): Promise<{ ingredientId: number; quantity: number }[]> {
+    const usable = items.filter((item) => item.quantity > 0)
+    const skuIds = [...new Set(usable.map((item) => item.skuId))]
+    if (skuIds.length === 0) return []
+
+    const [recipes, conversions] = await Promise.all([
+      tx.sKURecipeIngredient.findMany({ where: { skuId: { in: skuIds }, deletedAt: null } }),
+      tx.unitConversion.findMany({
+        where: { deletedAt: null },
+        select: { fromUnitId: true, toUnitId: true, factor: true },
+      }),
+    ])
+    if (recipes.length === 0) return []
+
+    const ingredientIds = [...new Set(recipes.map((recipe) => recipe.ingredientId))]
+    const ingredients = await tx.ingredient.findMany({
+      where: { id: { in: ingredientIds } },
+      select: { id: true, unitId: true },
+    })
+    const ingredientUnit = new Map(ingredients.map((ingredient) => [ingredient.id, ingredient.unitId]))
+    const factors = new Map(conversions.map((c) => [`${c.fromUnitId}:${c.toUnitId}`, c.factor]))
+
+    const totals = new Map<number, number>()
+    for (const item of usable) {
+      for (const recipe of recipes) {
+        if (recipe.skuId !== item.skuId) continue
+        const targetUnit = ingredientUnit.get(recipe.ingredientId)
+        if (!targetUnit) continue
+
+        let quantity = recipe.quantity * item.quantity
+        if (recipe.unitId !== targetUnit) {
+          const factor = factors.get(`${recipe.unitId}:${targetUnit}`)
+          if (!factor) {
+            console.warn(
+              `[stock] thiếu quy đổi ${recipe.unitId}→${targetUnit} cho nguyên liệu #${recipe.ingredientId}, bỏ qua khi hoàn kho`,
+            )
+            continue
+          }
+          quantity *= factor
+        }
+        totals.set(recipe.ingredientId, (totals.get(recipe.ingredientId) ?? 0) + quantity)
+      }
+    }
+
+    return [...totals.entries()].map(([ingredientId, quantity]) => ({ ingredientId, quantity }))
+  }
 
   async validateIngredientByLuaBeforeCreateOrder(orderItems: CreateNewOrderType): Promise<{
     errors: any[]
@@ -293,8 +471,11 @@ export class SharedOrdersRepo {
     /** mã voucher khách nhập — áp trong cùng transaction, ghi snapshot kèm giá trị giảm thực tế */
     voucherCode?: string
   }): Promise<OrderResType> {
+    /** Phần đã trừ trên Redis — phải trả lại nếu transaction không commit (xem catch bên dưới). */
+    let deductedForRevert: { ingredientId: number; quantity: number }[] = []
     try {
       const checkAndDeductStock = await this.validateIngredientByLuaBeforeCreateOrder(orderItems)
+      deductedForRevert = checkAndDeductStock.deducted ?? []
       return await this.prismaService.$transaction(async (tx) => {
         const guest = await tx.guest.findUnique({
           where: {
@@ -475,7 +656,9 @@ export class SharedOrdersRepo {
         return toMoneyNumbers(order)
       })
     } catch (error) {
-      console.log(error)
+      // Tồn kho đã bị trừ trên Redis TRƯỚC transaction. Mọi lỗi sau đó (bàn vừa bị đặt, SKU ẩn,
+      // voucher sai, lỗi DB) trước đây chỉ log rồi ném ra ⇒ kho mất hàng mà không có đơn nào.
+      await this.revertDeductedStock(deductedForRevert)
       throw error
     }
   }
@@ -664,8 +847,11 @@ export class SharedOrdersRepo {
     reservationId: number
     tx: Prisma.TransactionClient
   }): Promise<OrderResType> {
+    /** Phần đã trừ trên Redis — trả lại nếu transaction (của caller) không commit. */
+    let deductedForRevert: { ingredientId: number; quantity: number }[] = []
     try {
       const checkAndDeductStock = await this.validateIngredientByLuaBeforeCreateOrder(orderItems)
+      deductedForRevert = checkAndDeductStock.deducted ?? []
 
       const user = await tx.user.findUnique({
         where: {
@@ -762,6 +948,9 @@ export class SharedOrdersRepo {
         {
           orderId: order.id,
           updatedIngredients: checkAndDeductStock.updated,
+          // Thiếu `deducted` ở nhánh này (đơn đặt bàn/preorder) ⇒ job không thể hoàn tác kho
+          // khi DB lỗi hoặc đơn bị huỷ: kho mất hàng mà không có đơn.
+          deducted: checkAndDeductStock.deducted ?? [],
           lowStockItems: checkAndDeductStock.lowStock || [],
         },
         {
@@ -790,6 +979,7 @@ export class SharedOrdersRepo {
 
       return toMoneyNumbers(order)
     } catch (error) {
+      await this.revertDeductedStock(deductedForRevert)
       console.log('[ERROR]', error)
       throw error
     }
@@ -799,12 +989,18 @@ export class SharedOrdersRepo {
     data,
     updatedById,
     actorRole,
+    branchId,
   }: {
     data: UpdateOrderType & { orderId: number }
     updatedById: number
     actorRole?: string | null
+    /** Chi nhánh của người gọi (`undefined` = ADMIN): chặn sửa đơn của chi nhánh khác. */
+    branchId?: number
   }): Promise<UpdateOrderResType> {
     const { orderId, skuId, quantity, status, reason, discountTotal } = data
+    if (quantity !== undefined && quantity !== null && !skuId) {
+      throw new BadRequestException('Error.SkuRequiredWhenChangingQuantity')
+    }
     // Chốt chặn thứ 2: "đã trả tiền" chỉ được đặt qua luồng thanh toán (xem UpdateOrderSchema).
     // Nếu chỉ dựa vào schema, ai đó nới enum ra là lỗ hổng mở lại mà không ai nhớ vì sao.
     // (status đã bị schema loại, so sánh qua string để giữ chốt chặn runtime nếu schema bị nới)
@@ -819,42 +1015,66 @@ export class SharedOrdersRepo {
     }
 
     try {
-      const result = await this.prismaService.$transaction(async (tx) => {
-        const current = await tx.order.findUnique({
-          where: { id: orderId },
+      const resultPromise = this.prismaService.$transaction(async (tx) => {
+        const current = await tx.order.findFirst({
+          where: { id: orderId, ...(branchId ? { branchId } : {}) },
           select: {
             id: true,
             status: true,
             branchId: true,
             paymentId: true,
+            voucherSnapshotId: true,
             discountTotal: true,
             subtotal: true,
             grandTotal: true,
             taxRate: true,
             serviceChargeRate: true,
-            items: { select: { skuPrice: true, quantity: true } },
+            items: { select: { skuId: true, skuPrice: true, quantity: true } },
             payment: { select: { status: true } },
             branch: { select: { pricesIncludeTax: true } },
           },
         })
         if (!current) throw new BadRequestException(`Không tìm thấy đơn #${orderId}`)
 
-        await tx.productSKUSnapshot.updateMany({
-          where: {
-            orderId: orderId,
-            skuId: skuId,
-          },
-          data: {
-            quantity: quantity,
-          },
-        })
+        // ---- ma trận trạng thái: chỉ đi theo cạnh có trong bảng, không nhảy cóc/hồi sinh ----
+        if (status && status !== current.status && !ALLOWED_TRANSITIONS[current.status]?.includes(status)) {
+          throw new BadRequestException('Error.InvalidStatusTransition')
+        }
 
-        // ---- giảm giá: tính lại toàn bộ tiền bằng Decimal rồi mới ghi (ADR 0001 D6) ----
+        const paymentStatus = current.payment?.status
+        const isPaid = paymentStatus === PaymentStatus.SUCCESS || paymentStatus === PaymentStatus.PARTIALLY_REFUNDED
+        const quantityChanged = quantity !== undefined && quantity !== null
+        const newDiscount =
+          discountTotal === undefined ? current.discountTotal : new Prisma.Decimal(discountTotal)
+        const discountChanged = !newDiscount.equals(current.discountTotal)
+
+        /**
+         * Đơn đã thu tiền thì KHÔNG được đổi số lượng/giảm giá: sửa tại chỗ sẽ làm
+         * `Order.grandTotal` lệch `Payment.amount` lệch sổ cái, mà không có bút toán đảo nào.
+         * Muốn đổi: huỷ (có hoàn tiền) rồi tạo đơn mới.
+         */
+        if (isPaid && (quantityChanged || discountChanged)) {
+          throw new BadRequestException('Error.OrderAlreadyPaidCannotChangeMoney')
+        }
+
+        if (quantityChanged) {
+          await tx.productSKUSnapshot.updateMany({
+            where: { orderId, skuId },
+            data: { quantity },
+          })
+        }
+
+        const nextItems = current.items.map((item) => ({
+          skuId: item.skuId,
+          price: item.skuPrice,
+          quantity: quantityChanged && item.skuId === skuId ? quantity! : item.quantity,
+        }))
+
+        // ---- tiền: tính lại TỪ SỐ LIỆU MỚI, không chỉ khi đổi giảm giá (ADR 0001 D6) ----
         let moneyUpdate: Record<string, Prisma.Decimal> = {}
-        const newDiscount = discountTotal === undefined ? null : new Prisma.Decimal(discountTotal)
-        if (newDiscount && !newDiscount.equals(current.discountTotal)) {
+        if (quantityChanged || discountChanged) {
           const money = computeOrderMoney({
-            lines: current.items.map((item) => ({ price: item.skuPrice, quantity: item.quantity })),
+            lines: nextItems.map((item) => ({ price: item.price, quantity: item.quantity })),
             discountTotal: newDiscount,
             taxRate: current.taxRate,
             serviceChargeRate: current.serviceChargeRate,
@@ -867,8 +1087,8 @@ export class SharedOrdersRepo {
             taxTotal: money.taxTotal,
             grandTotal: money.grandTotal,
           }
-          // chỉ đổi số tiền phải thu khi khách chưa trả; đã trả rồi thì phải hoàn tiền (luồng riêng)
-          if (current.payment?.status === PaymentStatus.PENDING) {
+          // Chỉ đổi số tiền phải thu khi khách chưa trả; đã trả thì đã chặn ở trên.
+          if (current.paymentId && paymentStatus === PaymentStatus.PENDING) {
             await tx.payment.update({
               where: { id: current.paymentId },
               data: { amount: money.grandTotal },
@@ -923,7 +1143,7 @@ export class SharedOrdersRepo {
           )
         }
 
-        if (newDiscount && !newDiscount.equals(current.discountTotal)) {
+        if (discountChanged) {
           await this.auditLogService.record(
             {
               actorId: updatedById,
@@ -946,8 +1166,48 @@ export class SharedOrdersRepo {
           )
         }
 
-        return updatedOrder
+        /**
+         * Huỷ đơn: (1) đơn đã thu tiền ⇒ ghi bút toán đảo + đánh dấu Payment REFUNDED, (2) hoàn
+         * nguyên liệu đã trừ. Trước đây chỉ đổi `status` + ghi audit: sổ cái vẫn ghi doanh thu của
+         * đơn đã huỷ, và kho mất nguyên liệu vĩnh viễn.
+         */
+        let stockRestore: { ingredientId: number; quantity: number }[] = []
+        if (cancelled && current.status !== OrderStatus.CANCELLED) {
+          // Nhả lượt voucher đã giữ lúc tạo đơn — nếu không, hạn mức bị tiêu vĩnh viễn cho đơn huỷ.
+          if (current.voucherSnapshotId) {
+            const snapshot = await tx.voucherSnapshot.findUnique({
+              where: { id: current.voucherSnapshotId },
+              select: { voucherId: true },
+            })
+            if (snapshot) {
+              await tx.voucher.updateMany({
+                where: { id: snapshot.voucherId, usedCount: { gt: 0 } },
+                data: { usedCount: { decrement: 1 } },
+              })
+            }
+          }
+          if (isPaid && current.paymentId) {
+            await this.refundPaidOrder(tx, {
+              orderId,
+              paymentId: current.paymentId,
+              branchId: current.branchId,
+              updatedById,
+              reason: reason?.trim() || 'Huỷ đơn đã thanh toán',
+            })
+          }
+          stockRestore = await this.computeOrderIngredientUsage(tx, nextItems)
+        }
+
+        return { order: updatedOrder, stockRestore }
       })
+
+      const { order: result, stockRestore } = await resultPromise
+
+      // Hoàn tồn kho trên Redis SAU khi DB đã commit: Lua không nằm trong transaction Prisma.
+      if (stockRestore.length > 0) {
+        await this.revertDeductedStock(stockRestore)
+      }
+
       if (!result.guest?.id) {
         return {
           order: result,

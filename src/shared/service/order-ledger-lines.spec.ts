@@ -91,4 +91,54 @@ describe('buildOrderLedgerLines', () => {
     expect(() => checkBalanced(lines)).not.toThrow()
     expect(String(lines[0].amount)).toBe('50000')
   })
+
+  it('đơn có cọc: Nợ tiền mặt chỉ phần còn lại, phần cọc chuyển từ nợ khách sang doanh thu', () => {
+    const lines = buildOrderLedgerLines(
+      { grandTotal: 1_000_000, subtotal: 900_000, discountTotal: 0, serviceChargeAmount: 100_000, taxTotal: 0 },
+      'CASH',
+      { depositSettled: 300_000 },
+    )
+
+    const cash = lines.find((line) => line.accountCode === 'CASH')
+    expect(cash).toMatchObject({ direction: 'DEBIT' })
+    expect(String(cash?.amount)).toBe('700000')
+
+    const deposit = lines.find((line) => line.accountCode === 'DEPOSIT_LIABILITY')
+    expect(deposit).toMatchObject({ direction: 'DEBIT' })
+    expect(String(deposit?.amount)).toBe('300000')
+
+    expect(String(sum(lines, 'DEBIT'))).toBe('1000000')
+    expect(String(sum(lines, 'CREDIT'))).toBe('1000000')
+    expect(() => checkBalanced(lines)).not.toThrow()
+  })
+
+  it('không truyền cọc: giữ nguyên hành vi cũ, Nợ tiền mặt = grandTotal, không có DEPOSIT_LIABILITY', () => {
+    const lines = buildOrderLedgerLines(
+      { grandTotal: 1_000_000, subtotal: 900_000, discountTotal: 0, serviceChargeAmount: 100_000, taxTotal: 0 },
+      'CASH',
+    )
+
+    expect(String(lines[0].amount)).toBe('1000000')
+    expect(lines.some((line) => line.accountCode === 'DEPOSIT_LIABILITY')).toBe(false)
+    expect(() => checkBalanced(lines)).not.toThrow()
+  })
+
+  it('cọc lớn hơn hoá đơn: cọc bị chặn ở grandTotal, không dòng Nợ nào vượt grandTotal, sổ vẫn cân', () => {
+    const lines = buildOrderLedgerLines(
+      { grandTotal: 1_000_000, subtotal: 900_000, discountTotal: 0, serviceChargeAmount: 100_000, taxTotal: 0 },
+      'CASH',
+      { depositSettled: 1_500_000 },
+    )
+
+    expect(lines.some((line) => line.accountCode === 'CASH')).toBe(false)
+    const deposit = lines.find((line) => line.accountCode === 'DEPOSIT_LIABILITY')
+    expect(deposit).toMatchObject({ direction: 'DEBIT' })
+    expect(String(deposit?.amount)).toBe('1000000')
+
+    const debits = lines.filter((line) => line.direction === 'DEBIT')
+    expect(debits.every((line) => line.amount.lessThanOrEqualTo(1_000_000))).toBe(true)
+    expect(String(sum(lines, 'DEBIT'))).toBe('1000000')
+    expect(String(sum(lines, 'CREDIT'))).toBe('1000000')
+    expect(() => checkBalanced(lines)).not.toThrow()
+  })
 })

@@ -43,6 +43,9 @@ const ACCOUNTS: AccountSeed[] = [
   // Thu/chi tiền mặt TAY trong ca (không phải doanh thu bán hàng)
   { code: 'OTHER_INCOME', name: 'Thu nhập khác bằng tiền mặt', type: 'REVENUE' },
   { code: 'OTHER_EXPENSE', name: 'Chi phí khác bằng tiền mặt', type: 'EXPENSE' },
+
+  // Nguồn tiền lẻ khi mở ca: Nợ CASH / Có CASH_FLOAT_SOURCE (không phải doanh thu)
+  { code: 'CASH_FLOAT_SOURCE', name: 'Tiền lẻ đầu ca (nguồn quỹ)', type: 'EQUITY' },
 ]
 
 async function main() {

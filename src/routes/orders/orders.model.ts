@@ -120,6 +120,19 @@ export const OrderIdParamSchema = z.object({
 export const GuestIdParamSchema = z.object({
   guestId: z.coerce.number().int().positive(),
 })
+
+/**
+ * Thu tiền các đơn đang mở của một khách.
+ *
+ * Trước đây là `GET /orders/pay-orders-by-guest/:guestId` — một endpoint GHI tiền nhưng khai báo
+ * GET, nên bị prefetch/retry/crawler gọi hộ và không có body để ghi rõ phương thức thu. Chỉ nhận
+ * `CASH`; VNPay đi qua luồng tạo URL thanh toán riêng (có webhook xác nhận).
+ */
+export const PayGuestOrdersSchema = z.object({
+  method: z.enum(['CASH']).default('CASH'),
+  /** ghi chú thu tiền (tuỳ chọn) — vào audit log */
+  note: z.string().trim().max(255).optional(),
+})
 export type OrderQueryType = z.infer<typeof OrderQuerySchema>
 export type OrderItemType = z.infer<typeof OrderItemSchema>
 export type OrderGuestType = z.infer<typeof OrderGuestSchema>
@@ -129,3 +142,4 @@ export type OrderDetailType = z.infer<typeof OrderDetailSchema>
 export type OrdersListResType = z.infer<typeof OrdersListResSchema>
 export type OrderIdParamType = z.infer<typeof OrderIdParamSchema>
 export type GuestIdParamType = z.infer<typeof GuestIdParamSchema>
+export type PayGuestOrdersType = z.infer<typeof PayGuestOrdersSchema>

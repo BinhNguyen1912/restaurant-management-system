@@ -446,7 +446,7 @@ describe('Finance (e2e)', () => {
     expect(Number.isInteger(order.body.grandTotal)).toBe(true)
 
     // Thu tiền mặt cho khách -> bút toán có TAX_PAYABLE
-    await api().get(`/orders/pay-orders-by-guest/${guestId}`).set(auth()).expect(200)
+    await api().post(`/orders/pay-guest/${guestId}`).send({ method: 'CASH' }).set(auth()).expect(200)
 
     const entries = await api().get('/ledger/entries?refType=ORDER_PAID_CASH&limit=1').set(auth()).expect(200)
     const entry = entries.body.data[0]
@@ -461,6 +461,12 @@ describe('Finance (e2e)', () => {
     const posting = app.get(LedgerPostingService)
     const stamp = Date.now()
     const days = ['2026-03-02', '2026-03-03', '2026-03-04']
+    /**
+     * Bút toán test là bút toán THẬT trong sổ (append-only: không xoá được sau khi POSTED), nên
+     * `refId` của nó phải nằm NGOÀI dải id Payment. Trước đây dùng 1,2,3,9,11 — trên DB mới đếm id
+     * Payment lại từ 1, đối soát ghép nhầm bút toán giả vào payment thật và báo DUPLICATE.
+     */
+    const FAKE_REF_BASE = 90_000_000
 
     const branchA = await prisma.branch.create({
       data: { code: `E2E-REP-A-${stamp}`, name: 'E2E báo cáo A', address: 'e2e', isActive: true },
@@ -470,23 +476,24 @@ describe('Finance (e2e)', () => {
     })
     created.branchIds.push(branchA.id, branchB.id)
 
-    /** ghi 1 bút toán thu tiền rồi đẩy ngày nghiệp vụ về đúng ngày cần test */
+    /**
+     * Ghi 1 bút toán thu tiền với ngày nghiệp vụ cần test.
+     * Ngày phải đặt NGAY LÚC GHI: sổ cái append-only (trigger chặn UPDATE bút toán đã POSTED),
+     * nên không thể ghi rồi "đẩy ngày" bằng update như trước — làm vậy là test đỏ, không phải sổ hở.
+     */
     const post = async (branchId: number, day: string, seq: number, amount: number, method: 'CASH' | 'VNPAY') => {
       const key = `e2e-report:${stamp}:${branchId}:${day}:${seq}`
       created.reportEntryKeys.push(key)
-      const { id } = await posting.postEntry({
+      await posting.postEntry({
         branchId,
         refType: method === 'CASH' ? 'ORDER_PAID_CASH' : 'ORDER_PAID_VNPAY',
-        refId: seq,
+        refId: FAKE_REF_BASE + seq,
         idempotencyKey: key,
+        occurredAt: new Date(`${day}T10:00:00.000+07:00`),
         lines: [
           { accountCode: method === 'CASH' ? 'CASH' : 'VNPAY_CLEARING', direction: 'DEBIT', amount },
           { accountCode: 'REVENUE_FOOD', direction: 'CREDIT', amount },
         ],
-      })
-      await prisma.ledgerEntry.update({
-        where: { id },
-        data: { occurredAt: new Date(`${day}T10:00:00.000+07:00`), postedAt: new Date(`${day}T10:00:00.000+07:00`) },
       })
     }
 
@@ -503,17 +510,15 @@ describe('Finance (e2e)', () => {
     const refund = await posting.postEntry({
       branchId: branchB.id,
       refType: 'REFUND',
-      refId: 11,
+      refId: FAKE_REF_BASE + 11,
       idempotencyKey: refundKey,
+      occurredAt: new Date(`${days[1]}T10:00:00.000+07:00`),
       lines: [
         { accountCode: 'REVENUE_FOOD', direction: 'DEBIT', amount: 70_000 },
         { accountCode: 'CASH', direction: 'CREDIT', amount: 70_000 },
       ],
     })
-    await prisma.ledgerEntry.update({
-      where: { id: refund.id },
-      data: { occurredAt: new Date(`${days[1]}T10:00:00.000+07:00`), postedAt: new Date(`${days[1]}T10:00:00.000+07:00`) },
-    })
+    expect(refund.created).toBe(true)
 
     // tính lại projection cho kỳ test (chạy tay như nút "Tính lại" trên FE)
     for (const branchId of [branchA.id, branchB.id]) {
@@ -577,7 +582,7 @@ describe('Finance (e2e)', () => {
     const order = await createGuestOrder(guestId, [{ skuId: sku!.id, quantity: 1 }], '')
     created.orderIds.push(order.body.id)
     created.paymentIds.push(order.body.paymentId)
-    await api().get(`/orders/pay-orders-by-guest/${guestId}`).set(auth()).expect(200)
+    await api().post(`/orders/pay-guest/${guestId}`).send({ method: 'CASH' }).set(auth()).expect(200)
 
     // chạy đối soát kỳ hôm nay cho chi nhánh này
     const run = await api()
@@ -660,23 +665,27 @@ describe('Finance (e2e)', () => {
       orderBy: { id: 'asc' },
       take: 50,
     })
-    // variants là Json -> lọc ở JS: chỉ lấy sản phẩm 1 SKU, không biến thể (payload update đơn giản, hợp lệ)
-    const product = candidates.find(
-      (row) => Array.isArray(row.variants) && (row.variants as unknown[]).length === 0 && row.skus.length === 1,
-    )
+    // variants là Json -> lọc ở JS. Gửi lại đúng variants đang có thay vì đòi sản phẩm rỗng
+    // variants: DB seed không có sản phẩm nào rỗng, và xoá variants của dữ liệu seed là sửa
+    // dữ liệu thật. Chỉ cần 1 SKU để payload update hợp lệ.
+    const product = candidates.find((row) => row.skus.length === 1)
     expect(product).toBeTruthy()
     created.auditEntityIds.push(product!.id)
 
     const sku = product!.skus[0]
+    // `skus[].value` phải khớp option của variants đi kèm (BE validate), nên lấy từ chính variants
+    // của sản phẩm; sản phẩm không có variants thì dùng tên như trước.
+    const variantOptions = (product!.variants as any[] | null)?.[0]?.valueOption
+    const skuValue = Array.isArray(variantOptions) && variantOptions.length ? variantOptions[0].value : product!.name
     const payload = (basePrice: number) => ({
       name: product!.name,
       basePrice,
       virtualPrice: Number(product!.virtualPrice ?? basePrice),
-      variants: [],
+      variants: product!.variants,
       publishedAt: product!.publishedAt,
       images: product!.images,
       categories: product!.categories.map((category) => category.id),
-      skus: [{ image: product!.images[0] ?? '', price: basePrice, value: product!.name }],
+      skus: [{ image: product!.images[0] ?? '', price: basePrice, value: skuValue }],
     })
 
     const before = Number(product!.basePrice)
@@ -808,7 +817,7 @@ describe('Finance (e2e)', () => {
     }
 
     const before = await balances()
-    await api().get(`/orders/pay-orders-by-guest/${guestId}`).set(auth()).expect(200)
+    await api().post(`/orders/pay-guest/${guestId}`).send({ method: 'CASH' }).set(auth()).expect(200)
     const after = await balances()
 
     const delta = (code: string) => Number((after[code] ?? 0) - (before[code] ?? 0))
@@ -838,7 +847,7 @@ describe('Finance (e2e)', () => {
     // giả lập sổ cái chết đúng lúc thu tiền
     const posting = app.get(LedgerPostingService)
     const spy = jest.spyOn(posting, 'postEntry').mockRejectedValueOnce(new Error('e2e: sổ cái chết'))
-    const failed = await api().get(`/orders/pay-orders-by-guest/${guestId}`).set(auth())
+    const failed = await api().post(`/orders/pay-guest/${guestId}`).send({ method: 'CASH' }).set(auth())
     spy.mockRestore()
 
     expect(failed.status).toBeGreaterThanOrEqual(400)
@@ -1007,7 +1016,7 @@ describe('Finance (e2e)', () => {
     created.orderIds.push(order.body.id)
     created.paymentIds.push(order.body.paymentId)
 
-    await api().get(`/orders/pay-orders-by-guest/${guestId}`).set(auth()).expect(200)
+    await api().post(`/orders/pay-guest/${guestId}`).send({ method: 'CASH' }).set(auth()).expect(200)
 
     // 2 × 0,2 × 300.000 + 1 × 0,1 × 40.000 = 124.000
     const entry = await prisma.ledgerEntry.findFirst({
@@ -1788,13 +1797,21 @@ describe('Finance (e2e)', () => {
   })
 
   it('đa ngôn ngữ: en trả en, vi trả vi, thiếu bản dịch thì rơi về vi', async () => {
-    // Sản phẩm có sẵn bản dịch tiếng Việt -> thêm bản dịch tiếng Anh để chứng minh chọn đúng ngôn ngữ
+    // Test tự dựng bản dịch: DB seed không có ProductTranslation/CategoryTranslation nào, nên
+    // trước đây test đỏ vì "thiếu dữ liệu", không phải vì chọn sai ngôn ngữ.
     const product = await prisma.product.findFirst({
-      where: { deletedAt: null, productTranslations: { some: { languageId: 'vi' } } },
+      where: { deletedAt: null },
       select: { id: true, name: true, productTranslations: { select: { languageId: true, name: true } } },
+      orderBy: { id: 'asc' },
     })
     expect(product).toBeTruthy()
-    const viName = product!.productTranslations.find((item) => item.languageId === 'vi')!.name
+    const viTranslation = product!.productTranslations.find((item) => item.languageId === 'vi')
+    const viName = viTranslation?.name ?? product!.name
+    if (!viTranslation) {
+      await prisma.productTranslation.create({
+        data: { productId: product!.id, languageId: 'vi', name: viName, description: 'e2e vi desc' },
+      })
+    }
     const enName = `e2e EN ${Date.now()}`
     await prisma.productTranslation.create({
       data: { productId: product!.id, languageId: 'en', name: enName, description: 'e2e en desc' },
@@ -1828,10 +1845,18 @@ describe('Finance (e2e)', () => {
 
       // danh mục: cùng một cơ chế
       const category = await prisma.category.findFirst({
-        where: { deletedAt: null, parentCategoryId: null, categoryTranslations: { some: { languageId: 'vi' } } },
+        where: { deletedAt: null, parentCategoryId: null },
         select: { id: true, name: true, categoryTranslations: { select: { languageId: true, name: true } } },
+        orderBy: { id: 'asc' },
       })
-      const viCategoryName = category!.categoryTranslations.find((item) => item.languageId === 'vi')?.name ?? category!.name
+      expect(category).toBeTruthy()
+      const viCategoryTranslation = category!.categoryTranslations.find((item) => item.languageId === 'vi')
+      const viCategoryName = viCategoryTranslation?.name ?? category!.name
+      if (!viCategoryTranslation) {
+        await prisma.categoryTranslation.create({
+          data: { categoryId: category!.id, languageId: 'vi', name: viCategoryName, description: 'e2e cat vi' },
+        })
+      }
       const enCategoryName = `e2e CAT EN ${Date.now()}`
       await prisma.categoryTranslation.create({
         data: { categoryId: category!.id, languageId: 'en', name: enCategoryName, description: 'e2e cat en' },
@@ -1845,10 +1870,14 @@ describe('Finance (e2e)', () => {
         const catRowVi = catVi.body.data.find((item: any) => item.id === category!.id)
         expect(catRowVi?.name).toBe(viCategoryName)
       } finally {
-        await prisma.categoryTranslation.deleteMany({ where: { categoryId: category!.id, languageId: 'en' } })
+        await prisma.categoryTranslation.deleteMany({
+          where: { categoryId: category!.id, languageId: { in: viCategoryTranslation ? ['en'] : ['en', 'vi'] } },
+        })
       }
     } finally {
-      await prisma.productTranslation.deleteMany({ where: { productId: product!.id, languageId: 'en' } })
+      await prisma.productTranslation.deleteMany({
+        where: { productId: product!.id, languageId: { in: viTranslation ? ['en'] : ['en', 'vi'] } },
+      })
     }
   })
 

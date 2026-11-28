@@ -26,6 +26,8 @@ export type LedgerRefType =
   | 'ORDER_COGS'
   /** Thu/chi tiền mặt tay trong ca (Nợ CASH/Có OTHER_INCOME hoặc ngược lại) */
   | 'CASH_MOVEMENT'
+  /** Mở ca: tiền lẻ đầu ca vào két (Nợ CASH / Có CASH_FLOAT_SOURCE) */
+  | 'SHIFT_OPENING_FLOAT'
 
 export type PostEntryInput = {
   branchId: number

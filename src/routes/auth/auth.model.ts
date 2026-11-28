@@ -94,24 +94,31 @@ export const GetUserIncludeRoleSchema = UserSchema.extend({
 })
 
 export const refreshTokenShema = z.object({
-  id: z.number().positive(),
   userId: z.number().positive(),
-  token: z.string(),
+  /** sha256 hex của chính refresh token — không bao giờ lưu plaintext */
+  tokenHash: z.string().length(64),
+  /** một lần login = một family; refresh xoay vòng trong cùng family */
+  familyId: z.string().min(1).max(36),
   expiresAt: z.date(),
+  usedAt: z.date().nullable(),
+  revokedAt: z.date().nullable(),
   createdAt: z.date(),
-  updatedAt: z.date(),
 })
 export const createRefreshTokenSchema = refreshTokenShema.pick({
   userId: true,
-  token: true,
+  tokenHash: true,
+  familyId: true,
   expiresAt: true,
 })
 
-export const RefreshTokenResSchema = z.object({
-  userId: z.number().positive(),
-  token: z.string(),
-  expiresAt: z.date(),
-  createdAt: z.date(),
+export const RefreshTokenResSchema = refreshTokenShema.pick({
+  userId: true,
+  tokenHash: true,
+  familyId: true,
+  expiresAt: true,
+  usedAt: true,
+  revokedAt: true,
+  createdAt: true,
 })
 
 export const forgotPasswordSchema = UserSchema.pick({

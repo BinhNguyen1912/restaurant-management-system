@@ -4,6 +4,7 @@ import {
   classifyVnpay,
   EntrySnapshot,
   PaymentSnapshot,
+  selectEntriesForPayment,
   summarizeItems,
 } from '@/routes/reconciliation/reconciliation-check'
 
@@ -120,5 +121,42 @@ describe('summarizeItems', () => {
     expect(summary.byKind).toEqual({})
     expect(summary.difference).toBe('0')
     expect(new Prisma.Decimal(summary.actualTotal).toNumber()).toBe(0)
+  })
+})
+
+describe('selectEntriesForPayment — bút toán phải cùng chi nhánh', () => {
+  const row = (branchId: number, snapshot: Partial<EntrySnapshot> = {}) => ({
+    branchId,
+    snapshot: entry(snapshot),
+  })
+
+  it('bút toán cùng refId nhưng KHÁC chi nhánh không được ghép vào payment', () => {
+    const byRefId = new Map([[1, [row(2, { id: 20 })]]])
+    expect(selectEntriesForPayment({ id: 1, branchId: 1 }, byRefId)).toEqual([])
+  })
+
+  it('cùng chi nhánh thì ghép, kể cả khi có bút toán chi nhánh khác trùng refId', () => {
+    const byRefId = new Map([
+      [
+        1,
+        [row(2, { id: 20 }), row(1, { id: 21 })],
+      ],
+    ])
+    const picked = selectEntriesForPayment({ id: 1, branchId: 1 }, byRefId)
+    expect(picked.map((item) => item.snapshot.id)).toEqual([21])
+  })
+
+  it('payment cũ chưa có branchId thì ghép theo refId (không báo lệch giả cho dữ liệu cũ)', () => {
+    const byRefId = new Map([
+      [
+        1,
+        [row(2, { id: 20 }), row(1, { id: 21 })],
+      ],
+    ])
+    expect(selectEntriesForPayment({ id: 1, branchId: null }, byRefId)).toHaveLength(2)
+  })
+
+  it('không có bút toán nào trùng refId → rỗng (MISSING_IN_LEDGER)', () => {
+    expect(selectEntriesForPayment({ id: 99, branchId: 1 }, new Map())).toEqual([])
   })
 })

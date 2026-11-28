@@ -23,6 +23,8 @@ export interface RefreshTokenPayload extends RefreshTokenPayloadCreate {
   exp: number
 }
 export interface GuestRefreshTokenPayload extends RefreshTokenPayloadCreate {
+  /** Bàn của phiên khách — có trong token lúc cấp, cần khi xoay vòng refresh token. */
+  tableNodeId: number
   iat: number
   exp: number
 }

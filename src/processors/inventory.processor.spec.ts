@@ -12,6 +12,8 @@ function makeFakes(options: { order?: { id: number; status: string } | null; mis
   const calls = {
     reverted: [] as { ingredientId: number; quantity: number }[],
     stockWrites: [] as { id: number; stock: number }[],
+    /** ghi theo delta (decrement) — đường ĐÚNG khi job có `deducted` */
+    stockDeltas: [] as { id: number; delta: number }[],
     statusWrites: 0,
     lowStockEmits: 0,
   }
@@ -31,7 +33,8 @@ function makeFakes(options: { order?: { id: number; status: string } | null; mis
     ingredient: {
       updateMany: async ({ where, data }: any) => {
         if ((options.missingIngredients ?? []).includes(where.id)) return { count: 0 }
-        calls.stockWrites.push({ id: where.id, stock: Number(data.stock.set) })
+        if (data.stock.decrement !== undefined) calls.stockDeltas.push({ id: where.id, delta: Number(data.stock.decrement) })
+        else calls.stockWrites.push({ id: where.id, stock: Number(data.stock.set) })
         return { count: 1 }
       },
       update: async () => {
@@ -125,5 +128,25 @@ describe('InventoryProcessor', () => {
     ).rejects.toThrow('Failed to sync stock with database.')
 
     expect(calls.reverted).toEqual([{ ingredientId: 3, quantity: 1 }])
+  })
+
+  /**
+   * Regression (audit trước prod): job ghi `stock: { set: newStock }` — số tuyệt đối tính trên
+   * Redis lúc bán. Nếu giữa lúc bán và lúc job chạy có phiếu nhập hàng thì phần vừa nhập bị xoá
+   * khỏi DB, trong khi Redis vẫn đúng ⇒ lệch vĩnh viễn.
+   */
+  it('có `deducted`: ghi DELTA, không ghi đè số tuyệt đối', async () => {
+    const { processor, calls } = makeFakes()
+
+    await processor.process(
+      job({
+        orderId: 1,
+        updatedIngredients: [{ ingredientId: 8, newStock: 8 }],
+        deducted: [{ ingredientId: 8, quantity: 4 }],
+      }),
+    )
+
+    expect(calls.stockDeltas).toEqual([{ id: 8, delta: 4 }])
+    expect(calls.stockWrites).toEqual([])
   })
 })

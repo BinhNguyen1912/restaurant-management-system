@@ -52,6 +52,25 @@ export type CheckItem = {
 const d = (value: Prisma.Decimal.Value | undefined | null) => new Prisma.Decimal(value ?? 0)
 
 /**
+ * Chọn bút toán thuộc về 1 payment: **cùng chi nhánh** và cùng `refId`.
+ *
+ * `refId` của bút toán thu tiền là id Payment — dải số dùng chung cho mọi chi nhánh, nên một bút
+ * toán ở chi nhánh khác trùng `refId` KHÔNG phải bút toán của payment này. Trước đây chỉ so `refId`,
+ * nên trên DB mới (id Payment đếm lại từ 1) đối soát ghép bút toán của chi nhánh khác vào và báo
+ * `DUPLICATE` cho payment hoàn toàn bình thường.
+ *
+ * Payment cũ chưa có `branchId` thì vẫn ghép theo `refId` — thà giữ cách cũ còn hơn báo lệch giả
+ * hàng loạt cho dữ liệu cũ.
+ */
+export function selectEntriesForPayment<T extends { branchId: number | null }>(
+  payment: { id: number; branchId: number | null },
+  entriesByRefId: Map<number, T[]>,
+): T[] {
+  const rows = entriesByRefId.get(payment.id) ?? []
+  return payment.branchId === null ? rows : rows.filter((row) => row.branchId === payment.branchId)
+}
+
+/**
  * Phân loại 1 payment dựa trên các bút toán có `refId = payment.id`.
  *
  * - 0 bút toán → MISSING_IN_LEDGER (tiền đã vào, sổ không có)

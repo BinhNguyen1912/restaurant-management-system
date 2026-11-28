@@ -43,10 +43,20 @@ export class InventoryProcessor extends WorkerHost {
         // Dùng updateMany thay vì update: ingredient có thể đã bị xoá (dọn dữ liệu, xoá món) —
         // `update` ném P2025 và làm hỏng CẢ transaction, kéo theo đơn không được đồng bộ.
         const missingIngredients: number[] = []
+        const deductedByIngredient = new Map<number, number>(deducted.map((item) => [item.ingredientId, item.quantity]))
         for (const item of updatedIngredients) {
+          const quantity = deductedByIngredient.get(item.ingredientId)
           const { count } = await tx.ingredient.updateMany({
             where: { id: item.ingredientId },
-            data: { stock: { set: item.newStock } },
+            /**
+             * Ghi DELTA, không ghi số tuyệt đối.
+             *
+             * `newStock` là số tính trên Redis lúc bán; giữa lúc đó và lúc job chạy có thể có
+             * phiếu nhập hàng (DB +10) → ghi đè bằng `newStock` là xoá mất phần vừa nhập, trong
+             * khi Redis vẫn đúng ⇒ lệch vĩnh viễn giữa DB và Redis.
+             * Không có `deducted` (job cũ) thì giữ hành vi cũ để không bỏ đồng bộ.
+             */
+            data: quantity !== undefined ? { stock: { decrement: quantity } } : { stock: { set: item.newStock } },
           })
           if (count === 0) missingIngredients.push(item.ingredientId)
         }
@@ -71,39 +81,51 @@ export class InventoryProcessor extends WorkerHost {
         )
       }
       if (outcome.status !== OrderStatus.PENDING) {
-        this.logger.warn(`Đơn #${orderId} đang ở trạng thái ${outcome.status} — chỉ đồng bộ tồn kho, không đổi trạng thái`)
+        this.logger.warn(
+          `Đơn #${orderId} đang ở trạng thái ${outcome.status} — chỉ đồng bộ tồn kho, không đổi trạng thái`,
+        )
       }
       const result = outcome
 
-      // Xử lý cảnh báo lowStock nếu có
-      if (lowStockItems && lowStockItems.length > 0) {
-        this.logger.warn(`Cảnh báo lowStock cho đơn hàng ${orderId}:`, lowStockItems)
+      /**
+       * Cảnh báo lowStock là hiệu ứng phụ SAU khi DB đã commit. Lỗi ở đây không được để job
+       * retry: lần retry sẽ trừ kho thêm lần nữa dù lần trước đã ghi thành công.
+       */
+      try {
+        // Xử lý cảnh báo lowStock nếu có
+        if (lowStockItems && lowStockItems.length > 0) {
+          this.logger.warn(`Cảnh báo lowStock cho đơn hàng ${orderId}:`, lowStockItems)
 
-        // Lấy thông tin chi tiết nguyên liệu từ DB
-        const lowStockDetails = await Promise.all(
-          lowStockItems.map(async (item) => {
-            const ingredient = await this.prisma.ingredient.findUnique({
-              where: { id: item.ingredientId },
-              include: { unit: true },
-            })
-            return {
-              ingredientId: item.ingredientId,
-              ingredientName: ingredient?.name || `Nguyên liệu ID: ${item.ingredientId}`,
-              currentStock: item.newStock,
-              minStock: item.minStock,
-              unit: ingredient?.unit?.name || 'N/A',
-            }
-          }),
+          // Lấy thông tin chi tiết nguyên liệu từ DB
+          const lowStockDetails = await Promise.all(
+            lowStockItems.map(async (item) => {
+              const ingredient = await this.prisma.ingredient.findUnique({
+                where: { id: item.ingredientId },
+                include: { unit: true },
+              })
+              return {
+                ingredientId: item.ingredientId,
+                ingredientName: ingredient?.name || `Nguyên liệu ID: ${item.ingredientId}`,
+                currentStock: item.newStock,
+                minStock: item.minStock,
+                unit: ingredient?.unit?.name || 'N/A',
+              }
+            }),
+          )
+
+          // Gửi cảnh báo tới admin
+          this.appGateway.server.to(ManagerRoom).emit(WS_EVENTS.LOW_STOCK_WARNING, {
+            message: 'Cảnh báo: Một số nguyên liệu đã đạt ngưỡng tối thiểu',
+            lowStockItems: lowStockDetails,
+            orderId: orderId,
+            timestamp: new Date().toISOString(),
+          })
+          console.log('lowStockDetails at inventory processor', lowStockDetails)
+        }
+      } catch (notifyError: any) {
+        this.logger.warn(
+          `Không gửi được cảnh báo tồn kho thấp cho đơn #${orderId}: ${notifyError?.message ?? notifyError}`,
         )
-
-        // Gửi cảnh báo tới admin
-        this.appGateway.server.to(ManagerRoom).emit(WS_EVENTS.LOW_STOCK_WARNING, {
-          message: 'Cảnh báo: Một số nguyên liệu đã đạt ngưỡng tối thiểu',
-          lowStockItems: lowStockDetails,
-          orderId: orderId,
-          timestamp: new Date().toISOString(),
-        })
-        console.log('lowStockDetails at inventory processor', lowStockDetails)
       }
 
       this.logger.log(`Cập nhật tồn kho và trạng thái đơn hàng thành công cho job: ${job.id}`)

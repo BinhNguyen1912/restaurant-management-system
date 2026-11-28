@@ -60,7 +60,10 @@ export class OrdersService {
     actorRole?: string | null
   }) {
     try {
-      return await this.sharedOrdersRepo.updateOrder({ data: { ...body, orderId }, updatedById, actorRole })
+      // GHI cũng phải kiểm chi nhánh: trước đây STAFF chi nhánh A sửa/huỷ được đơn chi nhánh B
+      // bằng cách biết `id` (đọc thì đã lọc, ghi thì chưa).
+      const branchId = await resolveBranchScope(this.prismaService, { userId: updatedById, roleName: actorRole })
+      return await this.sharedOrdersRepo.updateOrder({ data: { ...body, orderId }, updatedById, actorRole, branchId })
     } catch (error) {
       throw error
     }
@@ -84,9 +87,19 @@ export class OrdersService {
       throw error
     }
   }
-  async payOrdersByGuest({ guestId, updatedById }: { guestId: number; updatedById: number }) {
+  async payOrdersByGuest({
+    guestId,
+    updatedById,
+    method = 'CASH',
+    note,
+  }: {
+    guestId: number
+    updatedById: number
+    method?: 'CASH'
+    note?: string
+  }) {
     try {
-      return await this.ordersRepo.payOrdersByGuest({ guestId, updatedById })
+      return await this.ordersRepo.payOrdersByGuest({ guestId, updatedById, method, note })
     } catch (error) {
       throw error
     }

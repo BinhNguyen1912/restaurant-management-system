@@ -47,6 +47,11 @@ export class WebSocketAuthAdapter extends IoAdapter {
     try {
       const { roleName: roleOfUser, userId } = await this.tokenService.VerifyAccessToken(token)
 
+      // Danh tính đã xác thực được gắn vào socket để các handler KHÔNG phải tin body client gửi.
+      // Trước đây không có: `guest-send-message` nhận `guestId` từ body, `join-manager-room`
+      // không kiểm tra gì ⇒ một socket của khách join được room nhận đơn/tiền của toàn chuỗi.
+      socket.data = { ...socket.data, roleName: roleOfUser, userId }
+
       if (roleOfUser == roleName.GUEST) {
         await this.webSocketRepo.create({
           guestId: userId,

@@ -1,4 +1,5 @@
 import { toMoneyNumbers } from '@/shared/service/money-serializer'
+import { computeDepositAmount, isAllowedDepositPercent } from '@/shared/service/deposit-policy'
 import { resolveBranchIdByTableNode } from '@/shared/service/branch.resolver'
 import { PrismaService } from '@/shared/service/prisma.service'
 import { BadRequestException, Injectable } from '@nestjs/common'
@@ -86,19 +87,6 @@ export class ReservationRepo {
       throw error
     }
   }
-  private async calculateDepositAmount(preOrderTotal: number, depositPercent: number): Promise<number> {
-    if (![30, 50, 70, 100].includes(depositPercent)) {
-      throw new Error('Deposit percent must be 30, 50, 70, or 100')
-    }
-
-    // Tien coc: Decimal -> lam tron ve dong (VND khong co phan le)
-    const depositAmount = new Prisma.Decimal(preOrderTotal)
-      .mul(depositPercent)
-      .div(100)
-      .toDecimalPlaces(0, Prisma.Decimal.ROUND_HALF_UP)
-    return depositAmount.toNumber()
-  }
-
   async ValidateTable(tableNodeId: number) {
     const table = await this.sharedTableNodeRepo.GetTableNodeById(tableNodeId)
     if (!table) {
@@ -132,16 +120,10 @@ export class ReservationRepo {
       preOrderItems,
       tableNodeId,
       depositPercent,
-      depositAmount,
       reservationTime,
       customerName,
       note,
     } = body
-    // if (!hasPreOrder && (depositAmount || depositPercent)) {
-    //   throw new BadRequestException(
-    //     'Không hợp lệ: không có preorder nhưng lại truyền depositAmount hoặc depositPercent.',
-    //   )
-    // }
 
     try {
       let preOrderTotal = 0
@@ -153,11 +135,14 @@ export class ReservationRepo {
         if (!calculation) {
           throw new Error('Error')
         }
-        const expectedDeposit = await this.calculateDepositAmount(calculation.totalSku, depositPercent!)
-
-        if (Math.abs(expectedDeposit - depositAmount!) > 1000) {
-          throw new Error('Deposit amount mismatch')
+        // Mức cọc lạ (ví dụ 40%) không được zod chặn, nên phải chặn ở đây: computeDepositAmount
+        // ném lỗi thường và biến thành 500 thay vì 400.
+        if (!isAllowedDepositPercent(depositPercent)) {
+          throw new BadRequestException(`Mức cọc phải là 30, 50, 70 hoặc 100%, nhận ${depositPercent ?? 0}%`)
         }
+        // Tiền cọc server luôn tự tính từ %cọc × giá trị món đặt trước. Client không gửi số tiền cọc,
+        // nên Payment.amount, số VNPay thu và bút toán quyết toán cọc luôn là cùng một số.
+        const expectedDeposit = computeDepositAmount(calculation.totalSku, depositPercent!)
         preOrderTotal = calculation.totalSku
         const result = await this.prismaService.$transaction(async (tx) => {
           // Reservation gan voi 1 ban cu the -> chi nhanh lay tu ban (ADR 0001 D4)
@@ -168,7 +153,7 @@ export class ReservationRepo {
               customerPhone,
               customerName,
               guestCount,
-              depositAmount,
+              depositAmount: expectedDeposit,
               depositPercent,
               createdById: userId,
               userId,
@@ -186,7 +171,7 @@ export class ReservationRepo {
             reservationId: newReservation.id,
             userId,
             createdById: userId,
-            depositAmount: depositAmount || 0,
+            depositAmount: expectedDeposit,
             tx,
           })
 
@@ -232,8 +217,8 @@ export class ReservationRepo {
             customerPhone,
             customerName,
             guestCount,
-            depositAmount,
-            depositPercent,
+            depositAmount: null,
+            depositPercent: null,
             createdById: userId,
             userId,
             tableNodeId,

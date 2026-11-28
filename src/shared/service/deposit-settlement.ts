@@ -25,3 +25,17 @@ export function computeDepositSettlementAmount(
   if (deposit.lessThanOrEqualTo(0) || total.lessThanOrEqualTo(0)) return new Prisma.Decimal(0)
   return Prisma.Decimal.min(deposit, total).toDecimalPlaces(0)
 }
+
+/**
+ * Số tiền khách còn phải trả tại quầy = tiền hoá đơn trừ phần cọc đã dùng được.
+ *
+ * Dùng để đối chiếu với Payment.amount của lần thu tiền thứ hai. Trả 0 khi cọc đã phủ hết hoá đơn.
+ */
+export function computeOutstandingAmount(
+  grandTotal: Prisma.Decimal.Value | number,
+  depositAmount: Prisma.Decimal.Value | number | null | undefined,
+): Prisma.Decimal {
+  const total = new Prisma.Decimal(grandTotal).toDecimalPlaces(0)
+  if (total.lessThanOrEqualTo(0)) return new Prisma.Decimal(0)
+  return Prisma.Decimal.max(total.minus(computeDepositSettlementAmount(depositAmount, total)), new Prisma.Decimal(0)).toDecimalPlaces(0)
+}

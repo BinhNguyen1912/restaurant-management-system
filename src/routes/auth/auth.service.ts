@@ -17,16 +17,19 @@ import { AuthRepo } from '@/routes/auth/auth.repo'
 import envConfig from '@/shared/config'
 import { TypeOfVerification, TypeOfVerificationType } from '@/shared/constants/auth.constant'
 import { EmailAlreadyExistsException, InvalidEmailException } from '@/shared/error'
-import { generateCode, isNotFoundPrisma } from '@/shared/helper'
+import { generateCode } from '@/shared/helper'
 import { EmailService } from '@/shared/service/email.service'
 import { HashingService } from '@/shared/service/hashing.service'
+import { hashRefreshToken } from '@/shared/service/token-hash'
 import { TokenService } from '@/shared/service/token.service'
+import { SharedRefreshTokenRepo } from '@/shared/shared-repository/shared-refreshToken'
 import { SharedRoleRepo } from '@/shared/shared-repository/shared-role.repo'
 import { SharedUserRepo } from '@/shared/shared-repository/shared-user.repo'
-import { AccessTokenPayloadCreate } from '@/shared/types/jwt.types'
+import { AccessTokenPayloadCreate, RefreshTokenPayload } from '@/shared/types/jwt.types'
 import { Injectable, UnprocessableEntityException } from '@nestjs/common'
 import { addMinutes } from 'date-fns'
 import ms, { StringValue } from 'ms'
+import { v4 as uuidv4 } from 'uuid'
 @Injectable()
 export class AuthService {
   constructor(
@@ -36,6 +39,7 @@ export class AuthService {
     private readonly tokenService: TokenService,
     private readonly sharedRoleRepo: SharedRoleRepo,
     private readonly hashingService: HashingService,
+    private readonly sharedRefreshTokenRepo: SharedRefreshTokenRepo,
   ) {}
 
   async verificationCode(payload: { email: string; code: string; type: TypeOfVerificationType }) {
@@ -51,7 +55,16 @@ export class AuthService {
     }
     return record
   }
-  async generateTokens(payload: AccessTokenPayloadCreate): Promise<{ accessToken: string; refreshToken: string }> {
+  /**
+   * Cấp cặp token và lưu refresh token (dạng hash) vào DB.
+   *
+   * `familyId` chỉ truyền khi refresh — mọi lượt xoay vòng nằm trong cùng family của lần login,
+   * nhờ vậy phát hiện dùng lại token cũ là cắt được toàn bộ chuỗi.
+   */
+  async generateTokens(
+    payload: AccessTokenPayloadCreate,
+    familyId: string = uuidv4(),
+  ): Promise<{ accessToken: string; refreshToken: string }> {
     const [accessToken, refreshToken] = await Promise.all([
       this.tokenService.createAcessToken(payload),
       this.tokenService.createRefreshToken(payload),
@@ -59,7 +72,8 @@ export class AuthService {
     const decodeRefreshToken = await this.tokenService.VerifyRefreshToken(refreshToken)
     await this.authRepo.createRefreshToken({
       userId: payload.userId,
-      token: refreshToken,
+      tokenHash: hashRefreshToken(refreshToken),
+      familyId,
       expiresAt: new Date(decodeRefreshToken.exp * 1000),
     })
 
@@ -176,39 +190,64 @@ export class AuthService {
         email_code_type: { email, code, type: TypeOfVerification.FORGOT_PASSWORD },
       }),
     ])
+    // Đổi mật khẩu phải cắt mọi phiên cũ: kẻ đã chiếm được refresh token thì đổi mật khẩu
+    // không còn ý nghĩa gì nếu phiên cũ vẫn sống tiếp
+    await this.sharedRefreshTokenRepo.revokeUserRefreshTokens(checkEmail.id)
     return { message: 'Password has been reset successfully' }
   }
 
+  /**
+   * Đăng xuất thu hồi **toàn bộ** refresh token của user, không chỉ token gửi lên: người dùng bấm
+   * "đăng xuất" trên một thiết bị nhưng token ở thiết bị khác cũng phải chết.
+   * Gọi lại nhiều lần vẫn trả cùng một kết quả (revoke là idempotent).
+   */
   async logout({ refreshToken }: LogoutBodyType) {
+    let payload: RefreshTokenPayload
     try {
-      //kiem tra token con han kh
-      await this.tokenService.VerifyRefreshToken(refreshToken)
-
-      //xoa RT trong DB
-
-      const deleteRefreshToken = await this.authRepo.deleteRefreshToken({ token: refreshToken })
-
-      return { message: 'Đằng xuất thành công' }
-    } catch (e) {
-      if (isNotFoundPrisma(e)) throw RefreshTokenAlreadyUsedException
+      //kiểm tra token còn hạn và đúng chữ ký
+      payload = await this.tokenService.VerifyRefreshToken(refreshToken)
+    } catch {
       throw new UnprocessableEntityException()
     }
+
+    await this.sharedRefreshTokenRepo.revokeUserRefreshTokens(payload.userId)
+
+    return { message: 'Đằng xuất thành công' }
   }
 
+  /**
+   * Đổi refresh token lấy cặp token mới.
+   *
+   * Không đọc thẳng payload JWT để lấy quyền: claim token trong DB (nguyên tử) rồi đọc lại dòng
+   * vừa claim — quyền/role lấy từ DB nên đổi quyền có hiệu lực ngay ở lượt refresh kế tiếp.
+   */
   async provideAccessTokenByRefreshToken(refreshTokenBody: RefreshTokenBodyType) {
-    const { userId } = await this.tokenService.VerifyRefreshToken(refreshTokenBody.refreshToken)
-    const refreshTokenInDB = await this.authRepo.findRefreshToeknIncludeRole({ token: refreshTokenBody.refreshToken })
+    // Token rác/hết hạn bị chặn trước khi chạm DB.
+    await this.tokenService.VerifyRefreshToken(refreshTokenBody.refreshToken)
 
-    if (!refreshTokenInDB) throw RefreshTokenNotFoundOrExpiredException
+    const presentedTokenHash = hashRefreshToken(refreshTokenBody.refreshToken)
+    const claim = await this.authRepo.claimRefreshToken(presentedTokenHash)
 
-    const { accessToken, refreshToken } = await this.generateTokens({
-      roleId: refreshTokenInDB.user.roleId,
-      roleName: refreshTokenInDB.user.role.name,
-      userId,
-    })
-    return {
-      accessToken,
-      refreshToken,
+    // Không có dòng nào: token chưa từng được cấp (hoặc DB đã dọn) => 401.
+    if (claim.status === 'NOT_FOUND') throw RefreshTokenNotFoundOrExpiredException
+    // Có dòng nhưng đã dùng/bị thu hồi: repo vừa revoke cả family => 401.
+    if (claim.status === 'REUSE') throw RefreshTokenAlreadyUsedException
+
+    try {
+      return await this.generateTokens(
+        {
+          roleId: claim.record.user.roleId,
+          roleName: claim.record.user.role.name,
+          userId: claim.record.userId,
+        },
+        claim.record.familyId,
+      )
+    } catch (error) {
+      // Cấp token kế nhiệm thất bại sau khi đã claim: để nguyên thì token vừa trình ra ở trạng thái
+      // "đã dùng" mà không có token thay thế, lần thử lại của client sẽ bị coi là dùng lại token cũ
+      // và revoke cả family — một lỗi DB tạm thời hoá thành đăng xuất mọi thiết bị của user.
+      await this.authRepo.unclaimRefreshToken(presentedTokenHash)
+      throw error
     }
   }
 }
