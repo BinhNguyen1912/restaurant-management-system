@@ -18,6 +18,8 @@ export const LedgerRefTypeSchema = z.enum([
   'VNPAY_SETTLEMENT',
   'ORDER_COGS',
   'CASH_MOVEMENT',
+  /** Tiền lẻ đầu ca: thiếu giá trị này thì GET /ledger/entries trả 500 ngay khi có ca đã mở */
+  'SHIFT_OPENING_FLOAT',
 ])
 
 export const LedgerEntryStatusSchema = z.enum(['DRAFT', 'POSTED'])

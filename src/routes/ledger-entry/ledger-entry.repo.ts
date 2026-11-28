@@ -3,6 +3,7 @@ import { Injectable } from '@nestjs/common'
 import { PrismaService } from '@/shared/service/prisma.service'
 import { CashBookQueryType, LedgerEntryQueryType } from '@/routes/ledger-entry/ledger-entry.model'
 import { summarizeLines } from '@/routes/ledger-entry/ledger-entry-balance'
+import { RECEIVING_REF_TYPE_LIST } from '@/shared/constants/ledger.constant'
 
 /**
  * Đọc sổ cái dưới dạng NHẬT KÝ (audit): mỗi bút toán kèm các dòng Nợ/Có.
@@ -317,7 +318,13 @@ export class LedgerReconciliationRepo {
     return rows
   }
 
-  /** Tổng phát sinh Nợ trên tài khoản nhận tiền (chỉ bút toán POSTED) */
+  /**
+   * Tổng phát sinh Nợ trên tài khoản nhận tiền (chỉ bút toán POSTED **thu tiền thật**).
+   *
+   * Phải lọc `refType IN RECEIVING_REF_TYPES`: nếu không, mọi dòng `Nợ CASH` của thu/chi tay
+   * (`CASH_MOVEMENT`) và chênh lệch ca (`CASH_VARIANCE`) bị cộng vào "số đã ghi sổ", trong khi vế
+   * đối chiếu là `Payment.amount` ⇒ đối soát lệch có hệ thống.
+   */
   private async ledgerDebitTotals(accountCodes: string[], input: ReconciliationInput) {
     const occurredAt = this.periodRange(input)
     const rows = await this.prismaService.ledgerLine.groupBy({
@@ -326,6 +333,7 @@ export class LedgerReconciliationRepo {
         direction: 'DEBIT',
         entry: {
           status: 'POSTED',
+          refType: { in: RECEIVING_REF_TYPE_LIST },
           ...(occurredAt ? { occurredAt } : {}),
           ...(input.branchId ? { branchId: input.branchId } : {}),
         },
@@ -380,7 +388,7 @@ export class LedgerReconciliationRepo {
     const posted = await this.prismaService.ledgerEntry.findMany({
       where: {
         status: 'POSTED',
-        refType: { in: ['ORDER_PAID_CASH', 'ORDER_PAID_VNPAY'] },
+        refType: { in: RECEIVING_REF_TYPE_LIST },
         refId: { in: orderPayments.map((payment) => payment.id) },
       },
       select: { refId: true },

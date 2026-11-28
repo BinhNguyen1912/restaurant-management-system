@@ -5,14 +5,12 @@ import { resolvePeriod } from '@/routes/reconciliation/reconciliation.period'
 import { Prisma } from '@prisma/client'
 import { PrismaService } from '@/shared/service/prisma.service'
 import { VnPayService } from '@/shared/service/vnpay.service'
-import { CheckItem, classifyPayment, classifyVnpay, EntrySnapshot, summarizeItems } from '@/routes/reconciliation/reconciliation-check'
+import { CheckItem, classifyPayment, classifyVnpay, EntrySnapshot, selectEntriesForPayment, summarizeItems } from '@/routes/reconciliation/reconciliation-check'
 import { RunQueryType } from '@/routes/reconciliation/reconciliation.model'
+import { RECEIVING_REF_TYPE_LIST, RECEIVING_REF_TYPES } from '@/shared/constants/ledger.constant'
 
-/** tài khoản nhận tiền theo loại bút toán thu tiền */
-const RECEIVING_ACCOUNT: Record<string, string> = {
-  ORDER_PAID_CASH: 'CASH',
-  ORDER_PAID_VNPAY: 'VNPAY_CLEARING',
-}
+/** tài khoản nhận tiền theo loại bút toán thu tiền — dùng chung với `paymentsWithoutEntry` */
+const RECEIVING_ACCOUNT: Record<string, string> = RECEIVING_REF_TYPES
 
 @Injectable()
 export class ReconciliationService {
@@ -57,7 +55,7 @@ export class ReconciliationService {
       const entries = payments.length
         ? await this.prismaService.ledgerEntry.findMany({
             where: {
-              refType: { in: ['ORDER_PAID_CASH', 'ORDER_PAID_VNPAY'] },
+              refType: { in: RECEIVING_REF_TYPE_LIST },
               refId: { in: payments.map((payment) => payment.id) },
             },
             select: {
@@ -65,31 +63,42 @@ export class ReconciliationService {
               status: true,
               refType: true,
               refId: true,
+              branchId: true,
               lines: { select: { direction: true, amount: true, account: { select: { code: true } } } },
             },
           })
         : []
 
-      const entriesByPayment = new Map<number, EntrySnapshot[]>()
+      /**
+       * `refId` là id Payment — dải số dùng chung, nên bút toán cùng `refId` ở chi nhánh khác
+       * không phải của payment này (`selectEntriesForPayment` giải thích chi tiết).
+       */
+      const entriesByRefId = new Map<number, { branchId: number; snapshot: EntrySnapshot }[]>()
       for (const entry of entries) {
         const accountCode = RECEIVING_ACCOUNT[entry.refType]
         const receivedAmount = entry.lines
           .filter((line) => line.direction === 'DEBIT' && line.account.code === accountCode)
           .reduce((sum, line) => sum.add(new Prisma.Decimal(line.amount)), new Prisma.Decimal(0))
 
-        const list = entriesByPayment.get(entry.refId) ?? []
+        const list = entriesByRefId.get(entry.refId) ?? []
         list.push({
-          id: entry.id,
-          status: entry.status,
-          refType: entry.refType,
-          refId: entry.refId,
-          receivedAmount,
+          branchId: entry.branchId,
+          snapshot: {
+            id: entry.id,
+            status: entry.status,
+            refType: entry.refType,
+            refId: entry.refId,
+            receivedAmount,
+          },
         })
-        entriesByPayment.set(entry.refId, list)
+        entriesByRefId.set(entry.refId, list)
       }
 
       const items: CheckItem[] = payments.map((payment) =>
-        classifyPayment(payment, entriesByPayment.get(payment.id) ?? []),
+        classifyPayment(
+          payment,
+          selectEntriesForPayment(payment, entriesByRefId).map((row) => row.snapshot),
+        ),
       )
 
       // ---- VNPay: so từng giao dịch qua querydr ----

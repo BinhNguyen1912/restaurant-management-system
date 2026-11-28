@@ -36,22 +36,32 @@ const d = (value: Prisma.Decimal.Value | undefined | null): Prisma.Decimal =>
  * Sinh các dòng bút toán cho 1 đơn đã thu tiền.
  *
  * Quy tắc (ADR 0001 D6):
- * - Nợ tiền (CASH / VNPAY_CLEARING) = `grandTotal` — đúng số tiền khách trả
+ * - Nợ tiền (CASH / VNPAY_CLEARING) = `grandTotal` trừ phần cọc đã dùng — đúng số tiền khách trả tại quầy
+ * - Nợ `DEPOSIT_LIABILITY` = phần cọc đã nhận trước đó, nay mới thành doanh thu
  * - Có doanh thu món = subtotal − discount
  * - Có phí phục vụ, thuế (nếu > 0)
  * - Phần chênh còn lại (dữ liệu cũ backfill, làm tròn) ghi vào `ROUNDING_ADJUSTMENT`
  *   để bút toán LUÔN cân — thà lộ ra 1 dòng chênh còn hơn ghi sổ lệch.
  * - Tip không ghi sổ (khoan làm).
  *
- * Hàm này cam kết: Σ Nợ = Σ Có.
+ * Hàm này cam kết: Σ Nợ = Σ Có = `grandTotal`, cọc chỉ đổi chỗ ghi nợ chứ không đổi tổng.
  */
-export function buildOrderLedgerLines(parts: OrderMoneyParts, paidInto: PaymentAccount): LedgerLineSpec[] {
+export function buildOrderLedgerLines(
+  parts: OrderMoneyParts,
+  paidInto: PaymentAccount,
+  options?: { depositSettled?: Prisma.Decimal.Value },
+): LedgerLineSpec[] {
   const grandTotal = d(parts.grandTotal)
   if (grandTotal.lessThanOrEqualTo(0)) return []
 
-  const lines: LedgerLineSpec[] = [
-    { accountCode: paidInto, direction: 'DEBIT', amount: grandTotal },
-  ]
+  const depositSettled = d(options?.depositSettled)
+  // Cọc đã nhận trước đó là nợ với khách: chỉ phần còn lại mới là tiền thu tại quầy.
+  const settled = depositSettled.greaterThan(0) ? Prisma.Decimal.min(depositSettled, grandTotal) : ZERO
+  const cashCollected = grandTotal.minus(settled)
+
+  const lines: LedgerLineSpec[] = []
+  if (cashCollected.greaterThan(0)) lines.push({ accountCode: paidInto, direction: 'DEBIT', amount: cashCollected })
+  if (settled.greaterThan(0)) lines.push({ accountCode: 'DEPOSIT_LIABILITY', direction: 'DEBIT', amount: settled })
 
   const service = d(parts.serviceChargeAmount)
   const tax = d(parts.taxTotal)
