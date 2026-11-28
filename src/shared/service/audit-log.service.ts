@@ -31,8 +31,18 @@ export type AuditActionType =
   | 'LOGIN_LOCKED'
   // trừ điểm khách để giảm giá một hoá đơn (động vào tiền của khách nên phải giải trình được)
   | 'POINTS_REDEEMED'
+  // ghi nhận/rút đồng ý xử lý dữ liệu cá nhân của khách (NĐ 13/2023/NĐ-CP)
+  | 'CONSENT_RECORDED'
 
-export type AuditEntityTypeValue = 'ORDER' | 'PRODUCT' | 'SKU' | 'PAYMENT' | 'ROLE' | 'USER' | 'INGREDIENT'
+export type AuditEntityTypeValue =
+  | 'ORDER'
+  | 'PRODUCT'
+  | 'SKU'
+  | 'PAYMENT'
+  | 'ROLE'
+  | 'USER'
+  | 'INGREDIENT'
+  | 'CUSTOMER'
 
 export type RecordAuditInput = {
   actorId?: number | null

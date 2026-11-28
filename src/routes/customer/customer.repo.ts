@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common'
-import { Prisma } from '@prisma/client'
+import { ConsentPurpose, Prisma } from '@prisma/client'
 import { PrismaService } from '@/shared/service/prisma.service'
 import { OrderStatus, PaymentStatus } from '@/shared/constants/order.constant'
 import { roleName } from '@/shared/constants/role.constant'
@@ -390,5 +390,35 @@ export class CustomerRepo {
         createdAt: true,
       },
     })
+  }
+
+  /**
+   * Nhật ký đồng ý dữ liệu cá nhân của khách (mới nhất trước).
+   *
+   * Đọc CẢ LỊCH SỬ chứ không chỉ dòng mới nhất: trạng thái hiện tại là "dòng mới nhất theo từng mục
+   * đích", mà phép đó cần nhiều dòng — và lịch sử chính là bằng chứng khách đã đổi ý lúc nào.
+   */
+  consents(customerId: number, client: Db = this.prismaService) {
+    return client.consentLog.findMany({
+      where: { customerId },
+      orderBy: { createdAt: 'desc' },
+      select: { purpose: true, version: true, granted: true, createdAt: true },
+    })
+  }
+
+  /** Ghi một dòng đồng ý/rút đồng ý — append, KHÔNG sửa dòng cũ (trigger DB chặn UPDATE). */
+  appendConsent(
+    data: {
+      customerId: number
+      purpose: ConsentPurpose
+      version: string
+      granted: boolean
+      ip?: string | null
+      note?: string | null
+      createdById?: number | null
+    },
+    client: Db = this.prismaService,
+  ) {
+    return client.consentLog.create({ data, select: { id: true, granted: true, createdAt: true } })
   }
 }

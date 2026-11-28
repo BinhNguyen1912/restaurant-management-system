@@ -13,6 +13,14 @@ export const reservationBodySchema = ReservationSchema.pick({
   depositPercent: true,
   reservationTime: true,
   note: true,
+}).extend({
+  /**
+   * Khách có đồng ý nhận ưu đãi không, hỏi lúc đặt bàn (NĐ 13/2023 — đồng ý theo từng mục đích).
+   *
+   * KHÔNG gửi = chưa hỏi khách ⇒ không ghi gì. `false` cũng là thông tin phải lưu: đừng hỏi lại
+   * mỗi lần khách đặt bàn.
+   */
+  marketingConsent: z.boolean().optional(),
 })
   .extend({
     hasPreOrder: z.boolean(),

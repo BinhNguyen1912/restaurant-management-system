@@ -209,6 +209,8 @@ model User {
   customer                    Customer?
   /// các lần trừ điểm khách do tài khoản này thực hiện (ai bấm nút đổi điểm)
   pointRedemptions            PointRedemption[]     @relation("PointRedemptionCreatedBy")
+  /// các dòng nhật ký đồng ý dữ liệu cá nhân do tài khoản này ghi nhận (nhân viên hỏi khách)
+  recordedConsents            ConsentLog[]          @relation("ConsentLogCreatedBy")
   createdAreas                Area[]                @relation("AreaCreatedBy")
   deletedAreas                Area[]                @relation("AreaDeletedBy")
   updatedAreas                Area[]                @relation("AreaUpdatedBy")
@@ -711,8 +713,48 @@ model Customer {
   reservations Reservation[]
   /// các lần đổi điểm thành giảm giá (nửa "đã dùng" của số dư điểm)
   redemptions  PointRedemption[]
+  /// nhật ký đồng ý xử lý dữ liệu cá nhân (mỗi lần đồng ý/rút là một dòng, không sửa)
+  consents     ConsentLog[]
 
   @@index([deletedAt, createdAt])
+}
+
+/// Mục đích xử lý dữ liệu cá nhân — tách theo mục đích vì NĐ 13/2023 buộc đồng ý **theo từng
+/// mục đích**: khách cho số để quán liên hệ về đơn KHÔNG có nghĩa là đồng ý nhận quảng cáo.
+enum ConsentPurpose {
+  /// liên hệ về đơn/đặt bàn — cần để thực hiện việc khách yêu cầu
+  SERVICE
+  /// gửi ưu đãi, khuyến mại — phải được đồng ý riêng
+  MARKETING
+}
+
+/// Nhật ký đồng ý xử lý dữ liệu cá nhân (NĐ 13/2023/NĐ-CP, Điều 9).
+///
+/// APPEND-ONLY: mỗi lần khách đồng ý hoặc rút đồng ý là MỘT DÒNG MỚI; trigger DB chặn UPDATE.
+/// "Đang đồng ý" = dòng mới nhất của (customerId, purpose) — muốn biết khách đã đổi ý thì đọc lịch
+/// sử, không ghi đè lịch sử. Rút đồng ý KHÔNG xoá dòng cũ, vì chính tờ giấy đồng ý cũ là bằng chứng
+/// rằng quán đã có cơ sở xử lý dữ liệu trong khoảng thời gian trước đó.
+///
+/// `version` = phiên bản chính sách khách đã được đọc; đổi chính sách thì phải hỏi lại (xem
+/// `customer.consent-policy.ts`: phiên bản cũ ⇒ coi như chưa đồng ý).
+model ConsentLog {
+  id          Int            @id @default(autoincrement())
+  customerId  Int
+  purpose     ConsentPurpose
+  /// phiên bản chính sách tại thời điểm ghi nhận
+  version     String         @db.VarChar(20)
+  /// true = đồng ý, false = rút đồng ý
+  granted     Boolean
+  /// IP lúc ghi nhận (bằng chứng ai/nơi nào) — null khi ghi qua script nội bộ
+  ip          String?        @db.VarChar(45)
+  note        String?        @db.VarChar(255)
+  createdById Int?
+  createdAt   DateTime       @default(now())
+
+  customer  Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  createdBy User?    @relation("ConsentLogCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([customerId, purpose, createdAt])
 }
 
 model Category {
@@ -1426,6 +1468,8 @@ enum AuditAction {
   LOGIN_LOCKED
   /// trừ điểm khách để giảm giá một hoá đơn (kèm số điểm và số tiền đã giảm)
   POINTS_REDEEMED
+  /// ghi nhận/rút đồng ý xử lý dữ liệu cá nhân của khách (NĐ 13/2023)
+  CONSENT_RECORDED
 }
 
 enum AuditEntityType {
@@ -1436,6 +1480,7 @@ enum AuditEntityType {
   ROLE
   USER
   INGREDIENT
+  CUSTOMER
 }
 
 model AuditLog {

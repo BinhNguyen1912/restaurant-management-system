@@ -454,4 +454,105 @@ describe('Customer (e2e)', () => {
     // tiền cọc vẫn nguyên: phần còn lại được thu bằng Payment khác, ghi đè ở đây là hỏng đối chiếu
     expect(Number(after.payment.amount.toString())).toBe(DEPOSIT)
   })
+
+  it('consent: chưa hỏi khách thì mọi mục đích đều CHƯA đồng ý', async () => {
+    const res = await api().get(`/customers/${customerId}/consent`).set(auth()).expect(200)
+    const marketing = res.body.data.find((item: { purpose: string }) => item.purpose === 'MARKETING')
+    const service = res.body.data.find((item: { purpose: string }) => item.purpose === 'SERVICE')
+    expect(marketing).toMatchObject({ granted: false, active: false, stale: false, at: null, version: null })
+    expect(service).toMatchObject({ granted: false, active: false })
+
+    // hồ sơ khách trả cùng dữ liệu đó (một nguồn, hai chỗ đọc)
+    const detail = await api().get(`/customers/${customerId}`).set(auth()).expect(200)
+    expect(detail.body.data.consents).toHaveLength(2)
+  })
+
+  it('consent: ghi nhận đồng ý, lặp lại thì không sinh dòng mới, rút thì mất hiệu lực', async () => {
+    const granted = await api()
+      .post(`/customers/${customerId}/consent`)
+      .set(auth())
+      .send({ purpose: 'MARKETING', granted: true })
+      .expect(201)
+    expect(granted.body.data.find((item: { purpose: string }) => item.purpose === 'MARKETING')).toMatchObject({
+      granted: true,
+      active: true,
+      stale: false,
+    })
+
+    // đồng ý theo TỪNG mục đích: nhận ưu đãi không kéo theo mục đích phục vụ
+    expect(granted.body.data.find((item: { purpose: string }) => item.purpose === 'SERVICE')).toMatchObject({
+      active: false,
+      at: null,
+    })
+
+    await api()
+      .post(`/customers/${customerId}/consent`)
+      .set(auth())
+      .send({ purpose: 'MARKETING', granted: true })
+      .expect(201)
+    expect(await prisma.consentLog.count({ where: { customerId } })).toBe(1)
+
+    const revoked = await api()
+      .post(`/customers/${customerId}/consent`)
+      .set(auth())
+      .send({ purpose: 'MARKETING', granted: false, note: 'Khách đổi ý' })
+      .expect(201)
+    expect(revoked.body.data.find((item: { purpose: string }) => item.purpose === 'MARKETING')).toMatchObject({
+      granted: false,
+      active: false,
+    })
+
+    // append-only: rút đồng ý KHÔNG xoá dòng cũ, lịch sử là bằng chứng
+    const rows = await prisma.consentLog.findMany({ where: { customerId }, orderBy: { id: 'asc' } })
+    expect(rows.map((row) => row.granted)).toEqual([true, false])
+    expect(rows[0].ip).toBeTruthy()
+
+    const audit = await prisma.auditLog.findFirst({
+      where: { entityType: 'CUSTOMER', entityId: customerId, action: 'CONSENT_RECORDED' },
+      orderBy: { id: 'desc' },
+    })
+    expect(audit).not.toBeNull()
+  })
+
+  it('consent: nhật ký KHÔNG sửa được (append-only ở tầng DB)', async () => {
+    const row = await prisma.consentLog.findFirstOrThrow({ where: { customerId }, select: { id: true } })
+    await expect(
+      prisma.$executeRawUnsafe(`UPDATE "ConsentLog" SET granted = NOT granted WHERE id = ${row.id}`),
+    ).rejects.toThrow(/append-only/)
+  })
+
+  it('đặt bàn có hỏi khách: đồng ý nhận ưu đãi được ghi ngay khi thu SĐT', async () => {
+    const phone = '0999000333'
+    await prisma.customer.deleteMany({ where: { phone } })
+    const table = await prisma.tableNode.findFirstOrThrow({ where: { status: 'AVAILABLE', deletedAt: null }, select: { id: true } })
+
+    const res = await api()
+      .post('/reservation')
+      .set(auth())
+      .send({
+        customerName: 'Khách Consent',
+        customerPhone: phone,
+        tableNodeId: table.id,
+        guestCount: 2,
+        depositPercent: 0,
+        reservationTime: new Date(Date.now() + 3_600_000).toISOString(),
+        note: '',
+        hasPreOrder: false,
+        preOrderItems: [],
+        marketingConsent: true,
+      })
+    expect(res.status).toBe(201)
+
+    try {
+      const customer = await prisma.customer.findFirstOrThrow({ where: { phone }, select: { id: true } })
+      const rows = await prisma.consentLog.findMany({ where: { customerId: customer.id } })
+      expect(rows).toHaveLength(1)
+      expect(rows[0]).toMatchObject({ purpose: 'MARKETING', granted: true })
+    } finally {
+      const reservationId = res.body.data?.reservation?.id ?? res.body.data?.id
+      if (reservationId) await prisma.reservation.deleteMany({ where: { id: reservationId } })
+      await prisma.tableNode.updateMany({ where: { id: table.id, status: 'RESERVED' }, data: { status: 'AVAILABLE' } })
+      await prisma.customer.deleteMany({ where: { phone } })
+    }
+  })
 })

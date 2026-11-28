@@ -1,5 +1,7 @@
 import { createZodDto } from 'nestjs-zod'
 import {
+  CustomerConsentBodySchema,
+  CustomerConsentResSchema,
   CustomerListQuerySchema,
   CustomerListResSchema,
   CustomerDetailResSchema,
@@ -13,6 +15,8 @@ import {
   CustomerReportResSchema,
 } from '@/routes/customer/customer.model'
 
+export class CustomerConsentBodyDTO extends createZodDto(CustomerConsentBodySchema) {}
+export class CustomerConsentResDTO extends createZodDto(CustomerConsentResSchema) {}
 export class CustomerListQueryDTO extends createZodDto(CustomerListQuerySchema) {}
 export class CustomerListResDTO extends createZodDto(CustomerListResSchema) {}
 export class CustomerDetailResDTO extends createZodDto(CustomerDetailResSchema) {}

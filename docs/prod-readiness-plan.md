@@ -120,7 +120,19 @@ email hỏng thì dòng vừa tạo bị xoá để trả lại lượt — nế
 chỉ vì nhà cung cấp email trục trặc. Backfill migration đổi mã đang bay sang hash (thử trên DB có sẵn
 một mã sống: `sha256('123456') = 8d969eef…`), nên deploy giữa lúc khách đang chờ mã không làm hỏng gì.
 
-**Refresh token nhân viên — đã làm (mục 23); phần còn lại của nhóm (2) là 2FA, PII & consent,
+**PII & consent — đã làm phần code (mục 32), còn chính sách có chữ ký + script ẩn danh hoá.** Nhật ký
+đồng ý nằm ở `ConsentLog` — append-only (trigger chặn `UPDATE`), đồng ý **theo từng mục đích**
+(`SERVICE` khác `MARKETING`: cho SĐT để quán gọi về đơn không phải là đồng ý nhận quảng cáo), "đang
+đồng ý" = dòng mới nhất của `(customerId, purpose)`, thiếu dòng ⇒ **chưa** đồng ý, và đổi nội dung
+chính sách (tăng `CONSENT_POLICY_VERSION`) thì mọi đồng ý cũ thành `stale` — hết hiệu lực cho tới khi
+hỏi lại. Đặt bàn nhận `marketingConsent?`: **không gửi = chưa hỏi khách ⇒ không ghi gì**, không tự ghi
+"đồng ý" thay khách; ghi tại quầy qua `POST /customers/:id/consent` (STAFF được phép — người hỏi là
+nhân viên), mỗi lần ghi đều có `AuditLog` `CONSENT_RECORDED`. Bản nháp chính sách lưu trữ:
+`docs/pii-retention-policy.md` — trong đó nêu rõ **quyền xoá dữ liệu không xoá được chứng từ kế toán**
+(hoá đơn giữ số tiền, danh tính chỉ còn `customerId` trỏ tới hồ sơ đã ẩn danh). **Chưa làm**: script
+ẩn danh hoá và job định kỳ (chưa có code nào chạy việc này), `AccessLog`, audit cho việc sửa ghi chú.
+
+**Refresh token nhân viên — đã làm (mục 23); phần còn lại của nhóm (2) là 2FA,
 media chứng từ.** Thiết kế đã chốt lúc lập kế hoạch giữ nguyên: `tokenHash @unique` (sha256), `familyId`,
 `usedAt`, `revokedAt`; refresh = claim nguyên tử, `count = 0` thì revoke cả family; login tạo family mới;
 logout/đổi mật khẩu/xoá user revoke toàn bộ family của user. Migration backfill bằng
