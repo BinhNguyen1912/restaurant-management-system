@@ -1,4 +1,4 @@
-import { HttpException, UnauthorizedException, UnprocessableEntityException } from '@nestjs/common'
+import { HttpException, HttpStatus, UnauthorizedException, UnprocessableEntityException } from '@nestjs/common'
 
 export const VerificationCodeNotFoundException = new UnprocessableEntityException({
   message: 'Error.VerificationCodeNotFound',
@@ -9,6 +9,23 @@ export const VerificationCodeExpiredException = new UnprocessableEntityException
   message: 'Error.VerificationCodeExpired',
   path: 'code',
 })
+
+/**
+ * 429 khi mã đã bị nhập sai quá ngưỡng (prod-readiness M1).
+ *
+ * Không phải 422: 422 nghĩa là "mã này sai, gõ lại mã này" — còn ở đây mã đã chết, gõ lại cũng vô
+ * ích, phải bấm gửi lại mã. FE cần hai thông báo khác nhau cho hai tình huống đó.
+ */
+export const VerificationCodeTooManyAttemptsException = new HttpException(
+  { message: 'Error.VerificationCodeTooManyAttempts', path: 'code' },
+  HttpStatus.TOO_MANY_REQUESTS,
+)
+
+/** 429 khi một email đã xin mã quá số lượt cho phép trong cửa sổ 15 phút */
+export const OtpTooManyRequestsException = new HttpException(
+  { message: 'Error.OtpTooManyRequests', path: 'email' },
+  HttpStatus.TOO_MANY_REQUESTS,
+)
 export const InvalidPasswordException = new UnprocessableEntityException({
   message: 'Error.InvalidPassword',
   path: 'password',

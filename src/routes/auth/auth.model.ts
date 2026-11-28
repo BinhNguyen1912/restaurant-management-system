@@ -89,6 +89,28 @@ export const otpBodySchema = verificationCodeSchema.pick({
 
 export const otpResSchema = verificationCodeSchema
 
+/**
+ * Một dòng `VerificationCode` như DB giữ.
+ *
+ * Không dùng chung `verificationCodeSchema`: schema của request có `code` plaintext (khách gõ vào),
+ * còn dòng DB chỉ có `codeHash`. Gộp hai thứ vào một schema là đường ngắn nhất để lưu nhầm plaintext.
+ */
+export const verificationCodeRecordSchema = z.object({
+  id: z.number(),
+  email: z.string(),
+  codeHash: z.string().length(64),
+  type: z.enum([
+    TypeOfVerification.REGISTER,
+    TypeOfVerification.FORGOT_PASSWORD,
+    TypeOfVerification.LOGIN,
+    TypeOfVerification.DISABLE_2FA,
+  ]),
+  attempts: z.number().int().min(0),
+  consumedAt: z.date().nullable(),
+  expiresAt: z.date(),
+  createdAt: z.date(),
+})
+
 export const GetUserIncludeRoleSchema = UserSchema.extend({
   role: RoleSchema,
 })
@@ -162,6 +184,7 @@ export type RegisterResType = z.infer<typeof registerResSchema>
 export type LoginBodyType = z.infer<typeof loginBodySchema>
 export type LoginResType = z.infer<typeof loginResSchema>
 export type VerificationCodeType = z.infer<typeof verificationCodeSchema>
+export type VerificationCodeRecordType = z.infer<typeof verificationCodeRecordSchema>
 export type OtpBodyType = z.infer<typeof otpBodySchema>
 export type OtpResType = z.infer<typeof otpResSchema>
 export type GetUserIncludeRoleType = z.infer<typeof GetUserIncludeRoleSchema>
