@@ -49,6 +49,9 @@ const StaffPolicy: RolePolicy = {
   'AUDIT-LOGS': [],
   // Quản lý voucher (tạo/sửa/tắt mã): ADMIN; khách chỉ nhập mã khi đặt món
   VOUCHERS: [],
+  // Hồ sơ khách hàng: nhân viên tra SĐT khi khách tới (chỉ ĐỌC, số liệu cắt theo chi nhánh của
+  // mình); ghi chú chăm sóc khách và báo cáo khách mới/quay lại là của ADMIN (không khai báo).
+  CUSTOMERS: ['GET'],
   // Cấu hình thuế/phí của chi nhánh: STAFF chỉ ĐỌC (để FE hiện dòng VAT khi tạo đơn)
   BRANCHES: ['GET'],
   // chi doc: noi dung menu + danh muc role
@@ -72,6 +75,8 @@ const AccountantPolicy: RolePolicy = {
   // so cai + so quy + kiem tra can doi + doi soat deu nam duoi /ledger (GET)
   LEDGER: ['GET'],
   REPORTS: ['GET'],
+  // hồ sơ khách + báo cáo khách mới/quay lại: đọc để đối chiếu doanh thu theo khách
+  CUSTOMERS: ['GET'],
   RECONCILIATION: ['GET'],
   // dashboard doc so lieu tong hop (POST /dashboard/indicator, GET /dashboard/overview)
   DASHBOARD: ['GET', 'POST'],

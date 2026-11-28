@@ -1,0 +1,13 @@
+import { Module } from '@nestjs/common'
+import { CustomerController } from '@/routes/customer/customer.controller'
+import { CustomerService } from '@/routes/customer/customer.service'
+
+/**
+ * `CustomerRepo` nằm trong `SharedModule` (global) vì luồng đặt bàn/đơn hàng cũng phải gắn hồ sơ
+ * khách trong chính transaction của nó.
+ */
+@Module({
+  controllers: [CustomerController],
+  providers: [CustomerService],
+})
+export class CustomerModule {}
