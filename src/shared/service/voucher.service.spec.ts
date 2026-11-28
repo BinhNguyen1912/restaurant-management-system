@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client'
-import { checkVoucherUsable, computeVoucherDiscount, VoucherSource } from '@/shared/service/voucher.service'
+import { checkVoucherUsable, computeVoucherDiscount, VoucherService, VoucherSource } from '@/shared/service/voucher.service'
 
 /**
  * Ticket #02: giá trị giảm phải là SỐ TIỀN cụ thể, và voucher hết hạn/hết lượt phải bị chặn.
@@ -77,5 +77,50 @@ describe('checkVoucherUsable', () => {
 
   it('không đặt usageLimit = không giới hạn', () => {
     expect(checkVoucherUsable(voucher({ usageLimit: null }), now, 9999)).toEqual({ ok: true })
+  })
+})
+
+/**
+ * Regression (audit trước prod): trước đây chỉ `count(VoucherSnapshot)` rồi mới `create`, nên 2
+ * request đồng thời cùng đọc `usedCount = usageLimit - 1` và cùng tạo snapshot ⇒ vượt hạn mức.
+ * Chốt chặn giờ là câu UPDATE nguyên tử; test bằng tx giả để thấy đúng nhánh bị chặn.
+ */
+describe('VoucherService.applyVoucher — claim nguyên tử', () => {
+  const makeTx = (claimed: number) => ({
+    voucher: {
+      findFirst: jest.fn().mockResolvedValue({
+        id: 1,
+        code: 'GIAM10',
+        discountType: 'PERCENT',
+        discountValue: '10',
+        startAt: new Date('2026-01-01T00:00:00.000Z'),
+        endAt: new Date('2026-12-31T23:59:59.000Z'),
+        usageLimit: 1,
+        status: 'ACTIVE',
+      }),
+    },
+    voucherSnapshot: {
+      count: jest.fn().mockResolvedValue(0),
+      create: jest.fn().mockResolvedValue({ id: 99 }),
+    },
+    $executeRaw: jest.fn().mockResolvedValue(claimed),
+  })
+
+  const service = new VoucherService({} as any)
+
+  it('claim trượt (0 dòng) thì ném lỗi, KHÔNG tạo snapshot', async () => {
+    const tx = makeTx(0)
+    await expect(service.applyVoucher({ code: 'GIAM10', subtotal: '250000' }, tx as any)).rejects.toThrow(
+      'Error.VoucherExhausted',
+    )
+    expect(tx.voucherSnapshot.create).not.toHaveBeenCalled()
+  })
+
+  it('claim được (1 dòng) thì tạo snapshot và trả số tiền giảm', async () => {
+    const tx = makeTx(1)
+    const applied = await service.applyVoucher({ code: 'GIAM10', subtotal: '250000' }, tx as any)
+    expect(applied.snapshotId).toBe(99)
+    expect(applied.appliedDiscount.toNumber()).toBe(25000)
+    expect(tx.$executeRaw).toHaveBeenCalledTimes(1)
   })
 })

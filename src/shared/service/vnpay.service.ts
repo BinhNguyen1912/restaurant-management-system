@@ -114,9 +114,17 @@ export class VnPayService {
     amount: number
     orderId?: number
     req: Request
-    processedOrderId?: string
+    /**
+     * Mã giao dịch gửi VNPay — PHẢI bằng `PaymentIntent.reference`.
+     *
+     * Trước đây hàm này tự ghép thêm `_<timestamp>` vào mã nhận được, nên `vnp_TxnRef` gửi đi
+     * khác `reference` đã lưu: webhook tra intent luôn `null`, mất chốt số tiền và rơi về đối
+     * chiếu `Σ grandTotal` (đơn đặt cọc bị coi là `amount_mismatch` dù khách đã bị trừ tiền).
+     * Mã đã có timestamp + random do `generateForVnp_TxnRef` sinh, không cần ghép thêm.
+     */
+    processedOrderId: string
   }) {
-    const processedId = `${processedOrderId}_${moment().format('YYYYMMDDHHmmss')}`
+    const processedId = processedOrderId
 
     const date = new Date()
     const createDate = moment(date).format('YYYYMMDDHHmmss')
