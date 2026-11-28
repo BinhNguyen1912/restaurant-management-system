@@ -1,5 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query } from '@nestjs/common'
 import { ZodSerializerDto } from 'nestjs-zod'
+import { LogAccess } from '@/shared/decorators/access-log.decorator'
 import {
   CategoryBodyDTO,
   CategoryResDTO,
@@ -87,6 +88,7 @@ export class GuestController {
   }
 
   @Get('listGuests')
+  @LogAccess({ route: 'GET /guest/listGuests' })
   @ZodSerializerDto(GuestListDTO)
   async getGuestList(@Query() query: GuestListQueryDTO, @ActiveUser() user: AccessTokenPayload) {
     const result = await this.guestService.getGuestList(query, user)

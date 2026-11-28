@@ -15,17 +15,20 @@ import {
 import { ZodSerializerDto } from 'nestjs-zod'
 import { OrderIdParamSchema } from '@/routes/orders/orders.model'
 import { GuestCreateNewOrderDTO } from '@/routes/guest/guest.dtos'
+import { LogAccess } from '@/shared/decorators/access-log.decorator'
 
 @Controller('orders')
 export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
 
   @Post('lists')
+  @LogAccess({ route: 'POST /orders/lists' })
   async list(@Body() query: ListOrdersDTO, @ActiveUser() user: AccessTokenPayload) {
     return await this.ordersService.list(query, user)
   }
 
   @Get(':id')
+  @LogAccess({ route: 'GET /orders/:id' })
   @ZodSerializerDto(OrderDetailResDTO)
   async getById(@Param('id') id: string, @ActiveUser() user: AccessTokenPayload) {
     const orderId = Number(id)

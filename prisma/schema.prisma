@@ -759,31 +759,45 @@ model ConsentLog {
   @@index([customerId, purpose, createdAt])
 }
 
+/// Loại chủ thể mà một dòng `AccessLog` nói tới — quyết định `subjectId` là id của bảng nào.
+enum AccessSubject {
+  /// hồ sơ khách hàng (Customer.id)
+  CUSTOMER
+  /// tài khoản nhân viên (User.id) — email/SĐT nhân viên cũng là dữ liệu cá nhân
+  USER
+}
+
 /// Nhật ký TRUY CẬP dữ liệu cá nhân (NĐ 13/2023/NĐ-CP, Điều 26: ghi nhật ký truy cập).
 ///
 /// Khác `AuditLog` ở chỗ đối tượng là NGƯỜI ĐỌC chứ không phải người sửa: đọc 100 lần cũng không
 /// đổi dữ liệu, nhưng mỗi lần đọc PII của một khách phải trả lời được "ai đọc, đọc hồ sơ nào, lúc
 /// nào". APPEND-ONLY (trigger DB chặn UPDATE) — sửa được nhật ký thì nó không còn là bằng chứng.
 model AccessLog {
-  id          Int      @id @default(autoincrement())
+  id          Int            @id @default(autoincrement())
   /// User.id người đọc (null = hệ thống/script)
   actorId     Int?
   /// tên role tại thời điểm đọc — giữ chuỗi, không FK: role đổi tên vẫn đọc lại được
-  actorRole   String?  @db.VarChar(50)
+  actorRole   String?        @db.VarChar(50)
   /// route đã đọc, dạng "GET /customers/:id" — CỐ Ý không lưu query string: query tìm khách
   /// thường chính là SĐT/tên, chép vào nhật ký là nhân bản PII ra thêm một bảng
-  route       String   @db.VarChar(120)
-  /// hồ sơ bị đọc; null với route dạng danh sách (khi đó `resultCount` cho biết đọc bao nhiêu)
-  customerId  Int?
+  route       String         @db.VarChar(120)
+  /// loại chủ thể bị đọc; NULL với route dạng danh sách (khi đó `resultCount` cho biết đọc bao nhiêu)
+  ///
+  /// Dùng cặp (type, id) thay vì một cột cho mỗi module: bảng này cố ý không có khoá ngoại nào (xem
+  /// ghi chú ở các `@@index`), nên thêm một module mới chỉ là thêm một giá trị enum, không phải
+  /// thêm cột + migration + sửa mọi câu truy vấn.
+  subjectType AccessSubject?
+  /// id chủ thể trong bảng của `subjectType` (Customer.id / User.id) — chỉ là một con số
+  subjectId   Int?
   /// số bản ghi trả về (route danh sách) / 1 (route một hồ sơ)
   resultCount Int?
   /// IP người đọc
-  ip          String?  @db.VarChar(45)
-  createdAt   DateTime @default(now())
+  ip          String?        @db.VarChar(45)
+  createdAt   DateTime       @default(now())
 
-  /// KHÔNG đặt khoá ngoại tới Customer: xoá hồ sơ khách không được làm biến mất bằng chứng
-  /// "đã có người đọc hồ sơ này". Số `customerId` còn lại chỉ là một con số, không phải PII.
-  @@index([customerId, createdAt])
+  /// KHÔNG đặt khoá ngoại tới Customer/User: xoá hồ sơ không được làm biến mất bằng chứng
+  /// "đã có người đọc hồ sơ này". Số `subjectId` còn lại chỉ là một con số, không phải PII.
+  @@index([subjectType, subjectId, createdAt])
   @@index([actorId, createdAt])
   @@index([route, createdAt])
 }

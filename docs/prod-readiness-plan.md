@@ -617,9 +617,11 @@ Test: `usageLimit = 1`, 10 request song song ⇒ 1 thành công, `usedCount = 1`
 1. **`deleteUser(isHard)` bị đảo nghĩa**: `isHard: true` đang soft-delete. Đổi thành
    `mode: 'SOFT' | 'HARD'`, hard = `prisma.user.delete` (sau khi chuyển tham chiếu), soft =
    `deletedAt` + revoke token.
-2. **Audit log truy cập** — **đã làm phần ĐỌC PII khách** (`AccessLog` + `AccessLogInterceptor` +
-   `@LogAccess`), xem ghi chú dưới. **Chưa làm**: `AccessLog` cho `reservation`, `orders`, `reports`,
-   `users`, `ledger`, và `LOGIN_SUCCESS`/`LOGIN_FAILED`.
+2. **Audit log truy cập** — **đã làm phần ĐỌC PII người** (`AccessLog` + `AccessLogInterceptor` +
+   `@LogAccess`), xem ghi chú dưới. Đã phủ: khách (5 route), nhân viên (hồ sơ + danh sách), đặt bàn
+   (2 route), đơn hàng (chi tiết + danh sách), khách của bàn. **Chưa làm**: `reports` (chỉ số tổng
+   hợp, không có PII từng người — không đáng ghi), `ledger` (bút toán, không có PII), và
+   `LOGIN_SUCCESS`/`LOGIN_FAILED` — cần bạn chốt một câu, xem cuối mục.
 3. **PII** — **đã làm (xem ghi chú dưới)**: `ConsentLog` append-only + ẩn danh hoá hồ sơ. Bản phác
    trong kế hoạch (`subjectType/subjectId`, `grantedAt/revokedAt`, job `anonymizeExpiredReservations`)
    đã đổi khi làm, lý do ở dưới.
@@ -641,33 +643,51 @@ Test: `usageLimit = 1`, 10 request song song ⇒ 1 thành công, `usedCount = 1`
   Nay `npm run pii:anonymize -- --months=N [--apply]` quét theo *lần hoạt động cuối*, giữ chứng từ kế
   toán, và có thêm `--customer=ID` cho yêu cầu xoá của từng khách. `--months` không có mặc định.
 
-**Nhật ký truy cập — đã làm nửa ĐỌC (mục 2).** `AccessLog` ghi *lượt đọc* PII khách, bảng riêng chứ
-không nhét vào `AuditLog`: `AuditLog` là nhật ký thao tác GHI, còn ở đây đọc 100 lần cũng không đổi
-một byte dữ liệu mà vẫn phải giải trình được. Bốn chỗ khác bản phác:
+**Nhật ký truy cập — đã làm phần ĐỌC (mục 2).** `AccessLog` ghi *lượt đọc* PII của một NGƯỜI, bảng
+riêng chứ không nhét vào `AuditLog`: `AuditLog` là nhật ký thao tác GHI, còn ở đây đọc 100 lần cũng
+không đổi một byte dữ liệu mà vẫn phải giải trình được. Năm chỗ khác bản phác:
 
-- `route` khai tay (`@LogAccess('GET /customers/:id')`) thay cho `method + path + statusCode`: mẫu
-  route của express đổi theo phiên bản, còn dòng nhật ký phải đọc lại được sau vài năm; và interceptor
-  chạy sau guard nên chỉ có request đã ĐỌC ĐƯỢC mới vào bảng — `statusCode` chỉ có một giá trị.
+- `route` khai tay (`@LogAccess({ route: 'GET /customers/:id' })`) thay cho `method + path +
+  statusCode`: mẫu route của express đổi theo phiên bản, còn dòng nhật ký phải đọc lại được sau vài
+  năm; và interceptor chạy sau guard nên chỉ có request đã ĐỌC ĐƯỢC mới vào bảng — `statusCode` chỉ
+  có một giá trị.
 - **Không lưu query string.** Tra khách là gõ SĐT/tên, tức query chính là PII; chép vào nhật ký là
   nhân bản PII sang một bảng append-only nữa. Đổi lại chỉ biết "đã tra, ra N kết quả".
-- Bỏ `entityType/entityId` đa hình, dùng thẳng `customerId` **không có khoá ngoại**: xoá hồ sơ khách
-  không được làm biến mất bằng chứng đã có người đọc hồ sơ đó.
+- Chủ thể là cặp `(subjectType, subjectId)` **không có khoá ngoại**: xoá hồ sơ không được làm biến
+  mất bằng chứng đã có người đọc hồ sơ đó, và DB có CHECK cấm nửa cặp (có type mà thiếu id). Lượt
+  trước tôi bỏ ý tưởng đa hình này vì "hôm nay chỉ Customer giữ PII" — một ngày sau, khi phải ghi
+  lượt đọc hồ sơ nhân viên, cách còn lại là thêm một cột nữa cho mỗi module và mọi câu truy vấn phải
+  biết đang hỏi bảng nào. Ba cột song song (`customerId`, `userId`, ...) tệ hơn một cặp có ràng buộc.
 - Chờ ghi xong mới trả response (không "bắn rồi quên"): đây là bằng chứng, mất một dòng vì tiến trình
   chết đúng lúc đó là mất thật. Lỗi ghi thì vẫn không làm hỏng việc đọc (`recordSafe`).
 - Bỏ `userAgent`: không dùng để quyết định gì, và thêm một trường tự do nữa là thêm chỗ giấu PII.
+
+Đọc cả trang danh sách chỉ ghi `route + resultCount`, không gắn cho từng người: muốn trả lời chính
+xác "tôi có bị xem không" cho từng khách trong một trang 20 dòng thì phải ghi 20 dòng mỗi lần bấm —
+đó là thiết kế khác (nặng hơn nhiều) và chưa ai yêu cầu. Route một người thì ghi đúng người đó.
+
+**Cần bạn chốt một câu cho `LOGIN_FAILED`:** đăng nhập sai thì *chưa biết* là ai, nên muốn nhật ký có
+ích (đếm theo tài khoản) thì phải lưu **email khách/nhân viên vừa gõ** — tức PII của người chưa đăng
+nhập được, vào một bảng append-only. Ba lựa chọn: (a) chỉ lưu IP (đếm được theo nguồn, không theo tài
+khoản); (b) lưu hash email (ghép được các lần thử cùng một tài khoản, không đọc ngược ra email); (c) lưu
+email thô như log hệ điều hành vẫn làm. Tôi nghiêng (b) nhưng đây là quyết định về dữ liệu cá nhân nên
+không tự chốt. Hiện `LOGIN_LOCKED` (khoá tài khoản sau N lần sai) đã có trong `AuditLog`.
 
 Chi tiết và các ⚠ cần kế toán/luật sư: `docs/pii-retention-policy.md`.
 
 **Đo lường**: test ẩn danh (`test/customer-anonymize.e2e-spec.ts`) ⇒ hồ sơ hết hạn mất SĐT/tên/email/
 ghi chú + lượt đặt bàn cũng mất, khách **còn đơn chưa thu tiền thì không bị đụng**, chạy lại không làm
 gì, và `AuditLog` của lần ẩn danh **không chứa** PII cũ. Nhật ký truy cập
-(`test/customer-access-log.e2e-spec.ts`) ⇒ đọc một hồ sơ sinh **đúng một** dòng với đúng `customerId`,
-`actorId`, `resultCount`, IP; đọc cả trang danh sách **không** gắn cho khách nào; 404 không sinh dòng;
-sửa ghi chú **không** bị tính là một lần truy cập; audit sửa ghi chú **không chứa** nội dung/SĐT trong
-ghi chú; `UPDATE` trên `AccessLog` bị trigger DB chặn.
+(`test/customer-access-log.e2e-spec.ts`) ⇒ đọc một hồ sơ sinh **đúng một** dòng với đúng
+`(subjectType, subjectId)`, `actorId`, `resultCount`, IP; đọc cả trang danh sách **không** gắn cho
+người nào; 404 không sinh dòng; sửa ghi chú **không** bị tính là một lần truy cập; audit sửa ghi chú
+**không chứa** nội dung/SĐT trong ghi chú; `UPDATE` trên `AccessLog` bị trigger DB chặn và nửa cặp chủ
+thể bị CHECK chặn; đọc hồ sơ **nhân viên** ghi `USER` chứ không lẫn sang `CUSTOMER`; danh sách nhân
+viên / đặt bàn / khách của bàn đều để lại dòng; **đọc bằng `POST /orders/lists` vẫn được ghi** (đọc
+không đồng nghĩa với GET).
 
 **Chưa có phép đo** (vì code chưa có, đừng đọc như đã xong): login sai 3 lần ⇒ 3 dòng `LOGIN_FAILED`
-có IP; `GET /reservation/list` ⇒ có `AccessLog`.
+có IP — chờ bạn chốt lưu định danh nào (xem cuối mục trên).
 
 **Pháp lý**: NĐ 13/2023/NĐ-CP (đồng ý, quyền xoá, hồ sơ đánh giá tác động, log truy cập), NĐ
 53/2022/NĐ-CP (lưu log, dữ liệu tại VN — **cần luật sư xác định phạm vi**), Luật Kế toán (giữ chứng

@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common'
+import { AccessSubject } from '@prisma/client'
 import { PrismaService } from '@/shared/service/prisma.service'
 
 /**
@@ -19,7 +20,9 @@ export type RecordAccessInput = {
   actorRole?: string | null
   /** route đã đọc, dạng "GET /customers/:id" */
   route: string
-  customerId?: number | null
+  /** loại chủ thể; null với route danh sách (DB có CHECK: type và id phải cùng có hoặc cùng không) */
+  subjectType?: AccessSubject | null
+  subjectId?: number | null
   resultCount?: number | null
   ip?: string | null
 }
@@ -36,7 +39,8 @@ export class AccessLogService {
         actorId: input.actorId ?? null,
         actorRole: input.actorRole ?? null,
         route: input.route,
-        customerId: input.customerId ?? null,
+        subjectType: input.subjectType ?? null,
+        subjectId: input.subjectId ?? null,
         resultCount: input.resultCount ?? null,
         ip: input.ip ?? null,
       },
@@ -48,8 +52,9 @@ export class AccessLogService {
     try {
       return await this.record(input)
     } catch (error: any) {
+      const subject = input.subjectType ? ` ${input.subjectType} #${input.subjectId ?? '-'}` : ''
       this.logger.error(
-        `Không ghi được nhật ký truy cập ${input.route} (customer #${input.customerId ?? '-'}): ${error?.message ?? error}`,
+        `Không ghi được nhật ký truy cập ${input.route}${subject}: ${error?.message ?? error}`,
       )
       return null
     }
