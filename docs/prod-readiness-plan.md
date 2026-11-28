@@ -90,7 +90,7 @@ nhau giữa hai repo sẽ làm nút thu tiền ở FE gọi sai.
 | # | Lỗi | Mức | Module xử lý |
 |---|---|---|---|
 | 1 | Không có hoá đơn (điện tử), không có MST/tên pháp nhân; VAT 1 mức cho toàn chi nhánh thay vì theo món | BLOCKER (pháp lý) — schema + tích hợp nhà cung cấp | M10 |
-| 2 | Media chứng từ lưu ra nước ngoài; **bắt buộc** bật 2FA cho ADMIN/KE_TOAN (cơ chế 2FA đã xong — M9 mục 5; còn màn hình ở FE và quyết định rollout); PII & consent (M9 mục 2/3 đã xong; refresh token — mục 23; khoá đăng nhập tạm — mục 30; OTP — mục 31) | HIGH (pháp lý) | M1, M9 |
+| 2 | Media chứng từ lưu ra nước ngoài; **bắt buộc** bật 2FA cho ADMIN/KE_TOAN (cơ chế 2FA đã xong — M9 mục 5; còn màn hình ở FE và quyết định rollout); PII & consent (M9 mục 2/3 đã xong; refresh token — mục 23; khoá đăng nhập tạm — mục 30; OTP — mục 31; dọn nhật ký đã có cơ chế `logs:prune` — M9 mục 2, chờ con số §3 được ký để đặt lịch) | HIGH (pháp lý) | M1, M9 |
 
 **Cọc reservation — đã làm (mục 24–27), mức cọc do BE chốt đã xong (mục 29).** Quyết định schema đã phác
 lúc lập kế hoạch (thêm bảng `OrderPayment`) **không dùng**: chỉ thêm `Payment.orderId` (nullable,
@@ -621,7 +621,8 @@ Test: `usageLimit = 1`, 10 request song song ⇒ 1 thành công, `usedCount = 1`
    `@LogAccess`), xem ghi chú dưới. Đã phủ: khách (5 route), nhân viên (hồ sơ + danh sách), đặt bàn
    (2 route), đơn hàng (chi tiết + danh sách), khách của bàn. **Chưa làm**: `reports` (chỉ số tổng
    hợp, không có PII từng người — không đáng ghi), `ledger` (bút toán, không có PII). Đăng nhập
-   đúng/sai đã ghi ở bảng riêng `LoginAttempt` — xem ghi chú dưới.
+   đúng/sai đã ghi ở bảng riêng `LoginAttempt` — xem ghi chú dưới. Dọn theo thời hạn lưu đã có cơ
+   chế (`npm run logs:prune`, mặc định chạy thử) nhưng **chưa đặt lịch** — xem ghi chú dưới.
 3. **PII** — **đã làm (xem ghi chú dưới)**: `ConsentLog` append-only + ẩn danh hoá hồ sơ. Bản phác
    trong kế hoạch (`subjectType/subjectId`, `grantedAt/revokedAt`, job `anonymizeExpiredReservations`)
    đã đổi khi làm, lý do ở dưới.
@@ -729,6 +730,23 @@ hai lần đăng nhập song song.
 
 Chi tiết và các ⚠ cần kế toán/luật sư: `docs/pii-retention-policy.md`.
 
+**Dọn nhật ký — đã có cơ chế, CHƯA bật lịch.** `npm run logs:prune -- --months=N [--apply]`, cùng
+khuôn với `pii:anonymize` (mặc định chạy thử, `--months` bắt buộc, không có mặc định). Bốn điểm:
+
+- **Xoá bằng SQL có `LIMIT`, không dùng `deleteMany`**: `deleteMany` không có giới hạn, nên một lần
+  gõ sai `--months` (1 thay vì 12) là một lệnh xoá toàn bảng không có điểm dừng. Trần mặc định 5000
+  dòng/bảng mỗi lần, cận trên 50 nghìn; chạm trần thì in ra còn bao nhiêu để người chạy tự quyết.
+- **Thêm index `AccessLog(createdAt)`** (migration `20261128110000`): trước đó bảng chỉ có index
+  `(subjectType, subjectId)`, `(actorId)`, `(route)` — đều có `createdAt` ở **cuối** dãy nên không
+  dùng được cho điều kiện `createdAt < mốc`, tức mỗi lần dọn là một lần quét toàn bảng, trên đúng
+  bảng đông nhất hệ thống (mỗi lượt ĐỌC PII là một dòng).
+- **Không ghi `AuditLog` cho lần dọn**: `AuditLog.entityId` bắt buộc là một thực thể nghiệp vụ và
+  khoá tra cứu là `(entityType, entityId)`; "đã xoá 4.120 dòng nhật ký" không trỏ tới thực thể nào,
+  nhét id giả vào là làm hỏng đúng khoá đó. Dấu vết là log của cron. ⚠ **Chỗ hở đã biết**: ai chạy
+  lệnh dọn không để lại dấu trong DB — muốn bịt cần một bảng nhật ký thao tác vận hành riêng, chưa làm.
+- Dọn cả hai bảng trong một lần chạy và báo `quá hạn` **tách khỏi** `đã xoá`: hai con số lệch nhau là
+  dấu hiệu duy nhất cho biết lần chạy này chưa dọn hết.
+
 **Đo lường**: test ẩn danh (`test/customer-anonymize.e2e-spec.ts`) ⇒ hồ sơ hết hạn mất SĐT/tên/email/
 ghi chú + lượt đặt bàn cũng mất, khách **còn đơn chưa thu tiền thì không bị đụng**, chạy lại không làm
 gì, và `AuditLog` của lần ẩn danh **không chứa** PII cũ. Nhật ký truy cập
@@ -751,9 +769,16 @@ mới có token; OTP qua email vẫn đăng nhập được khi mất điện th
 `TWO_FACTOR_DISABLED`; ba route 2FA không phải route công khai (401 khi không có token); hai lần đăng
 nhập trong cùng một giây đều 201 và ra hai refresh token khác nhau.
 
-**Chưa có phép đo** (vì code chưa có, đừng đọc như đã xong): job dọn `AccessLog`/`LoginAttempt` theo
-thời hạn lưu (chờ con số đã ký, §3); *bắt buộc* bật 2FA cho ADMIN/KE_TOAN (mục 5 — cơ chế đã xong,
-xem trên); media chứng từ ra nước ngoài (mục 4).
+Dọn nhật ký (`test/log-retention-prune.e2e-spec.ts`) ⇒ chạy thử chỉ đếm và **không** xoá dòng nào;
+`--apply` xoá đúng số dòng đã đếm (bằng `overdue` của lần chạy thử) và **giữ nguyên** dòng còn hạn;
+trần mỗi lần chạy xoá đúng `limit` dòng rồi để phần dư cho lần sau (hai lần chạy hết 4 dòng); chạy
+lại khi đã sạch thì không xoá gì; `--months=0` **ném lỗi** và không xoá dòng nào; trigger chặn
+`UPDATE` vẫn còn sau khi dọn (dọn xong không làm lỏng append-only).
+
+**Chưa có phép đo** (vì code chưa có, đừng đọc như đã xong): *bắt buộc* bật 2FA cho ADMIN/KE_TOAN
+(mục 5 — cơ chế đã xong, xem trên); media chứng từ ra nước ngoài (mục 4). Cơ chế dọn nhật ký **đã
+có và đã đo**, nhưng **chưa nên đặt lịch**: con số ở §3 chưa được ký, và chưa ai nhận việc đọc kết
+quả mỗi lần cron chạy.
 
 **Pháp lý**: NĐ 13/2023/NĐ-CP (đồng ý, quyền xoá, hồ sơ đánh giá tác động, log truy cập), NĐ
 53/2022/NĐ-CP (lưu log, dữ liệu tại VN — **cần luật sư xác định phạm vi**), Luật Kế toán (giữ chứng

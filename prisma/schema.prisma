@@ -808,6 +808,9 @@ model AccessLog {
   @@index([subjectType, subjectId, createdAt])
   @@index([actorId, createdAt])
   @@index([route, createdAt])
+  /// dọn theo thời hạn lưu (`npm run logs:prune`) — không có index này thì mỗi lần dọn là một lần
+  /// quét cả bảng, và bảng này lớn nhanh nhất hệ thống (mỗi lượt ĐỌC PII là một dòng)
+  @@index([createdAt])
 }
 
 model Category {

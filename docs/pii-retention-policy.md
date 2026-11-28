@@ -17,6 +17,8 @@
 | Lịch sử ăn/uống | `Order`, `PointRedemption` | bán hàng, đối soát, điểm thưởng | dữ liệu kế toán, xem §3 |
 | Nhật ký đồng ý | `ConsentLog` | bằng chứng khách đồng ý/rút lúc nào | append-only, xem §2 |
 | IP người ghi nhận | `ConsentLog.ip`, `AuditLog` | giải trình ai làm gì | IP của nhân viên/quầy |
+| IP người ĐỌC hồ sơ / người thử đăng nhập | `AccessLog.ip`, `LoginAttempt.ip` | giải trình ai đọc dữ liệu của ai; phát hiện dò tài khoản | xoá cùng dòng nhật ký, xem §3 |
+| Băm email người thử đăng nhập | `LoginAttempt.emailHash` (sha256, 64 hex) | tương quan nhiều lần thử của cùng một định danh | **hash không phải ẩn danh** — có danh sách email thì băm lại là ra; xem §3 |
 
 Không lưu: số CCCD, ngày sinh, địa chỉ, dữ liệu thẻ (thanh toán qua VNPay, không đi qua hệ thống).
 
@@ -52,6 +54,18 @@ Cách code thực thi (`src/routes/customer/customer.consent-policy.ts`):
 | `Reservation` (tên + SĐT) | 12 tháng sau lượt đặt bàn | hết giá trị vận hành sau khi khách tới |
 | Hoá đơn / sổ cái (`Order`, `LedgerEntry`, `Payment`) | **10 năm** | Luật Kế toán 88/2015, Điều 41 — chứng từ phải giữ |
 | `ConsentLog` | theo vòng đời hồ sơ khách | là bằng chứng pháp lý, xoá cùng hồ sơ |
+| `AccessLog` (nhật ký đọc dữ liệu cá nhân) | **12 tháng** ⚠ | đủ để truy vết một sự cố thường bị phát hiện muộn; cũ hơn thì giá trị điều tra gần bằng 0 trong khi rủi ro rò rỉ không giảm |
+| `LoginAttempt` (nhật ký thử đăng nhập) | **12 tháng** ⚠ | đúng vòng phát hiện dò tài khoản (dò thường kéo dài nhiều tháng mới lộ) |
+
+Hai dòng cuối là **đề xuất**, không phải kết luận: chúng thuộc cùng nhóm "nhật ký bảo mật" và phải
+được ký cùng lúc với các dòng trên. Nếu luật sư xác định NĐ 53/2022/NĐ-CP buộc lưu log hệ thống một
+số tháng tối thiểu thì con số đó **thắng** đề xuất này — và nó là **sàn**, không phải trần: lưu ít
+hơn là vi phạm, lưu nhiều hơn thì phải giải trình được vì sao.
+
+Cả hai bảng đều append-only và cố ý **không có khoá ngoại** tới `Customer`/`User`: xoá hồ sơ không
+được làm biến mất bằng chứng "đã có người đọc hồ sơ này". Hệ quả là chúng **không** tự giảm theo
+vòng đời hồ sơ khách — phải có job dọn riêng (§4b), và trước khi có job đó thì hai bảng này là chỗ
+dữ liệu cá nhân sống lâu nhất hệ thống.
 
 Điểm xung đột phải viết rõ trong chính sách: **quyền xoá dữ liệu không xoá được chứng từ kế toán**.
 Cách xử lý đang dùng: hoá đơn giữ số tiền, còn *danh tính* khách trong hoá đơn chỉ còn `customerId`
@@ -101,6 +115,40 @@ Ba chốt an toàn trong code:
 Chạy tự động: hiện là lệnh tay. Nếu đưa vào cron thì phải (a) chạy `--apply` với `--months` đã ký,
 (b) ghi log của cron, (c) không chạy chung với giờ cao điểm. Chưa cấu hình cron trong repo này.
 
+## 4b. Dọn nhật ký — đã có code, cách chạy
+
+`src/shared/service/log-retention-policy.ts` (luật thuần: xoá gì, có unit test) +
+`log-retention.ts` (câu SQL) + script `npm run logs:prune`. Áp cho `AccessLog` và `LoginAttempt`.
+
+| Chế độ | Lệnh | Dùng khi |
+|---|---|---|
+| Chạy thử | `npm run logs:prune -- --months=12` | **luôn chạy cái này trước**, đọc con số rồi mới đi tiếp |
+| Xoá thật | `npm run logs:prune -- --months=12 --apply` | sau khi con số ở §3 được ký |
+| Đổi trần | `npm run logs:prune -- --months=12 --apply --limit=20000` | lần dọn đầu tiên trên một bảng lớn |
+
+Bốn chốt trong code:
+
+1. **Fail closed**: `--months` âm, `0`, không phải số ⇒ **ném lỗi và không xoá gì**; `--months` không
+   có giá trị mặc định (cùng nguyên tắc với `pii:anonymize`: con số pháp lý không do code chọn hộ).
+   `--limit` không phải số nguyên dương cũng vậy.
+2. **Có trần mỗi lần chạy** (mặc định 5000 dòng/bảng, cận trên 50 nghìn) và xoá bằng câu SQL có
+   `LIMIT`, không dùng `deleteMany`: `deleteMany` không giới hạn, nên một lần gõ sai `--months` là
+   một lệnh xoá toàn bảng không có điểm dừng. Chạm trần thì script in ra còn bao nhiêu dòng quá hạn
+   để người chạy quyết định chạy tiếp.
+3. **Báo `quá hạn` tách khỏi `đã xoá`**: hai con số khác nhau là dấu hiệu duy nhất cho biết lần chạy
+   này chưa dọn hết.
+4. **Không ghi `AuditLog`** cho lần dọn. Lý do kỹ thuật: `AuditLog.entityId` bắt buộc là một thực thể
+   nghiệp vụ (`ORDER`, `USER`, ...) và khoá tra cứu là `(entityType, entityId)`; "đã xoá 4.120 dòng
+   nhật ký" không trỏ tới thực thể nào, nhét một id giả vào là làm hỏng đúng cái khoá đó. Dấu vết
+   của lần chạy là **log của cron**. ⚠ **Đây là chỗ hở đã biết**: ai chạy lệnh dọn **không** để lại
+   dấu trong DB, mà "xoá nhật ký" lại đúng là việc cần truy vết nhất. Muốn bịt thì phải có một bảng
+   nhật ký thao tác vận hành riêng (không phải `AuditLog` của nghiệp vụ) — **chưa làm**, và đó là
+   quyết định đã ghi lại, không phải thiếu sót.
+
+Chạy tự động: hiện là **lệnh tay**. Khi đặt cron thì (a) `--apply` với `--months` đã ký, (b) giữ log
+của cron (đó là dấu vết duy nhất), (c) chạy ngoài giờ cao điểm, (d) chạy thử trước một lần mỗi lần
+đổi con số. Repo này chưa cấu hình cron.
+
 ## 5. Kiểm soát truy cập
 
 | Việc | Ai được làm | Ghi chú |
@@ -110,6 +158,7 @@ Chạy tự động: hiện là lệnh tay. Nếu đưa vào cron thì phải (a
 | Ghi nhận / rút đồng ý | ADMIN, STAFF | ghi `AuditLog` mỗi lần |
 | Sửa ghi chú chăm sóc | **chỉ ADMIN** | `CUSTOMERS: PATCH` — ghi chú tự do nên hạn chế người viết |
 | Xem điểm/lịch sử điểm | ADMIN, STAFF | điểm là của khách, không cắt theo chi nhánh |
+| Dọn nhật ký (`logs:prune`) | người vận hành có quyền vào DB | **không** phải quyền của role nào: script chạy ngoài app, và bảng quyền không bảo vệ được một lệnh `ts-node`. Ai có `DATABASE_URL` là làm được — nên đây là việc phải giới hạn bằng quyền truy cập server, không bằng `create-permissions.ts` |
 
 Ghi chú chăm sóc là ô văn bản tự do: quy định nội bộ phải nói rõ **không ghi dữ liệu nhạy cảm**
 (bệnh án, tôn giáo, số giấy tờ) và phải có cách xoá khi khách yêu cầu — hiện xoá được bằng cách sửa
