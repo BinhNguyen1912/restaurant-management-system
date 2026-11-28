@@ -192,7 +192,15 @@ model User {
   name                        String                @db.VarChar(255)
   phoneNumber                 String?               @unique @db.VarChar(10)
   avatar                      String?               @db.VarChar(1000)
+  /// Bí mật TOTP **đã mã hoá** AES-256-GCM (`v1:<iv>:<tag>:<ciphertext>`) — xem
+  /// src/routes/auth/two-factor.ts. Bản rõ ở cột này là ai đọc được DB cũng sinh được mã 2FA của
+  /// mọi tài khoản, tức là 2FA chỉ còn là hình thức.
   totpSecret                  String?
+  /// 2FA đã bật cho tài khoản này. Chỉ bật sau khi xác nhận được một mã TOTP thật, nên `false` +
+  /// có `totpSecret` là bí mật đang treo chờ xác nhận (huỷ được bằng cách setup lại).
+  twoFactorEnabled            Boolean               @default(false)
+  /// Mốc bật 2FA gần nhất (null = chưa từng bật) — để giải trình "từ bao giờ tài khoản này được bảo vệ"
+  twoFactorEnabledAt          DateTime?
   /// Số lần đăng nhập sai liên tiếp; về 0 khi đăng nhập thành công hoặc ngay khi bị khoá
   failedAttempts              Int                   @default(0)
   /// Khoá đăng nhập tới mốc này (null = không khoá) — xem src/routes/auth/login-lockout.ts
@@ -1519,6 +1527,10 @@ enum AuditAction {
   CUSTOMER_ANONYMIZED
   /// sửa ghi chú chăm sóc của hồ sơ khách — before/after chỉ ghi ĐỘ DÀI, không ghi nội dung
   CUSTOMER_NOTE_UPDATED
+  /// bật 2FA bằng ứng dụng xác thực (NĐ 13/2023 Điều 26 — bảo vệ tài khoản quản trị)
+  TWO_FACTOR_ENABLED
+  /// tắt 2FA (phải nhập lại mật khẩu + một mã thứ hai) — tắt được 2FA là tắt luôn rào chắn
+  TWO_FACTOR_DISABLED
 }
 
 enum AuditEntityType {

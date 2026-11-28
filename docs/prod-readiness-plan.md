@@ -90,7 +90,7 @@ nhau giữa hai repo sẽ làm nút thu tiền ở FE gọi sai.
 | # | Lỗi | Mức | Module xử lý |
 |---|---|---|---|
 | 1 | Không có hoá đơn (điện tử), không có MST/tên pháp nhân; VAT 1 mức cho toàn chi nhánh thay vì theo món | BLOCKER (pháp lý) — schema + tích hợp nhà cung cấp | M10 |
-| 2 | 2FA khi đăng nhập (`totpCode` khai trong schema mà không kiểm); PII & consent; media chứng từ lưu ra nước ngoài (refresh token đã xong — mục 23; khoá đăng nhập tạm — mục 30; OTP — mục 31) | HIGH (pháp lý) | M1, M9 |
+| 2 | Media chứng từ lưu ra nước ngoài; **bắt buộc** bật 2FA cho ADMIN/KE_TOAN (cơ chế 2FA đã xong — M9 mục 5; còn màn hình ở FE và quyết định rollout); PII & consent (M9 mục 2/3 đã xong; refresh token — mục 23; khoá đăng nhập tạm — mục 30; OTP — mục 31) | HIGH (pháp lý) | M1, M9 |
 
 **Cọc reservation — đã làm (mục 24–27), mức cọc do BE chốt đã xong (mục 29).** Quyết định schema đã phác
 lúc lập kế hoạch (thêm bảng `OrderPayment`) **không dùng**: chỉ thêm `Payment.orderId` (nullable,
@@ -132,8 +132,8 @@ nhân viên), mỗi lần ghi đều có `AuditLog` `CONSENT_RECORDED`. Bản nh
 (hoá đơn giữ số tiền, danh tính chỉ còn `customerId` trỏ tới hồ sơ đã ẩn danh). **Chưa làm**: script
 ẩn danh hoá và job định kỳ (chưa có code nào chạy việc này), `AccessLog`, audit cho việc sửa ghi chú.
 
-**Refresh token nhân viên — đã làm (mục 23); phần còn lại của nhóm (2) là 2FA,
-media chứng từ.** Thiết kế đã chốt lúc lập kế hoạch giữ nguyên: `tokenHash @unique` (sha256), `familyId`,
+**Refresh token nhân viên — đã làm (mục 23); phần còn lại của nhóm (2) là media chứng từ** (2FA đã
+xong ở M9 mục 5). Thiết kế đã chốt lúc lập kế hoạch giữ nguyên: `tokenHash @unique` (sha256), `familyId`,
 `usedAt`, `revokedAt`; refresh = claim nguyên tử, `count = 0` thì revoke cả family; login tạo family mới;
 logout/đổi mật khẩu/xoá user revoke toàn bộ family của user. Migration backfill bằng
 `encode(sha256(convert_to(token,'UTF8')),'hex')` (hàm có sẵn từ Postgres 11, không cần pgcrypto); `familyId`
@@ -627,7 +627,9 @@ Test: `usageLimit = 1`, 10 request song song ⇒ 1 thành công, `usedCount = 1`
    đã đổi khi làm, lý do ở dưới.
 4. **Media chứng từ**: ảnh biên nhận/hóa đơn tiền mặt đang lên Cloudinary nước ngoài. Chuyển sang
    object storage trong nước (hoặc tách bucket + đánh giá chuyển dữ liệu ra nước ngoài).
-5. **2FA cho ADMIN/KE_TOAN**: bắt buộc khi đã bật; `otplib` verify; endpoint setup/enable/disable.
+5. **2FA cho ADMIN/KE_TOAN** — **đã làm phần cơ chế, chưa bật bắt buộc** (xem ghi chú dưới):
+   TOTP verify, ba endpoint setup/enable/disable, đường khôi phục bằng OTP email. Việc còn lại của
+   mục này là *bắt buộc* mọi tài khoản ADMIN/KE_TOAN phải bật — chờ màn hình enrolment ở FE.
 
 **Đồng ý & ẩn danh hoá — đã làm (mục 3).** Ba chỗ khác bản phác, đều vì lý do cụ thể:
 
@@ -688,6 +690,43 @@ xác "tôi có bị xem không" cho từng khách trong một trang 20 dòng th�
   đổi thông báo lỗi mà người dùng đang chờ. Không "bắn rồi quên" vì đây là bằng chứng, không phải số
   liệu thống kê.
 
+**2FA (mục 5) — đã làm cơ chế, CHƯA bắt buộc.** TOTP qua `otpauth` (đã có sẵn trong
+`package.json`; bản phác ghi `otplib`), `User.twoFactorEnabled`/`twoFactorEnabledAt`, ba route
+`POST /auth/2fa/{setup,enable,disable}`. Sáu chỗ khác bản phác, có lý do:
+
+- **Bí mật được MÃ HOÁ khi lưu** (AES-256-GCM, khoá dẫn xuất HKDF từ `ACCESS_TOKEN_SECRET`):
+  `User.totpSecret` để nguyên base32 là ai đọc được DB (dump, backup, một buổi `SELECT` của dev) cũng
+  sinh được mã hợp lệ của mọi tài khoản. Hệ quả phải biết: **đổi `ACCESS_TOKEN_SECRET` là mọi bí mật
+  2FA đã lưu không giải mã được nữa** — người dùng phải setup lại. Muốn tách rời hai khoá thì thêm
+  khoá riêng và dùng tiền tố phiên bản (`v1:` đã có, thêm `v2:` là chuyển được từng bước).
+- **Bật 2FA là hai bước, có xác nhận**: `setup` sinh bí mật + URI và lưu ở trạng thái CHỜ; chỉ
+  `enable` khi đã nhập được một mã thật mới đặt `twoFactorEnabled = true`. Gộp hai bước là một lần
+  quét QR hỏng sẽ tự khoá tài khoản mình ra ngoài, và đường vào duy nhất còn lại là sửa DB.
+- **Đã bật thì mật khẩu đúng vẫn không đủ**: thiếu mã ⇒ 401 `Error.TwoFactorRequired` và **không**
+  tính vào bộ đếm sai (mật khẩu đã đúng, client chỉ chưa gửi đủ) — nếu tính, người dùng thật tự khoá
+  mình bằng một request thiếu trường. Sai mã ⇒ 422 và tính vào **cùng** bộ đếm khoá với mật khẩu:
+  mã 6 số chỉ có 10^6 khả năng, để riêng một đường không khoá là dò xong trong vài giờ.
+- **Đường khôi phục là OTP qua email** (dùng lại `VerificationCode` type `LOGIN`, đã có sẵn bộ đếm
+  lượt sai) — `loginBodySchema` vốn đã có trường `code`. Không có đường này thì mất điện thoại là mất
+  tài khoản, và "quên mã" thành "nhờ dev sửa DB".
+- **Tắt 2FA đòi mật khẩu VÀ một yếu tố thứ hai**: phiên bị chiếm mà tắt được bằng mật khẩu thì 2FA vô
+  nghĩa đúng ở tình huống nó sinh ra để chặn. Sai mật khẩu ở đây **không** đếm vào bộ đếm khoá: người
+  gọi đã cầm phiên hợp lệ, khoá tài khoản chỉ trao cho họ nút bấm làm chủ tài khoản tự khoá mình.
+- **Không có đường đọc lại bí mật**: chỉ trả về một lần ở `setup`, mọi schema trả về đều `omit`
+  `totpSecret`. Đọc lại được nghĩa là một phiên bị chiếm cũng lấy được bí mật, và 2FA chỉ còn chặn
+  người không có phiên.
+
+**Mục 5 còn lại**: *bắt buộc* enrolment cho ADMIN/KE_TOAN. Bật hôm nay là chặn mọi tài khoản ADMIN
+của hệ thống đang chạy — chưa có màn hình enrolment ở FE thì người dùng không có cách nào bật 2FA
+trước khi bị chặn. Việc này phải đi cùng FE và một quyết định rollout, không phải một dòng code.
+
+**Lỗi có sẵn phát hiện khi làm 2FA**: `createRefreshToken` không có `uuid` trong payload, nên hai lần
+đăng nhập của cùng một người trong cùng một GIÂY sinh ra chuỗi token y hệt nhau (payload chỉ có
+`userId/roleId/roleName` + `iat/exp`) và lần thứ hai chết ở unique constraint
+`RefreshToken.tokenHash` — 500 ngay giữa luồng đăng nhập, gặp bằng cách bấm đăng nhập hai lần. Access
+token đã có `uuid` từ trước, refresh token (và guest refresh token) thì không. Đã thêm, có test gọi
+hai lần đăng nhập song song.
+
 Chi tiết và các ⚠ cần kế toán/luật sư: `docs/pii-retention-policy.md`.
 
 **Đo lường**: test ẩn danh (`test/customer-anonymize.e2e-spec.ts`) ⇒ hồ sơ hết hạn mất SĐT/tên/email/
@@ -705,9 +744,16 @@ Nhật ký đăng nhập (`test/login-attempt.e2e-spec.ts`) ⇒ đăng nhập đ
 tại, và đang bị khoá đều để lại dòng với `outcome` đúng; email không tồn tại thì `actorId` null; toàn
 bộ bảng chỉ chứa hash 64 hex (**không** có email thô); `UPDATE` bị trigger DB chặn.
 
+2FA (`test/two-factor.e2e-spec.ts`) ⇒ `setup` trả bí mật đúng một lần và cột DB chỉ chứa bản mã
+hoá `v1:...` (không chứa bí mật); chưa xác nhận mã thì `twoFactorEnabled` **vẫn** false; đã bật thì
+đăng nhập thiếu mã là 401 và **không** tăng `failedAttempts`, mã sai là 422 và **có** tăng, mã đúng
+mới có token; OTP qua email vẫn đăng nhập được khi mất điện thoại; tắt cần cả mật khẩu và mã, để lại
+`TWO_FACTOR_DISABLED`; ba route 2FA không phải route công khai (401 khi không có token); hai lần đăng
+nhập trong cùng một giây đều 201 và ra hai refresh token khác nhau.
+
 **Chưa có phép đo** (vì code chưa có, đừng đọc như đã xong): job dọn `AccessLog`/`LoginAttempt` theo
-thời hạn lưu (chờ con số đã ký, §3); 2FA cho ADMIN/KE_TOAN (mục 5); media chứng từ ra nước ngoài
-(mục 4).
+thời hạn lưu (chờ con số đã ký, §3); *bắt buộc* bật 2FA cho ADMIN/KE_TOAN (mục 5 — cơ chế đã xong,
+xem trên); media chứng từ ra nước ngoài (mục 4).
 
 **Pháp lý**: NĐ 13/2023/NĐ-CP (đồng ý, quyền xoá, hồ sơ đánh giá tác động, log truy cập), NĐ
 53/2022/NĐ-CP (lưu log, dữ liệu tại VN — **cần luật sư xác định phạm vi**), Luật Kế toán (giữ chứng

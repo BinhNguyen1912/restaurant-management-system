@@ -111,6 +111,39 @@ export const verificationCodeRecordSchema = z.object({
   createdAt: z.date(),
 })
 
+/**
+ * 2FA bằng ứng dụng xác thực (prod-readiness §M9 mục 5).
+ *
+ * `secret` chỉ trả về đúng MỘT lần, ở bước setup — lúc người dùng quét QR. Không có endpoint nào
+ * đọc lại bí mật: đọc lại được nghĩa là một phiên bị chiếm cũng lấy được bí mật, và 2FA hết tác dụng.
+ */
+export const twoFactorSetupResSchema = z.object({
+  /** bí mật base32 — để gõ tay khi không quét được QR */
+  secret: z.string(),
+  /** `otpauth://...` để FE vẽ QR */
+  otpauthUri: z.string(),
+})
+
+export const enableTwoFactorBodySchema = z
+  .object({
+    /** mã 6 số từ ứng dụng xác thực: chứng minh điện thoại đã có bí mật TRƯỚC khi bật */
+    totpCode: z.string({ message: 'Error.CodeMustBeString' }).length(6),
+  })
+  .strict()
+
+export const disableTwoFactorBodySchema = UserSchema.pick({ password: true })
+  .extend({
+    /**
+     * Yếu tố thứ hai — phải có ĐÚNG một trong hai.
+     *
+     * `code` (OTP qua email) là đường khôi phục khi mất điện thoại: nếu chỉ nhận TOTP thì mất máy
+     * là mất luôn tài khoản, và cách duy nhất để vào lại là sửa thẳng DB.
+     */
+    totpCode: z.string({ message: 'Error.CodeMustBeString' }).length(6).optional(),
+    code: z.string({ message: 'Error.CodeMustBeString' }).length(6).optional(),
+  })
+  .strict()
+
 export const GetUserIncludeRoleSchema = UserSchema.extend({
   role: RoleSchema,
 })
@@ -194,3 +227,6 @@ export type RefreshTokenResType = z.infer<typeof RefreshTokenResSchema>
 export type ForgotPasswordType = z.infer<typeof forgotPasswordSchema>
 export type RefreshTokenBodyType = z.infer<typeof RefreshTokenBodySchema>
 export type GetAccessTokenResType = z.infer<typeof GetAccessTokenResSchema>
+export type TwoFactorSetupResType = z.infer<typeof twoFactorSetupResSchema>
+export type EnableTwoFactorBodyType = z.infer<typeof enableTwoFactorBodySchema>
+export type DisableTwoFactorBodyType = z.infer<typeof disableTwoFactorBodySchema>

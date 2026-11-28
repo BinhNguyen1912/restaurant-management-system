@@ -2,14 +2,20 @@ import {
   AccountLockedException,
   EmailNotFoundException,
   InvalidPasswordException,
+  InvalidTwoFactorCodeException,
   OtpTooManyRequestsException,
   RefreshTokenAlreadyUsedException,
   RefreshTokenNotFoundOrExpiredException,
+  TwoFactorAlreadyEnabledException,
+  TwoFactorNotSetUpException,
+  TwoFactorRequiredException,
   VerificationCodeExpiredException,
   VerificationCodeNotFoundException,
   VerificationCodeTooManyAttemptsException,
 } from '@/routes/auth/auth.error'
 import {
+  DisableTwoFactorBodyType,
+  EnableTwoFactorBodyType,
   ForgotPasswordType,
   LoginBodyType,
   LogoutBodyType,
@@ -24,6 +30,15 @@ import {
   registerFailedAttempt,
 } from '@/routes/auth/login-lockout'
 import { emailFingerprint } from '@/routes/auth/login-attempt'
+import {
+  buildTotpUri,
+  decryptTotpSecret,
+  deriveTotpKey,
+  encryptTotpSecret,
+  generateTotpSecret,
+  secondFactorKind,
+  verifyTotpCode,
+} from '@/routes/auth/two-factor'
 import {
   hashOtpCode,
   isOtpCodeMatch,
@@ -45,13 +60,23 @@ import { SharedRoleRepo } from '@/shared/shared-repository/shared-role.repo'
 import { SharedUserRepo } from '@/shared/shared-repository/shared-user.repo'
 import { AccessTokenPayloadCreate, RefreshTokenPayload } from '@/shared/types/jwt.types'
 import { LoginOutcome } from '@prisma/client'
-import { Injectable, Logger, UnprocessableEntityException } from '@nestjs/common'
+import { Injectable, Logger, UnauthorizedException, UnprocessableEntityException } from '@nestjs/common'
 import { addMinutes } from 'date-fns'
 import ms, { StringValue } from 'ms'
 import { v4 as uuidv4 } from 'uuid'
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name)
+
+  /**
+   * Khoá mã hoá bí mật TOTP khi lưu DB.
+   *
+   * Dẫn xuất từ khoá ký JWT nên không cần thêm biến môi trường — và vì dẫn xuất (HKDF) chứ không
+   * dùng thẳng, khoá AES không bao giờ trùng byte với khoá ký. Hệ quả phải biết: **đổi
+   * `ACCESS_TOKEN_SECRET` là mọi bí mật 2FA đã lưu không giải mã được nữa**, người dùng phải setup
+   * lại. Ghi ở docs/prod-readiness-plan.md.
+   */
+  private readonly totpKey = deriveTotpKey(envConfig.ACCESS_TOKEN_SECRET)
 
   constructor(
     private readonly sharedUserRepo: SharedUserRepo,
@@ -213,6 +238,45 @@ export class AuthService {
       .catch((error) => this.logger.warn(`Không ghi được nhật ký đăng nhập ${input.outcome}: ${error}`))
   }
 
+  /**
+   * Ghi nhận một lần trình SAI chứng thứ và khoá tài khoản khi chạm ngưỡng.
+   *
+   * Dùng cho cả sai mật khẩu và sai mã 2FA: mã TOTP chỉ có 10^6 khả năng, nếu sai mã không vào
+   * chung bộ đếm này thì dò 6 số là việc của vài giờ chứ không phải của vài thế kỷ.
+   *
+   * Trả `justLocked` để nơi gọi chọn thông báo: "gõ lại đi" khác hẳn "chờ 15 phút".
+   */
+  private async registerWrongCredential(
+    user: { id: number; failedAttempts?: number | null; lockedUntil?: Date | null },
+    email: string,
+    ip: string | null,
+    now: Date,
+  ) {
+    const outcome = registerFailedAttempt(
+      { failedAttempts: user.failedAttempts ?? 0, lockedUntil: user.lockedUntil ?? null },
+      now,
+    )
+    await this.authRepo.recordLoginFailure(user.id, {
+      failedAttempts: outcome.failedAttempts,
+      lockedUntil: outcome.lockedUntil,
+    })
+    await this.recordLoginAttempt({ email, actorId: user.id, outcome: 'FAILED', ip })
+    if (outcome.justLocked) {
+      // Nhật ký best-effort: chặn được kẻ dò quan trọng hơn một dòng log, nên lỗi ghi audit không
+      // được biến lần thử thứ 5 thành 500.
+      await this.auditLogService
+        .record({
+          action: 'LOGIN_LOCKED',
+          entityType: 'USER',
+          entityId: user.id,
+          reason: `Sai chứng thứ đăng nhập ${MAX_FAILED_ATTEMPTS} lần liên tiếp`,
+          after: { failedAttempts: MAX_FAILED_ATTEMPTS, lockedUntil: outcome.lockedUntil?.toISOString() ?? null },
+        })
+        .catch((error) => this.logger.warn(`Không ghi được audit LOGIN_LOCKED cho user ${user.id}: ${error}`))
+    }
+    return outcome
+  }
+
   async login(data: LoginBodyType, context: { ip?: string | null } = {}) {
     const ip = context.ip ?? null
     const user = await this.sharedUserRepo.findUserIncludeRolePermissions({ email: data.email })
@@ -235,30 +299,39 @@ export class AuthService {
 
     const isPasswordValid = await this.hashingService.comparePassword(data.password, user.password)
     if (!isPasswordValid) {
-      const outcome = registerFailedAttempt({ failedAttempts: user.failedAttempts ?? 0, lockedUntil: user.lockedUntil ?? null }, now)
-      await this.authRepo.recordLoginFailure(user.id, {
-        failedAttempts: outcome.failedAttempts,
-        lockedUntil: outcome.lockedUntil,
-      })
-      await this.recordLoginAttempt({ email: data.email, actorId: user.id, outcome: 'FAILED', ip })
+      const outcome = await this.registerWrongCredential(user, data.email, ip, now)
       if (!outcome.justLocked) {
         throw InvalidPasswordException
       }
-      // Nhật ký best-effort: chặn được kẻ dò mật khẩu quan trọng hơn một dòng log, nên lỗi ghi
-      // audit không được biến lần thử thứ 5 thành 500.
-      await this.auditLogService
-        .record({
-          action: 'LOGIN_LOCKED',
-          entityType: 'USER',
-          entityId: user.id,
-          reason: `Sai mật khẩu ${MAX_FAILED_ATTEMPTS} lần liên tiếp`,
-          after: { failedAttempts: MAX_FAILED_ATTEMPTS, lockedUntil: outcome.lockedUntil?.toISOString() ?? null },
-        })
-        .catch((error) => this.logger.warn(`Không ghi được audit LOGIN_LOCKED cho user ${user.id}: ${error}`))
       throw AccountLockedException(LOCK_MINUTES * 60 * 1000)
     }
-    // Đăng nhập đúng phải xoá dấu vết sai trước đó: nhân viên gõ sai vài lần rồi gõ đúng mà bộ đếm
-    // còn nguyên thì lần sai kế tiếp (dù cách đó nhiều ngày) sẽ khoá oan.
+    // 2FA: mật khẩu đúng mới tới được đây, nên chỗ này là cửa duy nhất phải kiểm yếu tố thứ hai.
+    if (user.twoFactorEnabled) {
+      const factor = secondFactorKind({ totpCode: data.totpCode, emailCode: data.code })
+      if (factor === 'NONE') {
+        // Mật khẩu ĐÚNG, request chỉ chưa gửi mã. Không tính vào bộ đếm sai và không ghi FAILED:
+        // người dùng thật sẽ gõ mã ở lượt kế tiếp, còn ghi vào đây là tự bắn tín hiệu động vào
+        // nhật ký dò mật khẩu.
+        throw TwoFactorRequiredException
+      }
+      if (factor === 'EMAIL') {
+        // Mã email có bộ đếm sai và thông báo riêng (hết hạn / hết lượt / hết hạn gửi lại) — không
+        // gộp về "mã 2FA sai" chung, người dùng cần biết phải xin mã mới hay chỉ gõ lại.
+        await this.verificationCode({ email: user.email, code: data.code as string, type: TypeOfVerification.LOGIN })
+      } else {
+        const plainSecret = decryptTotpSecret(user.totpSecret, this.totpKey)
+        if (!plainSecret || !verifyTotpCode(plainSecret, data.totpCode as string)) {
+          const outcome = await this.registerWrongCredential(user, data.email, ip, now)
+          if (!outcome.justLocked) {
+            throw InvalidTwoFactorCodeException
+          }
+          throw AccountLockedException(LOCK_MINUTES * 60 * 1000)
+        }
+      }
+    }
+    // Chỉ xoá bộ đếm khi đã qua ĐỦ hai yếu tố: gõ đúng mật khẩu mà mã 2FA sai thì lượt đó vẫn là
+    // một lượt thử sai. Nhưng phải xoá trước khi cấp token — nhân viên gõ sai vài lần rồi vào được
+    // mà bộ đếm còn nguyên thì lần sai kế tiếp (dù cách đó nhiều ngày) sẽ khoá oan.
     if (user.failedAttempts > 0 || user.lockedUntil) {
       await this.authRepo.clearLoginFailures(user.id)
     }
@@ -291,6 +364,107 @@ export class AuthService {
       accessToken,
       refreshToken,
     }
+  }
+
+  /**
+   * Bước 1 để bật 2FA: sinh bí mật, trả URI cho FE vẽ QR, lưu bí mật ở trạng thái CHỜ.
+   *
+   * Bí mật chỉ trả về đúng lần này. Gọi lại (quét hỏng, đổi điện thoại) thì sinh bí mật mới và ghi
+   * đè bí mật đang chờ — bí mật cũ chết ngay, không có hai bí mật cùng sống cho một tài khoản.
+   */
+  async setupTwoFactor(userId: number): Promise<{ secret: string; otpauthUri: string }> {
+    const user = await this.sharedUserRepo.findUniqueUser({ id: userId })
+    if (!user) {
+      // Route đã qua guard, nên chỉ tới đây khi tài khoản bị xoá ngay giữa phiên.
+      throw new UnauthorizedException('Error.UserNotFound')
+    }
+    if (user.twoFactorEnabled) {
+      throw TwoFactorAlreadyEnabledException
+    }
+    const secret = generateTotpSecret()
+    await this.authRepo.savePendingTotpSecret(userId, encryptTotpSecret(secret, this.totpKey))
+    return { secret, otpauthUri: buildTotpUri(user.email, secret) }
+  }
+
+  /**
+   * Bước 2: xác nhận được một mã từ ứng dụng xác thực rồi mới bật.
+   *
+   * Thứ tự này là điều kiện sống còn, không phải chi tiết: bật trước khi chứng minh điện thoại đã
+   * có bí mật nghĩa là một lần quét hỏng là tài khoản tự khoá mình ra ngoài, và đường vào duy nhất
+   * còn lại là sửa thẳng DB.
+   */
+  async enableTwoFactor(userId: number, data: EnableTwoFactorBodyType) {
+    const user = await this.sharedUserRepo.findUniqueUser({ id: userId })
+    if (!user) throw new UnauthorizedException('Error.UserNotFound')
+
+    const plainSecret = decryptTotpSecret(user.totpSecret, this.totpKey)
+    if (!plainSecret) {
+      // Chưa setup, hoặc bí mật hỏng vì khoá mã hoá đã đổi. Cả hai đều phải setup lại từ đầu.
+      throw TwoFactorNotSetUpException
+    }
+    if (!verifyTotpCode(plainSecret, data.totpCode)) {
+      throw InvalidTwoFactorCodeException
+    }
+
+    await this.authRepo.enableTwoFactor(userId, new Date())
+    await this.auditLogService
+      .record({
+        action: 'TWO_FACTOR_ENABLED',
+        entityType: 'USER',
+        entityId: userId,
+        after: { twoFactorEnabled: true },
+      })
+      .catch((error) => this.logger.warn(`Không ghi được audit TWO_FACTOR_ENABLED cho user ${userId}: ${error}`))
+    return { message: 'Đã bật xác thực hai lớp' }
+  }
+
+  /**
+   * Tắt 2FA — đòi **mật khẩu và một yếu tố thứ hai**, không chỉ mật khẩu.
+   *
+   * Chỉ mật khẩu là không đủ: kẻ chiếm được phiên (token trong máy khác) chỉ cần chờ chủ tài khoản
+   * gõ mật khẩu ở đâu đó một lần là tháo được rào chắn, và 2FA thành vô nghĩa đúng ở tình huống nó
+   * sinh ra để chặn. Đường khôi phục khi mất điện thoại là OTP qua email (`code`), không phải bỏ
+   * kiểm.
+   */
+  async disableTwoFactor(userId: number, data: DisableTwoFactorBodyType) {
+    const user = await this.sharedUserRepo.findUniqueUser({ id: userId })
+    if (!user) throw new UnauthorizedException('Error.UserNotFound')
+    if (!user.twoFactorEnabled) {
+      // Idempotent như logout: gọi lại không phải lỗi, chỉ là không còn gì để tắt.
+      return { message: 'Tài khoản này chưa bật xác thực hai lớp' }
+    }
+
+    const isPasswordValid = await this.hashingService.comparePassword(data.password, user.password)
+    if (!isPasswordValid) {
+      // Không đếm vào bộ đếm khoá đăng nhập: kẻ gọi được route này đã cầm một phiên hợp lệ, còn khoá
+      // tài khoản ở đây là trao cho họ nút bấm làm chủ tài khoản tự khoá mình.
+      throw InvalidPasswordException
+    }
+    const factor = secondFactorKind({ totpCode: data.totpCode, emailCode: data.code })
+    if (factor === 'NONE') {
+      throw TwoFactorRequiredException
+    }
+    if (factor === 'EMAIL') {
+      await this.verificationCode({ email: user.email, code: data.code as string, type: TypeOfVerification.LOGIN })
+    } else {
+      const plainSecret = decryptTotpSecret(user.totpSecret, this.totpKey)
+      if (!plainSecret || !verifyTotpCode(plainSecret, data.totpCode as string)) {
+        throw InvalidTwoFactorCodeException
+      }
+    }
+
+    await this.authRepo.disableTwoFactor(userId)
+    await this.auditLogService
+      .record({
+        action: 'TWO_FACTOR_DISABLED',
+        entityType: 'USER',
+        entityId: userId,
+        before: { twoFactorEnabled: true },
+        after: { twoFactorEnabled: false },
+        reason: 'Người dùng tự tắt sau khi nhập lại mật khẩu và mã thứ hai',
+      })
+      .catch((error) => this.logger.warn(`Không ghi được audit TWO_FACTOR_DISABLED cho user ${userId}: ${error}`))
+    return { message: 'Đã tắt xác thực hai lớp' }
   }
 
   async forgotPassword(data: ForgotPasswordType) {

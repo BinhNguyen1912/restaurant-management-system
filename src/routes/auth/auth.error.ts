@@ -61,3 +61,37 @@ export const EmailNotFoundException = new UnprocessableEntityException({
 export const RefreshTokenNotFoundOrExpiredException = new UnauthorizedException('Error.RefreshTokenNotFoundOrExpired')
 
 export const RefreshTokenAlreadyUsedException = new UnauthorizedException('Error.RefreshTokenAlreadyUsed')
+
+/**
+ * 401 khi tài khoản đã bật 2FA mà request không gửi mã thứ hai (prod-readiness §M9 mục 5).
+ *
+ * 401 chứ không phải 422: mật khẩu đã đúng, chưa có gì sai — request chỉ chưa đủ để mở phiên. FE
+ * dựa vào `message` này để hiện ô nhập mã, nên nó phải khác hẳn "sai mật khẩu".
+ */
+export const TwoFactorRequiredException = new UnauthorizedException({
+  message: 'Error.TwoFactorRequired',
+  path: 'totpCode',
+})
+
+/**
+ * 422 khi mã thứ hai sai.
+ *
+ * Tách khỏi `InvalidPasswordException`: người dùng gõ đúng mật khẩu rồi gõ sai mã, hiện "sai mật
+ * khẩu" là chỉ sai chỗ cần sửa.
+ */
+export const InvalidTwoFactorCodeException = new UnprocessableEntityException({
+  message: 'Error.InvalidTwoFactorCode',
+  path: 'totpCode',
+})
+
+/** 422 khi gọi setup cho tài khoản đã bật 2FA — phải tắt trước, không thì mất bí mật đang dùng */
+export const TwoFactorAlreadyEnabledException = new UnprocessableEntityException({
+  message: 'Error.TwoFactorAlreadyEnabled',
+  path: 'twoFactor',
+})
+
+/** 422 khi enable/disable trong lúc chưa có bí mật (chưa chạy setup) */
+export const TwoFactorNotSetUpException = new UnprocessableEntityException({
+  message: 'Error.TwoFactorNotSetUp',
+  path: 'twoFactor',
+})

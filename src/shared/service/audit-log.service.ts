@@ -37,6 +37,10 @@ export type AuditActionType =
   | 'CUSTOMER_ANONYMIZED'
   // sửa ghi chú chăm sóc của hồ sơ khách — before/after chỉ ghi ĐỘ DÀI, không ghi nội dung
   | 'CUSTOMER_NOTE_UPDATED'
+  // bật/tắt 2FA của một tài khoản (NĐ 13/2023 Điều 26). Tắt được 2FA là tắt luôn rào chắn, nên
+  // việc tắt cũng phải để lại dấu như việc bật
+  | 'TWO_FACTOR_ENABLED'
+  | 'TWO_FACTOR_DISABLED'
 
 export type AuditEntityTypeValue =
   | 'ORDER'

@@ -1,4 +1,6 @@
 import {
+  DisableTwoFactorBodyDTO,
+  EnableTwoFactorBodyDTO,
   FogotPasswordBodyDTO,
   GetAccessTokenDTO,
   LoginBodyDTO,
@@ -8,6 +10,7 @@ import {
   RefreshTokenBodyDTO,
   RegisterBodyDTO,
   RegisterResDTO,
+  TwoFactorSetupResDTO,
 } from '@/routes/auth/auth.dto'
 import { loginResSchema } from '@/routes/auth/auth.model'
 import { AuthService } from '@/routes/auth/auth.service'
@@ -56,6 +59,29 @@ export class AuthController {
   @ZodSerializerDto(GetAccessTokenDTO)
   async provideAccessTokenByRefreshToken(@Body() body: RefreshTokenBodyDTO, @ActiveUser('userId') userId: number) {
     return await this.authService.provideAccessTokenByRefreshToken(body)
+  }
+
+  /**
+   * 2FA bằng ứng dụng xác thực (prod-readiness §M9 mục 5). Ba route này **không** `@IsPublic()`:
+   * bật/tắt xác thực hai lớp của chính mình thì phải đang đăng nhập, và người dùng lấy từ token
+   * chứ không từ body — nhận `userId` từ body là cho phép tắt 2FA của người khác.
+   */
+  @Post('2fa/setup')
+  @ZodSerializerDto(TwoFactorSetupResDTO)
+  setupTwoFactor(@ActiveUser('userId') userId: number) {
+    return this.authService.setupTwoFactor(userId)
+  }
+
+  @Post('2fa/enable')
+  @ZodSerializerDto(MessageResDto)
+  enableTwoFactor(@Body() body: EnableTwoFactorBodyDTO, @ActiveUser('userId') userId: number) {
+    return this.authService.enableTwoFactor(userId, body)
+  }
+
+  @Post('2fa/disable')
+  @ZodSerializerDto(MessageResDto)
+  disableTwoFactor(@Body() body: DisableTwoFactorBodyDTO, @ActiveUser('userId') userId: number) {
+    return this.authService.disableTwoFactor(userId, body)
   }
 
   @Post('logout')

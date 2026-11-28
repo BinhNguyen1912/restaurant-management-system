@@ -193,6 +193,43 @@ export class AuthRepo {
   }
 
   /**
+   * Ghi bí mật TOTP đã mã hoá ở trạng thái CHỜ (2FA chưa có hiệu lực).
+   *
+   * `twoFactorEnabled` cố ý không đụng vào: sinh bí mật chưa chứng minh được gì, chỉ khi người dùng
+   * nhập đúng một mã từ bí mật đó mới đáng bật.
+   */
+  savePendingTotpSecret(userId: number, encryptedSecret: string) {
+    return this.prismaService.user.update({
+      where: { id: userId, deletedAt: null },
+      data: { totpSecret: encryptedSecret, twoFactorEnabled: false },
+      select: { id: true },
+    })
+  }
+
+  /** Bật 2FA sau khi đã xác nhận được mã từ bí mật đang chờ */
+  enableTwoFactor(userId: number, enabledAt: Date) {
+    return this.prismaService.user.update({
+      where: { id: userId, deletedAt: null },
+      data: { twoFactorEnabled: true, twoFactorEnabledAt: enabledAt },
+      select: { id: true, twoFactorEnabled: true },
+    })
+  }
+
+  /**
+   * Tắt 2FA: xoá luôn bí mật.
+   *
+   * Giữ bí mật lại "để bật nhanh lần sau" là giữ một khoá sinh mã cho một tài khoản đang được bảo
+   * vệ bằng mỗi mật khẩu — bật lại thì setup lại từ đầu, đúng 30 giây.
+   */
+  disableTwoFactor(userId: number) {
+    return this.prismaService.user.update({
+      where: { id: userId, deletedAt: null },
+      data: { totpSecret: null, twoFactorEnabled: false },
+      select: { id: true, twoFactorEnabled: true },
+    })
+  }
+
+  /**
    * Claim nguyên tử + (nếu token đã dùng) thu hồi cả family, trong MỘT transaction.
    *
    * `updateMany({ where: { tokenHash, usedAt: null }, data: { usedAt } })` là điểm chốt: hai

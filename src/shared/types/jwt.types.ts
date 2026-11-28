@@ -19,6 +19,8 @@ export interface RefreshTokenPayloadCreate {
   roleName: string
 }
 export interface RefreshTokenPayload extends RefreshTokenPayloadCreate {
+  /** định danh duy nhất của lần cấp — thiếu nó thì hai token cùng giây là một chuỗi (xem TokenService) */
+  uuid?: string
   iat: number
   exp: number
 }
