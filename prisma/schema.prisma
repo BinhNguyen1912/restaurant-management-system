@@ -206,6 +206,8 @@ model User {
   updatedAt                   DateTime              @updatedAt
   deletedAt                   DateTime?
   point                       Int                   @default(0)
+  /// hồ sơ khách hàng gắn với tài khoản này (nếu người dùng là khách, không phải nhân viên)
+  customer                    Customer?
   createdAreas                Area[]                @relation("AreaCreatedBy")
   deletedAreas                Area[]                @relation("AreaDeletedBy")
   updatedAreas                Area[]                @relation("AreaUpdatedBy")
@@ -542,6 +544,8 @@ model Order {
   grandTotal          Decimal              @default(0) @db.Decimal(14, 2)
   currency            String               @default("VND") @db.VarChar(3)
   voucherSnapshotId   Int?
+  /// Hồ sơ khách của đơn (null = khách vãng lai quét QR, không có SĐT để nhận diện)
+  customerId          Int?
   type                OrderType            @default(ONLINE)
   receiver            Json?
   deletedAt           DateTime?
@@ -561,6 +565,7 @@ model Order {
   updatedBy           User?                @relation("OrderUpdateBy", fields: [updatedById], references: [id])
   user                User?                @relation(fields: [userId], references: [id])
   voucherSnapshot     VoucherSnapshot?     @relation(fields: [voucherSnapshotId], references: [id])
+  customer            Customer?            @relation(fields: [customerId], references: [id])
   items               ProductSKUSnapshot[]
   products            Product[]            @relation("OrderToProduct")
   branchId            Int
@@ -568,6 +573,8 @@ model Order {
 
   @@index([branchId, createdAt])
   @@index([deletedAt, status, createdAt])
+  /// hồ sơ khách: số đơn + tổng chi + lần cuối tới của một người
+  @@index([customerId, status, createdAt])
 }
 
 model Socket {
@@ -645,18 +652,47 @@ model Reservation {
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
   tableNodeId     Int
+  /// Hồ sơ khách của lượt đặt bàn (null = SĐT không chuẩn hoá được, xem customer.identity.ts)
+  customerId      Int?
   orders          Order[]
   createdBy       User?             @relation("ReservationCreateBy", fields: [createdById], references: [id])
   deletedBy       User?             @relation("ReservationDeleteBy", fields: [deletedById], references: [id])
   tableNode       TableNode?        @relation(fields: [tableNodeId], references: [id])
   updatedBy       User?             @relation("ReservationUpdateBy", fields: [updatedById], references: [id])
   user            User              @relation("ReservationUser", fields: [userId], references: [id])
+  customer        Customer?         @relation(fields: [customerId], references: [id])
   branchId        Int
   branch          Branch            @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([userId])
   /// danh sách đặt bàn theo thời gian (lọc deletedAt + sắp theo reservationTime)
   @@index([deletedAt, reservationTime])
+  /// hồ sơ khách: lịch sử đặt bàn của một người
+  @@index([customerId, reservationTime])
+}
+
+/// Hồ sơ khách hàng (tầng CRM). Trước đây "khách" chỉ là chuỗi `customerName`/`customerPhone`
+/// tự do trên từng lượt đặt bàn: gõ ba lần là ba khách khác nhau, không ai biết khách nào quay
+/// lại hay chi bao nhiêu. Một dòng = một người, nhận diện bằng SĐT đã chuẩn hoá
+/// (`src/routes/customer/customer.identity.ts`), nên mọi thứ đọc từ đơn/đặt bàn đều quy về đây.
+model Customer {
+  id        Int       @id @default(autoincrement())
+  /// SĐT chuẩn hoá dạng 0xxxxxxxxx (chỉ chữ số) — khoá nhận diện duy nhất của khách
+  phone     String    @unique @db.VarChar(20)
+  name      String    @db.VarChar(255)
+  email     String?   @db.VarChar(255)
+  /// Tài khoản khách đã đăng ký (nếu có) — hồ sơ này là cùng một người với tài khoản đó
+  userId    Int?      @unique
+  note      String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  user         User?         @relation(fields: [userId], references: [id])
+  orders       Order[]
+  reservations Reservation[]
+
+  @@index([deletedAt, createdAt])
 }
 
 model Category {

@@ -20,6 +20,8 @@ import { TypeToOrderStatus } from '@/shared/constants/order.constant'
 import { Prisma } from '@prisma/client'
 import { SharedTableNodeRepo } from '@/shared/shared-repository/shared-tableNode.repo'
 import { TableNodeNotFoundException } from './reservation.error'
+import { CustomerRepo } from '@/routes/customer/customer.repo'
+import { normalizeCustomerPhone } from '@/routes/customer/customer.identity'
 
 @Injectable()
 export class ReservationRepo {
@@ -28,7 +30,23 @@ export class ReservationRepo {
     private readonly sharedOrderRepo: SharedOrdersRepo,
     private readonly vnpayService: VnPayService,
     private readonly sharedTableNodeRepo: SharedTableNodeRepo,
+    private readonly customerRepo: CustomerRepo,
   ) {}
+
+  /**
+   * Hồ sơ khách của lượt đặt bàn — tạo/gộp ngay trong transaction của caller.
+   *
+   * SĐT không chuẩn hoá được (khách gõ "0901", "abc") thì trả `null` chứ không ném lỗi: mất một
+   * hồ sơ CRM là thiếu số liệu, còn chặn luồng đặt bàn vì ô SĐT gõ xấu là hỏng việc kinh doanh.
+   */
+  private async resolveCustomerId(
+    tx: Prisma.TransactionClient | PrismaService,
+    input: { phone: string; name: string; userId: number },
+  ): Promise<number | null> {
+    const phone = normalizeCustomerPhone(input.phone)
+    if (!phone) return null
+    return await this.customerRepo.upsertProfile(tx, { phone, name: input.name, userId: input.userId })
+  }
 
   private async calculatePreOrderTotal(preOrderItems: CreateNewOrderType): Promise<{
     totalSku: number
@@ -147,11 +165,19 @@ export class ReservationRepo {
         const result = await this.prismaService.$transaction(async (tx) => {
           // Reservation gan voi 1 ban cu the -> chi nhanh lay tu ban (ADR 0001 D4)
           const branchId = await resolveBranchIdByTableNode(tx as any, tableNodeId)
+          // Hồ sơ khách tạo TRƯỚC lượt đặt bàn, trong cùng transaction: không có khách mồ côi và
+          // reservation luôn trỏ được tới người đã đặt.
+          const customerId = await this.resolveCustomerId(tx, {
+            phone: customerPhone,
+            name: customerName,
+            userId,
+          })
           const newReservation = await tx.reservation.create({
             data: {
               branchId,
               customerPhone,
               customerName,
+              customerId,
               guestCount,
               depositAmount: expectedDeposit,
               depositPercent,
@@ -210,12 +236,20 @@ export class ReservationRepo {
         })
         return result
       }
+      // Nhánh không đặt trước: hồ sơ khách gộp trước khi tạo lượt đặt bàn (không transaction vì
+      // luồng này vốn đã tách rời; hồ sơ thừa không mang số liệu, chỉ thừa một dòng trống).
+      const customerId = await this.resolveCustomerId(this.prismaService, {
+        phone: customerPhone,
+        name: customerName,
+        userId,
+      })
       const [newReservation] = await Promise.all([
         this.prismaService.reservation.create({
           data: {
             branchId: await resolveBranchIdByTableNode(this.prismaService, tableNodeId),
             customerPhone,
             customerName,
+            customerId,
             guestCount,
             depositAmount: null,
             depositPercent: null,

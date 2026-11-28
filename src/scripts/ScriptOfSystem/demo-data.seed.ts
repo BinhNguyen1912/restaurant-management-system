@@ -2,6 +2,7 @@ import { Prisma, PrismaClient } from '@prisma/client'
 import { createHash } from 'crypto'
 import { LedgerPostingService } from '@/shared/service/ledger-posting.service'
 import { buildOrderLedgerLines } from '@/shared/service/order-ledger-lines'
+import { normalizeCustomerPhone } from '@/routes/customer/customer.identity'
 
 const prisma = new PrismaClient()
 const ledger = new LedgerPostingService(prisma as never)
@@ -303,6 +304,29 @@ async function main() {
     log('guest', `#${guest.id} ${guestName}`)
   }
 
+  /**
+   * Hồ sơ khách (CRM). Seed ghi thẳng vào DB nên KHÔNG đi qua luồng đặt bàn của API — nếu không
+   * tạo ở đây thì màn hình khách hàng của đồ án mở ra trống, dù dữ liệu demo có cả đơn lẫn đặt bàn.
+   */
+  const demoCustomers = [
+    { name: 'Nguyễn Văn An', phone: '0901000001' },
+    { name: 'Trần Thị Bình', phone: '0901000002' },
+    { name: 'Lê Thị Chi', phone: '0901000003' },
+  ]
+  const customerIdByPhone = new Map<string, number>()
+  for (const profile of demoCustomers) {
+    const phone = normalizeCustomerPhone(profile.phone)
+    if (!phone) continue
+    if (DRY_RUN) {
+      log('customer', `${profile.name} ${phone}`)
+      continue
+    }
+    // `update: {}` — chạy lại không ghi đè tên/ghi chú người dùng đã sửa trong màn hình khách hàng
+    const record = await prisma.customer.upsert({ where: { phone }, update: {}, create: { phone, name: profile.name } })
+    customerIdByPhone.set(phone, record.id)
+    log('customer', `#${record.id} ${profile.name} ${phone}`)
+  }
+
   const reservations: { seedKey: string; name: string; phone: string; guests: number; daysFromNow: number; status: 'PENDING' | 'CONFIRMED' }[] = [
     { seedKey: 'res-1', name: 'Nguyễn Văn An', phone: '0901000001', guests: 4, daysFromNow: 1, status: 'CONFIRMED' },
     { seedKey: 'res-2', name: 'Trần Thị Bình', phone: '0901000002', guests: 2, daysFromNow: 2, status: 'PENDING' },
@@ -330,6 +354,7 @@ async function main() {
         tableNodeId: nodeId,
         customerName: reservation.name,
         customerPhone: reservation.phone,
+        customerId: customerIdByPhone.get(normalizeCustomerPhone(reservation.phone) ?? '') ?? null,
         guestCount: reservation.guests,
         reservationTime: when,
         hasPreOrder: false,
@@ -395,6 +420,8 @@ async function main() {
     paidInto: 'CASH' | 'VNPAY_CLEARING'
     refType: 'ORDER_PAID_CASH' | 'ORDER_PAID_VNPAY'
     voucherCode?: string
+    /** khách của đơn (SĐT trong `demoCustomers`) — để màn hình khách có lịch sử chi tiêu */
+    customerPhone: string
     items: { productName: string; skuValue?: string; quantity: number }[]
     serviceChargeRate: number
     taxRate: number
@@ -406,6 +433,7 @@ async function main() {
       method: 'CASH',
       paidInto: 'CASH',
       refType: 'ORDER_PAID_CASH',
+      customerPhone: '0901000001',
       items: [
         { productName: 'Phở bò', skuValue: 'Vừa', quantity: 2 },
         { productName: 'Cà phê sữa đá', skuValue: 'M', quantity: 1 },
@@ -419,6 +447,7 @@ async function main() {
       paidInto: 'VNPAY_CLEARING',
       refType: 'ORDER_PAID_VNPAY',
       voucherCode: 'WELCOME10',
+      customerPhone: '0901000002',
       items: [{ productName: 'Cà phê sữa đá', skuValue: 'S', quantity: 2 }],
       serviceChargeRate: 0,
       taxRate: 0,
@@ -431,6 +460,15 @@ async function main() {
       select: { id: true },
     })
     if (existing) {
+      // Đơn đã có từ lần seed trước (trước khi có tầng khách hàng): gắn hồ sơ khách cho nó để màn
+      // hình khách hàng không hiện một đơn "không ai mua".
+      const wantedCustomerId = customerIdByPhone.get(seedOrder.customerPhone)
+      if (wantedCustomerId && !DRY_RUN) {
+        await prisma.order.updateMany({
+          where: { id: existing.id, customerId: null },
+          data: { customerId: wantedCustomerId },
+        })
+      }
       log('order', `${seedOrder.seedKey} đã có (#${existing.id})`)
       continue
     }
@@ -498,6 +536,7 @@ async function main() {
         branchId: mainBranchId,
         paymentId: payment.id,
         userId: customerId,
+        customerId: customerIdByPhone.get(seedOrder.customerPhone) ?? null,
         guestId: guestId ?? null,
         status: 'PAID',
         type: 'ONLINE',

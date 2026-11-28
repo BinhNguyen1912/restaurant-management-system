@@ -864,6 +864,16 @@ export class SharedOrdersRepo {
         throw new Error('Không tìm thấy người dùng')
       }
 
+      /**
+       * Đơn đặt trước là của khách đã đặt bàn, nên hồ sơ khách lấy từ chính lượt đặt bàn đó
+       * (reservation.repo tạo/gộp hồ sơ trong cùng transaction). Gắn ngay tại đây để mọi báo cáo
+       * khách đọc thẳng `Order.customerId`, không phải join qua Reservation mỗi lần.
+       */
+      const booking = await tx.reservation.findUnique({
+        where: { id: reservationId },
+        select: { customerId: true },
+      })
+
       const table = await this.validateTableBeforeCreateOrder({
         tableNodeId,
         tx,
@@ -896,6 +906,7 @@ export class SharedOrdersRepo {
       const order = await tx.order.create({
         data: {
           userId,
+          customerId: booking?.customerId ?? null,
           status: OrderStatus.PENDING,
           type: TypeToOrderStatus.RESERVATION,
           tableNodeId: table.id,

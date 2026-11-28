@@ -29,6 +29,7 @@ import { Global, Module } from '@nestjs/common'
 import { JwtModule } from '@nestjs/jwt'
 import { ScheduleModule } from '@nestjs/schedule'
 import { VnPayService } from './service/vnpay.service'
+import { CustomerRepo } from '@/routes/customer/customer.repo'
 import { SharedReservationRepo } from './shared-repository/shared-reservation.repo'
 import { SharedTableNodeRepo } from './shared-repository/shared-tableNode.repo'
 import { ReservationPaymentHandler } from './handler/ReservationPayment.handler'
@@ -62,6 +63,8 @@ const sharedService = [
   SharedTableNodeRepo,
   OrderGuestPaymentPaymentHandler,
   ReservationPaymentHandler,
+  // gắn hồ sơ khách ngay trong transaction tạo đặt bàn/đơn (reservation.repo, shared-orders.repo)
+  CustomerRepo,
 ]
 
 @Global()
